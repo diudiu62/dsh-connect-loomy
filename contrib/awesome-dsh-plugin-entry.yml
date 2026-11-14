@@ -4,6 +4,7 @@
 url: https://github.com/diudiu62/dsh-connect-loomy
 name: diudiu62/dsh-connect-loomy
 category: model
+icon: https://raw.githubusercontent.com/diudiu62/dsh-connect-loomy/main/icons/icon-180.png
 description:
   en: Adds the Loomy desktop assistant's locally signed-in chat models to DeepSeek Harness as a provider route, with a settings section and a read-only credits readout in the composer.
   zh: 把本机已登录的 Loomy（讯飞办公助手）聊天模型接入 DeepSeek Harness，提供设置分区与输入框里的只读积分读数。

@@ -32,11 +32,13 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "LICENSE",
+    "README.en.md",
+    "README.md",
+    "cordis.patch.yml",
+    "icons",
     "lib",
     "locale",
-    "cordis.patch.yml",
-    "README.md",
-    "LICENSE",
     "screenshots.json"
   ],
   "dependencies": {
@@ -126,5 +128,6 @@
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
     "access": "public"
-  }
+  },
+  "icon": "icons/icon-128.png"
 }
