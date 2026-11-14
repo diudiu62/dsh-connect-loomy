@@ -117,11 +117,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/dsh-connect-loomy.git"
+    "url": "git+https://github.com/diudiu62/dsh-connect-loomy.git"
   },
-  "homepage": "https://github.com/OWNER/dsh-connect-loomy#readme",
+  "homepage": "https://github.com/diudiu62/dsh-connect-loomy#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-connect-loomy/issues"
+    "url": "https://github.com/diudiu62/dsh-connect-loomy/issues"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
