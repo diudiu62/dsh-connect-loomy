@@ -1,12 +1,8 @@
-# 提交到 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
-# 文件名：data/plugins/<owner>__dsh-connect-loomy.yml
-# 提交路径：data/plugins/diudiu62__dsh-connect-loomy.yml（只加这一个文件）
 url: https://github.com/diudiu62/dsh-connect-loomy
 name: diudiu62/dsh-connect-loomy
 category: model
 icon: https://raw.githubusercontent.com/diudiu62/dsh-connect-loomy/main/icons/icon-180.png
-# 预构建包：资产名刻意不带版本号，latest/download/ 才不会在下次发版时静默 404
 tarball: https://github.com/diudiu62/dsh-connect-loomy/releases/latest/download/dsh-connect-loomy.tgz
 description:
-  en: Adds the Loomy desktop assistant's locally signed-in chat models to DeepSeek Harness as a provider route, with a settings section and a read-only credits readout in the composer.
-  zh: 把本机已登录的 Loomy（讯飞办公助手）聊天模型接入 DeepSeek Harness，提供设置分区与输入框里的只读积分读数。
+  en: 'Registers the Loomy desktop app''s locally signed-in chat models as a `loomy` provider in DSH, adding a read-only credits readout in the composer, a settings section for account, per-model toggles and upstream diagnostics, and a status/doctor CLI. Shares the `loomy` provider id with 2239058652/dsh-loomy-connect, so the two cannot be installed together; this one differs by the credits readout, the diagnostics table and the CLI.'
+  zh: '把本机已登录的 Loomy（讯飞办公助手）聊天模型注册为 DSH 的 `loomy` 供应商，提供输入框只读积分读数、账户/逐模型开关/上游诊断三栏设置分区，以及 status/doctor 命令行。与 2239058652/dsh-loomy-connect 注册同一个 `loomy` 供应商，两者不能同装；区别在于积分读数、诊断表与命令行。'
