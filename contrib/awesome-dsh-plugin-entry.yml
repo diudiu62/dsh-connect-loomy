@@ -1,0 +1,9 @@
+# 提交到 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
+# 文件名：data/plugins/<owner>__dsh-connect-loomy.yml
+# 把 OWNER 换成你的 GitHub 用户名，并确保包名/仓库名一致。
+url: https://github.com/OWNER/dsh-connect-loomy
+name: OWNER/dsh-connect-loomy
+category: model
+description:
+  en: Adds the Loomy desktop assistant's locally signed-in chat models to DeepSeek Harness as a provider route, with a settings section and a read-only credits readout in the composer.
+  zh: 把本机已登录的 Loomy（讯飞办公助手）聊天模型接入 DeepSeek Harness，提供设置分区与输入框里的只读积分读数。
