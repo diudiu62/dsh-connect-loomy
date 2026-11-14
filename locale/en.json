@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-connect-loomy",
+    "description": "Connects the Loomy desktop assistant's already signed-in chat models to DeepSeek Harness, with a settings card and a read-only credits overview."
+  }
+}

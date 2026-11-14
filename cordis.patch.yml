@@ -1,0 +1,6 @@
+# Declare this package a DSH bundle: the profile's `dsh.profile.bundles`
+# names the package, and `dsh` inserts the entry below into the plugin graph.
+# Same shape as dsh-connect-workbuddy / dsh-connect-trae (family convention).
+- insert:
+    - id: dsh-connect-loomy
+      name: dsh-connect-loomy

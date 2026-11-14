@@ -1,0 +1,403 @@
+/**
+ * Typed dictionary for the `settings.loomy` locale namespace.
+ *
+ * The runtime dictionaries live in the client bundle (the same split
+ * `dsh-connect-workbuddy` uses); `locale/en.json` and `locale/zh.json` are the
+ * *package* metadata the plugin market reads. Keeping the two apart is what the
+ * family does, and it prevents a package-metadata edit from silently changing
+ * UI copy.
+ *
+ * The `declare module` block is the family's standard idiom: it merges this
+ * namespace into `LocaleNamespaceMap`, which makes `ctx.locale.register(ns, {en, zh})`
+ * a compile-checked call where a missing key in either dictionary is an error.
+ * Every string the card renders — including the copied diagnostics report —
+ * goes through this dictionary; there is no hard-coded UI copy in components.
+ *
+ * @module dsh-connect-loomy/client/locale
+ */
+
+/** Dictionary namespace owned by this plugin. */
+export const NS = 'settings.loomy'
+
+/** Every key this plugin can render. */
+export type LoomyLocaleKey =
+  | 'tab.label'
+  | 'composer.pill'
+  | 'composer.pillBare'
+  | 'composer.pillPending'
+  | 'composer.pillTitle'
+  | 'card.title'
+  | 'card.subtitle'
+  | 'card.hostUnavailable'
+  | 'card.statusError'
+  | 'card.renderFailed'
+  | 'card.retry'
+  | 'tabs.aria'
+  | 'tabs.account'
+  | 'tabs.models'
+  | 'tabs.diagnostics'
+  | 'common.loading'
+  | 'common.refresh'
+  | 'common.refreshing'
+  | 'common.save'
+  | 'common.saving'
+  | 'common.discard'
+  | 'common.copy'
+  | 'common.copied'
+  | 'common.copyFailed'
+  | 'common.none'
+  | 'common.unknownError'
+  | 'account.title'
+  | 'account.loggedIn'
+  | 'account.loggedOut'
+  | 'account.phone'
+  | 'account.loginAt'
+  | 'account.credential'
+  | 'account.credentialFound'
+  | 'account.credentialMissing'
+  | 'account.redetect'
+  | 'account.redetecting'
+  | 'account.nextSteps'
+  | 'account.nextStep.login'
+  | 'account.nextStep.staySignedIn'
+  | 'account.nextStep.recheck'
+  | 'account.credits'
+  | 'account.credits.balance'
+  | 'account.credits.daily'
+  | 'account.credits.available'
+  | 'account.credits.fetchedAt'
+  | 'account.credits.failed'
+  | 'account.credits.unavailable'
+  | 'account.credits.records'
+  | 'account.credits.emptyRecords'
+  | 'account.credits.credit'
+  | 'account.credits.debit'
+  | 'models.title'
+  | 'models.description'
+  | 'models.refresh'
+  | 'models.refreshing'
+  | 'models.save'
+  | 'models.saving'
+  | 'models.discard'
+  | 'models.dirty'
+  | 'models.clean'
+  | 'models.saved'
+  | 'models.saveFailed'
+  | 'models.refreshFailed'
+  | 'models.unavailable'
+  | 'models.loading'
+  | 'models.idle'
+  | 'models.empty'
+  | 'models.column.model'
+  | 'models.column.multiplier'
+  | 'models.column.context'
+  | 'models.column.maxOutput'
+  | 'models.column.vision'
+  | 'models.column.efforts'
+  | 'models.vision.yes'
+  | 'models.vision.no'
+  | 'models.efforts.none'
+  | 'models.efforts.default'
+  | 'models.selection'
+  | 'models.refreshedAt'
+  | 'models.baselineUnknown'
+  | 'models.saveNeedsHost'
+  | 'models.toggle'
+  | 'diagnostics.title'
+  | 'diagnostics.description'
+  | 'diagnostics.copy'
+  | 'diagnostics.unavailable'
+  | 'diagnostics.loading'
+  | 'diagnostics.probes'
+  | 'diagnostics.probe.ok'
+  | 'diagnostics.probe.fail'
+  | 'diagnostics.upstream'
+  | 'diagnostics.upstream.baseUrl'
+  | 'diagnostics.upstream.models'
+  | 'diagnostics.upstream.points'
+  | 'diagnostics.account'
+  | 'diagnostics.catalog'
+  | 'diagnostics.catalog.counts'
+  | 'diagnostics.lastError'
+  | 'diagnostics.lastError.path'
+  | 'diagnostics.lastError.code'
+  | 'diagnostics.lastError.at'
+  | 'diagnostics.lastError.message'
+  | 'diagnostics.noLastError'
+  | 'diagnostics.refresh'
+  | 'diagnostics.report.title'
+  | 'diagnostics.report.generatedAt'
+  | 'diagnostics.report.route'
+  | 'diagnostics.report.credentialPath'
+  | 'diagnostics.report.probes'
+  | 'diagnostics.report.upstream'
+  | 'diagnostics.report.account'
+  | 'diagnostics.report.catalog'
+  | 'diagnostics.report.lastError'
+  | 'diagnostics.report.none'
+  | 'diagnostics.report.unknown'
+  | 'errors.csrf'
+  | 'errors.network'
+  | 'errors.badResponse'
+  | 'errors.unavailable'
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    /** Loomy settings card copy. */
+    'settings.loomy': LoomyLocaleKey
+  }
+}
+
+/** English copy. */
+export const en: Record<LoomyLocaleKey, string> = {
+  'tab.label': 'Loomy',
+  'composer.pill': 'Loomy · {amount}',
+  'composer.pillBare': 'Loomy',
+  'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
+  'composer.pillTitle': 'Loomy credits — available {available} (monthly {balance} + today {daily}). Click to refresh.',
+  'card.title': 'Loomy (iFlytek office assistant)',
+  'card.subtitle':
+    'Reuses the Loomy desktop app already signed in on this machine and adds its chat models to the DeepSeek Harness model picker.',
+  'card.hostUnavailable':
+    'The host does not expose the Loomy settings routes (404/503). Make sure the dsh-connect-loomy host half is enabled, then restart DSH.',
+  'card.statusError': 'Failed to read Loomy status: {message}',
+  'card.renderFailed': 'The Loomy settings card failed to render; the rest of the settings page is unaffected.',
+  'card.retry': 'Retry',
+  'tabs.aria': 'Loomy settings sections',
+  'tabs.account': 'Account',
+  'tabs.models': 'Models',
+  'tabs.diagnostics': 'Diagnostics',
+  'common.loading': 'Loading…',
+  'common.refresh': 'Refresh',
+  'common.refreshing': 'Refreshing…',
+  'common.save': 'Save',
+  'common.saving': 'Saving…',
+  'common.discard': 'Discard',
+  'common.copy': 'Copy',
+  'common.copied': 'Copied',
+  'common.copyFailed': 'Copy failed — select the text and copy it manually.',
+  'common.none': '—',
+  'common.unknownError': 'Unknown error',
+  'account.title': 'Local sign-in',
+  'account.loggedIn': 'Signed in',
+  'account.loggedOut': 'Not signed in',
+  'account.phone': 'Phone number',
+  'account.loginAt': 'Signed in at',
+  'account.credential': 'Credential file',
+  'account.credentialFound': 'Found: {path}',
+  'account.credentialMissing': 'Not found: {path}',
+  'account.redetect': 'Re-check',
+  'account.redetecting': 'Re-checking…',
+  'account.nextSteps': 'Next steps',
+  'account.nextStep.login': 'Open the Loomy desktop app and sign in with your phone number.',
+  'account.nextStep.staySignedIn':
+    'Keep the Loomy app signed in and run it once so it refreshes its credential file.',
+  'account.nextStep.recheck': 'Come back here and press “Re-check”.',
+  'account.credits': 'Read-only credits overview',
+  'account.credits.balance': 'Balance',
+  'account.credits.daily': 'Daily balance',
+  'account.credits.available': 'Available',
+  'account.credits.fetchedAt': 'Read at {time}',
+  'account.credits.failed': 'Could not read credits: {message}',
+  'account.credits.unavailable': 'The host does not expose the credits route.',
+  'account.credits.records': 'Recent records',
+  'account.credits.emptyRecords': 'No records',
+  'account.credits.credit': 'Credit',
+  'account.credits.debit': 'Debit',
+  'models.title': 'Model catalog',
+  'models.description':
+    'Checkboxes are a draft — only Save writes them into the model picker, and refreshing the catalog never overwrites unsaved checks.',
+  'models.refresh': 'Refresh catalog',
+  'models.refreshing': 'Refreshing…',
+  'models.save': 'Save selection',
+  'models.saving': 'Saving…',
+  'models.discard': 'Discard changes',
+  'models.dirty': 'Unsaved changes',
+  'models.clean': 'Matches the saved selection',
+  'models.saved': 'Saved — the model picker is up to date.',
+  'models.saveFailed': 'Save failed: {message}',
+  'models.refreshFailed': 'Catalog refresh failed: {message}',
+  'models.unavailable': 'The host does not expose the catalog refresh route.',
+  'models.loading': 'Loading the catalog…',
+  'models.idle': 'The catalog has not been loaded yet.',
+  'models.empty': 'The upstream catalog has no usable chat models.',
+  'models.column.model': 'Model',
+  'models.column.multiplier': 'Rate',
+  'models.column.context': 'Context',
+  'models.column.maxOutput': 'Max output',
+  'models.column.vision': 'Vision',
+  'models.column.efforts': 'Reasoning',
+  'models.vision.yes': 'Yes',
+  'models.vision.no': 'No',
+  'models.efforts.none': 'None',
+  'models.efforts.default': 'default {effort}',
+  'models.selection': '{selected}/{total} selected',
+  'models.refreshedAt': 'Catalog refreshed at {time}',
+  'models.baselineUnknown': 'The host has not reported the saved selection (enabledModelIds).',
+  'models.saveNeedsHost': 'The host is not ready yet; saving is disabled.',
+  'models.toggle': 'Enable {name}',
+  'diagnostics.title': 'Diagnostics',
+  'diagnostics.description': 'Read-only facts — copy the whole block into a bug report.',
+  'diagnostics.copy': 'Copy all',
+  'diagnostics.unavailable': 'The host does not expose the diagnostics route.',
+  'diagnostics.loading': 'Loading diagnostics…',
+  'diagnostics.probes': 'Credential path candidates',
+  'diagnostics.probe.ok': 'ok',
+  'diagnostics.probe.fail': 'unavailable',
+  'diagnostics.upstream': 'Upstream',
+  'diagnostics.upstream.baseUrl': 'Base URL',
+  'diagnostics.upstream.models': 'Models URL',
+  'diagnostics.upstream.points': 'Points URL',
+  'diagnostics.account': 'Account in service',
+  'diagnostics.catalog': 'Catalog',
+  'diagnostics.catalog.counts': '{total} models, {enabled} enabled',
+  'diagnostics.lastError': 'Last upstream error (verbatim)',
+  'diagnostics.lastError.path': 'Path',
+  'diagnostics.lastError.code': 'Code',
+  'diagnostics.lastError.at': 'At',
+  'diagnostics.lastError.message': 'Message',
+  'diagnostics.noLastError': 'No upstream error has been recorded',
+  'diagnostics.refresh': 'Reload',
+  'diagnostics.report.title': 'DSH Connect Loomy diagnostics report',
+  'diagnostics.report.generatedAt': 'Generated at',
+  'diagnostics.report.route': 'Host routes',
+  'diagnostics.report.credentialPath': 'Credential file conclusion',
+  'diagnostics.report.probes': 'Credential path candidates',
+  'diagnostics.report.upstream': 'Upstream',
+  'diagnostics.report.account': 'Account in service',
+  'diagnostics.report.catalog': 'Catalog',
+  'diagnostics.report.lastError': 'Last upstream error',
+  'diagnostics.report.none': 'none',
+  'diagnostics.report.unknown': 'unknown',
+  'errors.csrf': 'The host has not provided a CSRF token yet — re-check first.',
+  'errors.network': 'Cannot reach the host: {message}',
+  'errors.badResponse': 'The host response was malformed.',
+  'errors.unavailable': 'The host does not expose this route.',
+}
+
+/** Simplified Chinese copy. */
+export const zh: Record<LoomyLocaleKey, string> = {
+  'tab.label': 'Loomy',
+  'composer.pill': 'Loomy · {amount}',
+  'composer.pillBare': 'Loomy',
+  'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',
+  'composer.pillTitle': 'Loomy 积分：可用 {available}（包月剩余 {balance} + 今日额度 {daily}）。点击可刷新。',
+  'card.title': 'Loomy（讯飞办公助手）',
+  'card.subtitle':
+    '复用本机已登录的 Loomy 桌面端登录态，把它的聊天模型接入 DeepSeek Harness 模型选择器。',
+  'card.hostUnavailable':
+    '宿主没有提供 Loomy 设置路由（404/503）。请确认 dsh-connect-loomy 宿主侧已启用，然后重启 DSH。',
+  'card.statusError': '读取 Loomy 状态失败：{message}',
+  'card.renderFailed': 'Loomy 设置卡片渲染失败；宿主其余设置不受影响。',
+  'card.retry': '重试',
+  'tabs.aria': 'Loomy 设置分区',
+  'tabs.account': '账号',
+  'tabs.models': '模型',
+  'tabs.diagnostics': '诊断',
+  'common.loading': '加载中…',
+  'common.refresh': '刷新',
+  'common.refreshing': '刷新中…',
+  'common.save': '保存',
+  'common.saving': '保存中…',
+  'common.discard': '放弃修改',
+  'common.copy': '复制',
+  'common.copied': '已复制',
+  'common.copyFailed': '复制失败，请手动选择文本复制。',
+  'common.none': '—',
+  'common.unknownError': '未知错误',
+  'account.title': '本机登录态',
+  'account.loggedIn': '已登录',
+  'account.loggedOut': '未登录',
+  'account.phone': '手机号',
+  'account.loginAt': '登录时间',
+  'account.credential': '凭据文件',
+  'account.credentialFound': '已找到：{path}',
+  'account.credentialMissing': '未找到：{path}',
+  'account.redetect': '重新检测',
+  'account.redetecting': '检测中…',
+  'account.nextSteps': '下一步',
+  'account.nextStep.login': '打开 Loomy（讯飞办公助手）桌面端，用手机号完成登录。',
+  'account.nextStep.staySignedIn':
+    '确认 Loomy 桌面端保持登录，并让它在后台运行一次，以刷新凭据文件。',
+  'account.nextStep.recheck': '回到这里点「重新检测」。',
+  'account.credits': '只读积分概览',
+  'account.credits.balance': '账户余额',
+  'account.credits.daily': '每日余额',
+  'account.credits.available': '可用余额',
+  'account.credits.fetchedAt': '读取于 {time}',
+  'account.credits.failed': '积分读取失败：{message}',
+  'account.credits.unavailable': '宿主未提供积分路由。',
+  'account.credits.records': '最近流水',
+  'account.credits.emptyRecords': '暂无流水',
+  'account.credits.credit': '获得',
+  'account.credits.debit': '消费',
+  'models.title': '模型目录',
+  'models.description':
+    '勾选只是草稿，保存后才写入模型选择器；刷新目录不会覆盖未保存的勾选。',
+  'models.refresh': '刷新目录',
+  'models.refreshing': '刷新中…',
+  'models.save': '保存勾选',
+  'models.saving': '保存中…',
+  'models.discard': '放弃修改',
+  'models.dirty': '有未保存的修改',
+  'models.clean': '与已保存的选择一致',
+  'models.saved': '已保存，模型选择器已更新。',
+  'models.saveFailed': '保存失败：{message}',
+  'models.refreshFailed': '刷新目录失败：{message}',
+  'models.unavailable': '宿主未提供目录刷新路由。',
+  'models.loading': '正在读取目录…',
+  'models.idle': '尚未读取目录。',
+  'models.empty': '上游目录中没有可用的聊天模型。',
+  'models.column.model': '模型',
+  'models.column.multiplier': '倍率',
+  'models.column.context': '上下文',
+  'models.column.maxOutput': '最大输出',
+  'models.column.vision': '图片',
+  'models.column.efforts': '推理档位',
+  'models.vision.yes': '支持',
+  'models.vision.no': '不支持',
+  'models.efforts.none': '无',
+  'models.efforts.default': '默认 {effort}',
+  'models.selection': '已选 {selected}/{total}',
+  'models.refreshedAt': '目录刷新于 {time}',
+  'models.baselineUnknown': '宿主尚未提供已保存的勾选（enabledModelIds）。',
+  'models.saveNeedsHost': '宿主未就绪，暂时不能保存。',
+  'models.toggle': '启用 {name}',
+  'diagnostics.title': '诊断',
+  'diagnostics.description': '只读事实表，可直接整段复制到问题反馈。',
+  'diagnostics.copy': '复制全部',
+  'diagnostics.unavailable': '宿主未提供诊断路由。',
+  'diagnostics.loading': '正在读取诊断…',
+  'diagnostics.probes': '凭据候选路径',
+  'diagnostics.probe.ok': '可用',
+  'diagnostics.probe.fail': '不可用',
+  'diagnostics.upstream': '上游',
+  'diagnostics.upstream.baseUrl': '基地址',
+  'diagnostics.upstream.models': '模型目录',
+  'diagnostics.upstream.points': '积分流水',
+  'diagnostics.account': '在服务的账号',
+  'diagnostics.catalog': '模型目录',
+  'diagnostics.catalog.counts': '{total} 条，启用 {enabled} 条',
+  'diagnostics.lastError': '上游最近一次错误原文',
+  'diagnostics.lastError.path': '路径',
+  'diagnostics.lastError.code': '错误码',
+  'diagnostics.lastError.at': '时间',
+  'diagnostics.lastError.message': '原文',
+  'diagnostics.noLastError': '最近没有记录到上游错误',
+  'diagnostics.refresh': '重新读取',
+  'diagnostics.report.title': 'DSH Connect Loomy 诊断报告',
+  'diagnostics.report.generatedAt': '生成时间',
+  'diagnostics.report.route': '宿主路由',
+  'diagnostics.report.credentialPath': '凭据文件结论',
+  'diagnostics.report.probes': '凭据候选路径',
+  'diagnostics.report.upstream': '上游',
+  'diagnostics.report.account': '在服务的账号',
+  'diagnostics.report.catalog': '模型目录',
+  'diagnostics.report.lastError': '上游最近一次错误',
+  'diagnostics.report.none': '无',
+  'diagnostics.report.unknown': '未知',
+  'errors.csrf': '宿主尚未提供 CSRF 令牌，请先点「重新检测」。',
+  'errors.network': '无法连接宿主：{message}',
+  'errors.badResponse': '宿主响应格式不正确。',
+  'errors.unavailable': '宿主没有这条路由。',
+}

@@ -1,0 +1,18 @@
+# reference material is read-only reconnaissance, never shipped
+.refs/
+
+# dependencies and local pnpm store (kept inside the repo so the sandbox can write it)
+node_modules/
+.pnpm-store/
+.pnpm-cache/
+
+# build output
+lib/
+*.tsbuildinfo
+
+# editor / OS noise
+.DS_Store
+
+# team state / memory (never shipped)
+.agent-teams/
+.memsearch/
