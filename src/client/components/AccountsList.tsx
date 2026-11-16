@@ -148,6 +148,9 @@ function AccountRow({
         <Badge tone={row.origin === 'desktop' ? 'neutral' : 'ok'}>
           {row.origin === 'desktop' ? t('accounts.originDesktop') : t('accounts.originPlugin')}
         </Badge>
+        {row.unavailable === true ? (
+          <Badge tone="danger">{t('accounts.unavailableBadge')}</Badge>
+        ) : null}
       </div>
       <div className="loomy-account-meta">
         <span className="loomy-label">{t('accounts.route')}</span>
@@ -165,6 +168,9 @@ function AccountRow({
           </>
         )}
       </div>
+      {row.unavailable === true && row.unavailableMessage !== undefined ? (
+        <p className="loomy-muted">{t('accounts.unavailableWhy', { message: row.unavailableMessage })}</p>
+      ) : null}
       {row.origin === 'plugin' ? (
         <div className="loomy-actions">
           <CardButton onClick={() => onRemove(row.id)} disabled={removing || csrfToken === null}>

@@ -76,6 +76,8 @@ export type LoomyLocaleKey =
   | 'accounts.importBadJson'
   | 'accounts.registeredRoutes'
   | 'accounts.switchHint'
+  | 'accounts.unavailableBadge'
+  | 'accounts.unavailableWhy'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -251,6 +253,8 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.importBadJson': 'That is not valid JSON — paste the whole exported file, including the outer braces.',
   'accounts.registeredRoutes': 'Routes now in the model picker',
   'accounts.switchHint': 'Switching accounts happens in the model picker: each route below is one account, so picking a model under that route spends that account. The choice is per conversation.',
+  'accounts.unavailableBadge': 'skipped by pool',
+  'accounts.unavailableWhy': 'The rotation pool is skipping this account for now: {message}',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
@@ -428,6 +432,8 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.importBadJson': '内容不是合法 JSON——请把导出的完整文件粘进来（包括最外层的花括号）。',
   'accounts.registeredRoutes': '模型选择器里当前可用的路由',
   'accounts.switchHint': '切换账号在模型选择器里完成：下面每条路由就是一个账号，选中该路由下的模型就会用这个账号的额度。选择是按会话生效的。',
+  'accounts.unavailableBadge': '池已跳过',
+  'accounts.unavailableWhy': '自动轮换暂时跳过这个账号：{message}',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',

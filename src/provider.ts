@@ -35,6 +35,8 @@
  */
 
 import { BASE_ROUTE, isOurRoute, type AccountRoute } from './accounts.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { POOL_ROUTE, disqualifiesAccount, type AccountPool } from './pool.js'
 import {
   LlmError,
   resolveImageAttachmentAccess,
@@ -239,6 +241,11 @@ export interface ProviderDeps {
    * {@link ProviderDeps.readSession} (single-account behaviour).
    */
   sessionForRoute?: (route: string) => Promise<AuthSnapshot>
+  /**
+   * Account pool backing the `loomy-pool` route (opt-in rotation). Omission
+   * simply means that route does not exist.
+   */
+  pool?: AccountPool
   precheck: (
     session: string,
     options?: { force?: boolean },
@@ -305,6 +312,14 @@ function chunkHasContent(chunk: StreamChunk): boolean {
  * classification and costs no extra probe.
  */
 class LoomyAdapter extends PiAiAdapter {
+  /**
+   * Per-call pool selection. `AsyncLocalStorage` is what makes this safe under
+   * concurrency: the adapter's own `resolveApiKey(provider)` is a single
+   * function on the shared config, so the only way to give *this* call a
+   * specific account is to carry the pick alongside its async context.
+   */
+  private readonly poolContext = new AsyncLocalStorage<{ accountId: string; session: string }>()
+
   constructor(
     config: PiAiAdapterOptions,
     private readonly deps: ProviderDeps,
@@ -312,8 +327,32 @@ class LoomyAdapter extends PiAiAdapter {
     super(config)
   }
 
+  /** The account this call is bound to, if it went through the pool. */
+  private currentPick(): { accountId: string; session: string } | undefined {
+    return this.poolContext.getStore()
+  }
+
+  /** Used by the shared `resolveApiKey` to pick up this call's pool choice. */
+  currentPickForResolve(): { accountId: string; session: string } | undefined {
+    return this.poolContext.getStore()
+  }
+
   override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    return this.guard(super.stream(options))
+    if (options.provider !== POOL_ROUTE || this.deps.pool === undefined) {
+      return this.guard(super.stream(options))
+    }
+    const pool = this.deps.pool
+    const baseStream = super.stream.bind(this)
+    const self = this
+    return (async function* pooled(): AsyncGenerator<StreamChunk, void, undefined> {
+      const pick = await pool.pick()
+      if (pick.kind === 'empty') {
+        throw new LlmError(pick.reason, 'MISSING_CREDENTIAL')
+      }
+      const store = { accountId: pick.account.id, session: pick.account.session }
+      const inner = self.poolContext.run(store, () => baseStream(options))
+      yield* self.guardForPool(inner)
+    })()
   }
 
   /**
@@ -331,6 +370,37 @@ class LoomyAdapter extends PiAiAdapter {
     return {
       model: call.model,
       stream: (options: GenerateOptions) => this.guard(call.stream(options)),
+    }
+  }
+
+  /**
+   * `guard()`, plus pool accounting.
+   *
+   * A call counts as a **success** only once content actually arrived: an empty
+   * stream that ends in an error never clears a health mark, otherwise a broken
+   * account would look healthy again just by being picked.
+   */
+  async *guardForPool(upstream: AsyncIterable<StreamChunk>): AsyncGenerator<StreamChunk, void, undefined> {
+    const pick = this.currentPick()
+    const pool = this.deps.pool
+    let contentSeen = false
+    try {
+      for await (const chunk of this.guard(upstream)) {
+        if (chunkHasContent(chunk)) contentSeen = true
+        yield chunk
+      }
+      if (contentSeen && pick !== undefined && pool !== undefined) {
+        await pool.markHealthy(pick.accountId).catch(() => undefined)
+      }
+    } catch (error) {
+      if (pick !== undefined && pool !== undefined) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (disqualifiesAccount(message)) {
+          const code = error instanceof LlmError ? error.code : 'CALL_FAILED'
+          await pool.markUnavailable(pick.accountId, code, message).catch(() => undefined)
+        }
+      }
+      throw error
     }
   }
 
@@ -509,12 +579,24 @@ export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
 
   profiles = buildProfiles(installed)
 
+  /** Assigned immediately after construction; the config closure needs it. */
+  let adapterRef: LoomyAdapter | undefined
   const adapter = new LoomyAdapter(
     {
       // A new Map instance is what tells PiAiAdapter its snapshot is stale; an
       // unchanged map is recognised by identity and costs nothing.
       profiles: () => profiles,
       resolveApiKey: async (route, _profile) => {
+        // The pool route's account was chosen for this very call and parked in
+        // the async context by `stream()`; using it here is what keeps two
+        // concurrent calls from spending the same account.
+        if (route === POOL_ROUTE) {
+          const pick = adapterRef?.currentPickForResolve()
+          if (pick === undefined) {
+            throw new LlmError('账号池没有为本次调用选出账号', 'MISSING_CREDENTIAL')
+          }
+          return pick.session
+        }
         const snapshot =
           deps.sessionForRoute === undefined
             ? await deps.readSession()
@@ -549,6 +631,7 @@ export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
     },
     deps,
   )
+  adapterRef = adapter
 
   const runtime: ProviderRuntime = {
     adapter,

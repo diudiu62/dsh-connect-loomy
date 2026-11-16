@@ -66,14 +66,14 @@ test('a store keeps slots stable across add and remove', async () => {
 
     // Routes follow slots verbatim.
     let routes = await store.routes({ force: true })
-    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-2', 'loomy-3'])
+    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-2', 'loomy-3', 'loomy-pool'])
     assert.equal(routes[0].origin, 'plugin')
 
     // Removing the middle account must NOT renumber the third.
     const removed = await store.remove(second.account.id)
     assert.deepEqual(removed, { kind: 'ok', removed: true })
     routes = await store.routes({ force: true })
-    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-3'])
+    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-3', 'loomy-pool'], 'the pool stays offered while two accounts remain')
 
     // A new account reuses the freed slot rather than taking a higher one.
     const fourth = await store.add({ session: 'd'.repeat(40), phone: '13800000004' })
@@ -189,8 +189,8 @@ test('the provider installs one profile per route and re-collects on change', as
     assert.equal(runtime.routes()[0].route, 'loomy')
 
     runtime.setRoutes(routes)
-    assert.deepEqual(runtime.routes().map((r) => r.route), ['loomy', 'loomy-2'])
-    assert.equal(runtime.profiles.size, 2)
+    assert.deepEqual(runtime.routes().map((r) => r.route), ['loomy', 'loomy-2', 'loomy-pool'])
+    assert.equal(runtime.profiles.size, 3, 'two accounts plus the rotation pool')
     assert.equal(runtime.profiles.get('loomy-2').displayName.includes('Loomy 2'), true)
 
     // Each route's provider stamps its own id on the models it serves.
@@ -228,7 +228,7 @@ test('export produces a portable bundle; import merges it without clobbering slo
     assert.equal(result.added, 2)
     assert.equal(result.reassigned, 0)
     const routes = await into.routes({ force: true })
-    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-2'])
+    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-2', 'loomy-pool'])
 
     // Importing again is idempotent: same sessions refresh, nothing duplicates.
     const again = await into.importBundle(exported.bundle)

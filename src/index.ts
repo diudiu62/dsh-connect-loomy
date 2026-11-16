@@ -37,6 +37,7 @@ import { registerLoomyRoutes } from './routes.js'
 import { stateFilePath } from './shared/paths.js'
 import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
 import { createLoginService } from './login.js'
+import { createAccountPool } from './pool.js'
 import { accountIdOf, createAccountsStore, type AccountRoute } from './accounts.js'
 import { displayPhone, displayUserId } from './shared/text.js'
 import { createSessionPrecheck } from './auth.js'
@@ -148,6 +149,13 @@ export {
   writePluginAuthSession,
 } from './plugin-auth.js'
 export { createLoginService, SEND_CODE_COOLDOWN_MS, SMS_EXPIRES_MS } from './login.js'
+export {
+  createAccountPool,
+  disqualifiesAccount,
+  DEFAULT_POOL_COOLDOWN_MS,
+  POOL_ROUTE,
+  type AccountPool,
+} from './pool.js'
 
 /**
  * Mount the plugin.
@@ -216,6 +224,12 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     }
   }
 
+  /**
+   * The opt-in rotation pool. It shares the accounts store, so a failure mark
+   * written by one call is what the next call's candidate filter reads.
+   */
+  const pool = createAccountPool({ accounts })
+
   const catalog = createCatalogStore({
     baseURL,
     readSession: () => auth.read(),
@@ -278,6 +292,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     loomyVersion,
     readSession: () => auth.read(),
     sessionForRoute,
+    pool,
     precheck,
     logger: ctx.logger,
     // Image input is served through the host's durable attachment service.

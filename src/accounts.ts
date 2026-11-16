@@ -31,6 +31,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { displayPhone, displayUserId, isRecord, safeErrorMessage } from './shared/text.js'
+import { POOL_ROUTE } from './pool.js'
 
 /** Current accounts-file schema version. */
 export const ACCOUNTS_VERSION = 1
@@ -48,6 +49,15 @@ export interface StoredAccount {
   /** User-editable display label; falls back to the masked phone. */
   label?: string
   addedAt: number
+  /**
+   * Pool health. Set when a request through this account failed in a way that
+   * means "do not try this one next time" (dead session, upstream quota/auth
+   * refusal). The pool skips it until the cooldown lapses; a successful call
+   * clears it.
+   */
+  unavailableAt?: number
+  unavailableCode?: string
+  unavailableMessage?: string
 }
 
 /** Everything persisted. */
@@ -137,7 +147,8 @@ function isStoredAccount(value: unknown): value is StoredAccount {
     typeof value.session === 'string' &&
     value.session.length >= 16 &&
     !/\s/u.test(value.session) &&
-    typeof value.addedAt === 'number'
+    typeof value.addedAt === 'number' &&
+    (value.unavailableAt === undefined || typeof value.unavailableAt === 'number')
   )
 }
 
@@ -188,6 +199,10 @@ export interface AccountsStore {
   remove(id: string): Promise<{ kind: 'ok'; removed: boolean } | { kind: 'failure'; code: string; message: string }>
   /** Rename one account. */
   rename(id: string, label: string): Promise<{ kind: 'ok' } | { kind: 'failure'; code: string; message: string }>
+  /** Mark one account unusable (pool health), with the reason for the card. */
+  markUnavailable(id: string, code: string, message: string): Promise<void>
+  /** Clear the health mark after a successful call. */
+  markHealthy(id: string): Promise<void>
   /** Drop the in-memory cache so the next read hits disk. */
   invalidate(): void
   /** Produce a portable bundle carrying the sessions (secrets!). */
@@ -307,7 +322,7 @@ export function createAccountsStore(options: {
     async routes(routeOptions = {}) {
       const accounts = await load(routeOptions.force === true)
       if (accounts.length > 0) {
-        return accounts.map((account) => ({
+        const perAccount: AccountRoute[] = accounts.map((account) => ({
           route: routeForSlot(account.slot),
           slot: account.slot,
           displayName: routeDisplayName(account),
@@ -315,6 +330,17 @@ export function createAccountsStore(options: {
           accountId: account.id,
           ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
         }))
+        // The pool is only offered once there is something to pool over:
+        // rotating between one account would just be a slower alias for it.
+        if (accounts.length >= 2) {
+          perAccount.push({
+            route: POOL_ROUTE,
+            slot: 0,
+            displayName: `Loomy 池 · ${accounts.length} 个账号自动轮换`,
+            origin: 'plugin' as const,
+          })
+        }
+        return perAccount
       }
       // No plugin account: fall back to the desktop client's sign-in on slot 1,
       // which is byte-for-byte the single-account behaviour that shipped first.
@@ -492,6 +518,38 @@ export function createAccountsStore(options: {
       return { kind: 'ok', added, refreshed, skipped, reassigned }
     },
 
+    async markUnavailable(id, code, message) {
+      try {
+        const accounts = await load(true)
+        const next = accounts.map((account) =>
+          account.id === id
+            ? { ...account, unavailableAt: now(), unavailableCode: code, unavailableMessage: message }
+            : account,
+        )
+        await persist(next)
+      } catch {
+        // Health marking is advisory: a failed write must never fail a request.
+      }
+    },
+
+    async markHealthy(id) {
+      try {
+        const accounts = await load(true)
+        const changed = accounts.some(
+          (account) => account.id === id && account.unavailableAt !== undefined,
+        )
+        if (!changed) return
+        const next = accounts.map((account) => {
+          if (account.id !== id) return account
+          const { unavailableAt, unavailableCode, unavailableMessage, ...rest } = account
+          return rest
+        })
+        await persist(next)
+      } catch {
+        // Same as above: advisory only.
+      }
+    },
+
     invalidate() {
       cached = undefined
     },
@@ -596,6 +654,11 @@ export interface StoredAccountView {
   phone?: string
   userId?: string
   addedAt?: number
+  /** Pool health: true when the pool is currently skipping this account. */
+  unavailable?: boolean
+  unavailableAt?: number
+  unavailableCode?: string
+  unavailableMessage?: string
 }
 
 /** Build the card's account list (no sessions). */
@@ -615,6 +678,16 @@ export async function accountsView(
       ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
       ...(displayUserId(account.userId) === undefined ? {} : { userId: displayUserId(account.userId) }),
       addedAt: account.addedAt,
+      ...(account.unavailableAt === undefined
+        ? {}
+        : {
+            unavailable: true,
+            unavailableAt: account.unavailableAt,
+            ...(account.unavailableCode === undefined ? {} : { unavailableCode: account.unavailableCode }),
+            ...(account.unavailableMessage === undefined
+              ? {}
+              : { unavailableMessage: account.unavailableMessage }),
+          }),
     }))
   }
   const routes = await store.routes(options)

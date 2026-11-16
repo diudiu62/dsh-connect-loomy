@@ -98,6 +98,11 @@ export interface LoomyAccountRow {
   phone?: string
   userId?: string
   addedAt?: number
+  /** True while the rotation pool is skipping this account. */
+  unavailable?: boolean
+  unavailableAt?: number
+  unavailableCode?: string
+  unavailableMessage?: string
 }
 
 /** `GET /accounts` */
