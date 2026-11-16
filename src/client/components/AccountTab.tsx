@@ -87,6 +87,9 @@ export function AccountTab(props: AccountTabProps) {
           </CardButton>
         }
       >
+        {/* One panel: the rows, then the ways to add another row. Adding is a
+            list operation, so it lives at the end of the list rather than in a
+            section of its own. */}
         <AccountsList
           t={t}
           accounts={accounts}
@@ -96,16 +99,6 @@ export function AccountTab(props: AccountTabProps) {
           onAdoptDesktop={props.onAdoptDesktop}
           adopting={props.adopting}
         />
-        <PoolToggle
-          t={t}
-          pool={props.pool}
-          onToggle={props.onTogglePool}
-          saving={props.poolSaving}
-          csrfToken={props.csrfToken}
-        />
-      </Section>
-
-      <Section title={t('add.title')}>
         <AddAccountPanel
           t={t}
           csrfToken={props.csrfToken}
@@ -118,6 +111,13 @@ export function AccountTab(props: AccountTabProps) {
           importing={props.importing}
           notice={props.transferNotice}
           error={props.transferError}
+        />
+        <PoolToggle
+          t={t}
+          pool={props.pool}
+          onToggle={props.onTogglePool}
+          saving={props.poolSaving}
+          csrfToken={props.csrfToken}
         />
       </Section>
 

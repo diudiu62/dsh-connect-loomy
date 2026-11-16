@@ -289,3 +289,25 @@ test('every accepted paste is normalized to one canonical bundle before it is se
   assert.equal(maskedOnly.accounts[0].phone, undefined, 'a masked phone is not a phone')
   assert.equal(maskedOnly.accounts[0].label, '189****2700', 'it is kept as a label instead')
 })
+
+test('adding an account is the last row of the account list, not its own section', async () => {
+  await setupDom()
+  const { entry, t } = mountPlugin('zh')
+  installFetch(defaultRoutes())
+
+  await renderCard(entry, t, ({ container }) => {
+    // Only one "账号" heading: the add affordances live inside it.
+    const headings = [...container.querySelectorAll('.loomy-section-title')].map((node) => node.textContent)
+    assert.equal(headings.filter((text) => text === '添加账号').length, 0, 'no separate 添加账号 section')
+
+    // ...and they are a list row, so they align with the account rows.
+    const addRow = container.querySelector('.loomy-add-row')
+    assert.ok(addRow, 'the add affordances render as a row')
+    assert.ok(addRow.textContent.includes('验证码登录'))
+
+    // The row lives inside the same section that holds the account rows.
+    const section = addRow.closest('.loomy-section')
+    assert.ok(section, 'inside a section')
+    assert.ok(section.querySelector('.loomy-rows, .loomy-muted, .loomy-notice'))
+  })
+})

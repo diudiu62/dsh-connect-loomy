@@ -50,15 +50,18 @@ export function AddAccountPanel({
 
   return (
     <div className="loomy-add">
-      <div className="loomy-actions">
+      {/* Sits exactly where the next account row would: adding is one more
+          line in the list, not a separate destination. */}
+      <div className="loomy-row loomy-add-row">
+        <span className="loomy-row-identity">{t('add.title')}</span>
         <CardButton
-          variant={mode === 'login' ? 'primary' : 'default'}
+          variant={mode === 'login' ? 'primary' : 'ghost'}
           onClick={() => setMode(mode === 'login' ? null : 'login')}
         >
           {t('add.login')}
         </CardButton>
         <CardButton
-          variant={mode === 'transfer' ? 'primary' : 'default'}
+          variant={mode === 'transfer' ? 'primary' : 'ghost'}
           onClick={() => setMode(mode === 'transfer' ? null : 'transfer')}
         >
           {t('add.transfer')}
@@ -82,12 +85,12 @@ export function AddAccountPanel({
 
       {mode === 'transfer' ? (
         <div className="loomy-add-body">
-          <p className="loomy-muted">{t('add.transferHint')}</p>
+          <p className="loomy-row-note">{t('add.transferHint')}</p>
           <textarea
             className="loomy-input loomy-textarea"
             placeholder={t('add.pastePlaceholder')}
             value={text}
-            rows={4}
+            rows={3}
             onChange={(event) => setText(event.target.value)}
           />
           <div className="loomy-actions">
