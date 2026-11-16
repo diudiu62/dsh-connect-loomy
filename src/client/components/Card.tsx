@@ -15,7 +15,7 @@
  * @module dsh-connect-loomy/client/components/Card
  */
 
-import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   fetchCredits,
   fetchDiagnostics,
@@ -137,6 +137,20 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [poolSaving, setPoolSaving] = useState(false)
   const [adopting, setAdopting] = useState(false)
   const [exportingId, setExportingId] = useState<string | null>(null)
+
+  /** route → that account's own points, for the inline figure on each row. */
+  const creditsByRoute = useMemo(() => {
+    const map = new Map<string, { available: number; total: number; error?: string }>()
+    if (credits.kind !== 'ready') return map
+    for (const entry of credits.value.perAccount ?? []) {
+      map.set(entry.route, {
+        available: entry.availableBalance,
+        total: entry.balance,
+        ...(entry.error === undefined ? {} : { error: entry.error }),
+      })
+    }
+    return map
+  }, [credits])
 
   const abortRef = useRef<AbortController | null>(null)
   const csrfRef = useRef<string | null>(null)
@@ -646,6 +660,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             poolSaving={poolSaving}
             onAdoptDesktop={() => void adoptDesktop()}
             adopting={adopting}
+            creditsByRoute={creditsByRoute}
             onExportRow={(id) => void exportRow(id)}
             exportingId={exportingId}
           />

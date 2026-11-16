@@ -109,6 +109,7 @@ function makeDeps(overrides = {}) {
     auth: overrides.auth ?? authOf(),
     catalog: overrides.catalog ?? catalogOf(),
     credits: overrides.credits ?? creditsOf(),
+    ...(overrides.creditsFor === undefined ? {} : { creditsFor: overrides.creditsFor }),
     csrfToken: overrides.csrfToken ?? CSRF,
     baseURL: () => BASE,
     fetchImpl:
@@ -534,4 +535,86 @@ test('the pool route answers both GET and POST (one registration per path)', asy
   })
   assert.equal(post.status, 200, `POST answers, got ${post.status} ${post.text}`)
   assert.deepEqual(written, [true], 'the preference was written')
+})
+
+test('credits report every account separately and sum them at the top', async (t) => {
+  const perRoute = {
+    loomy: {
+      balance: 35500,
+      dailyBalance: 5000,
+      availableBalance: 40500,
+      fetchedAt: 1_794_574_693_000,
+      records: [{ description: 'a', direction: 'debit', pointsActual: 1, createdAt: 1, balanceAfter: 1 }],
+    },
+    'loomy-2': {
+      balance: 1200,
+      dailyBalance: 300,
+      availableBalance: 1500,
+      fetchedAt: 1_794_574_700_000,
+      records: [{ description: 'b', direction: 'credit', pointsActual: 2, createdAt: 2, balanceAfter: 2 }],
+    },
+  }
+  const cacheOf = (credits) => ({ read: async () => ({ kind: 'ok', credits }) })
+  const deps = makeDeps({
+    credits: cacheOf(perRoute.loomy),
+    creditsFor: (route) => cacheOf(perRoute[route]),
+    routes: () => [
+      { route: 'loomy', displayName: 'A', origin: 'plugin', slot: 1 },
+      { route: 'loomy-2', displayName: 'B', origin: 'plugin', slot: 2 },
+    ],
+    accounts: {
+      ...makeDeps().accounts,
+      list: async () => [
+        { id: '1', slot: 1, session: 's'.repeat(32), phone: '13800000001', addedAt: 1 },
+        { id: '2', slot: 2, session: 't'.repeat(32), phone: '13800000002', addedAt: 2 },
+      ],
+    },
+  })
+  const baseURL = await startRoutes(t, deps)
+  const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/credits`, {
+    headers: { host: new URL(baseURL).host, origin: baseURL },
+  })
+  assert.equal(response.status, 200)
+  const body = JSON.parse(response.text)
+
+  // Totals are the sum, so the headline number is what the user actually has.
+  assert.equal(body.availableBalance, 40500 + 1500)
+  assert.equal(body.balance, 35500 + 1200)
+  assert.equal(body.dailyBalance, 5000 + 300)
+
+  // ...and each account keeps its own figures for the rows.
+  assert.equal(body.perAccount.length, 2)
+  assert.deepEqual(
+    body.perAccount.map((entry) => [entry.route, entry.account, entry.availableBalance]),
+    [
+      ['loomy', '13800000001', 40500],
+      ['loomy-2', '13800000002', 1500],
+    ],
+  )
+
+  // The merged ledger keeps the source of every row.
+  assert.deepEqual(body.records.map((record) => record.source.route), ['loomy-2', 'loomy'])
+})
+
+test('one unreadable account does not blank the credits overview', async (t) => {
+  const okCache = { read: async () => ({ kind: 'ok', credits: { balance: 100, dailyBalance: 0, availableBalance: 100, fetchedAt: 1, records: [] } }) }
+  const deadCache = { read: async () => ({ kind: 'failure', failure: { at: 1, path: '/points/records', code: '100002', message: '缺少 token' } }) }
+  const deps = makeDeps({
+    credits: okCache,
+    creditsFor: (route) => (route === 'loomy-2' ? deadCache : okCache),
+    routes: () => [
+      { route: 'loomy', displayName: 'A', origin: 'plugin', slot: 1 },
+      { route: 'loomy-2', displayName: 'B', origin: 'plugin', slot: 2 },
+    ],
+    accounts: { ...makeDeps().accounts, list: async () => [] },
+  })
+  const baseURL = await startRoutes(t, deps)
+  const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/credits`, {
+    headers: { host: new URL(baseURL).host, origin: baseURL },
+  })
+  const body = JSON.parse(response.text)
+  assert.equal(body.ok, true, 'the readable account still answers')
+  assert.equal(body.availableBalance, 100)
+  const broken = body.perAccount.find((entry) => entry.route === 'loomy-2')
+  assert.equal(broken.error, '缺少 token', 'the failing row says why, verbatim')
 })

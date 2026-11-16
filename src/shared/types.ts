@@ -268,10 +268,29 @@ export interface CreditRecordView {
 }
 
 /** Read-only points overview. */
-export interface CreditsView {
+/** One account's own points, as the card shows it per row. */
+export interface CreditsAccountView {
+  route: string
+  /** Label or phone of the account, for the row. */
+  account?: string
   balance: number
   dailyBalance: number
   availableBalance: number
+  /** Set when this account could not be read; the others still render. */
+  error?: string
+}
+
+export interface CreditsView {
+  /**
+   * **Sum across every routed account.** A single account's numbers are in
+   * {@link CreditsView.perAccount}; the totals here are what the user has in
+   * total, which is only meaningful once several accounts exist.
+   */
+  balance: number
+  dailyBalance: number
+  availableBalance: number
+  /** Per-account breakdown, in route order. */
+  perAccount?: CreditsAccountView[]
   /** Epoch milliseconds this snapshot was fetched. */
   fetchedAt: number
   records: CreditRecordView[]

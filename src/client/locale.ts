@@ -88,6 +88,10 @@ export type LoomyLocaleKey =
   | 'accounts.exportRowHint'
   | 'accounts.routesNow'
   | 'accounts.adopted'
+  | 'accounts.creditsInline'
+  | 'accounts.creditsError'
+  | 'account.credits.total'
+  | 'account.credits.perAccount'
   | 'add.transfer'
   | 'add.export'
   | 'add.import'
@@ -275,6 +279,10 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.exportRowHint': 'Copy this account as a portable bundle.',
   'accounts.routesNow': 'Model picker routes:',
   'accounts.adopted': 'Added as {route} — pick it in the model picker.',
+  'accounts.creditsInline': '· {available} pts',
+  'accounts.creditsError': '· points unavailable',
+  'account.credits.total': 'Total (all accounts)',
+  'account.credits.perAccount': 'Per account',
   'accounts.export': 'Export accounts',
   'accounts.exporting': 'Exporting…',
   'accounts.exportHint': 'Exports every credential this machine can see — plugin accounts plus the Loomy desktop client sign-in. The file contains the session tokens themselves: it is the credential, not a cache. Anyone holding it can spend these accounts until the session expires (issued with a 14-day lifetime) or until you sign out. Keep it off shared machines.',
@@ -484,6 +492,10 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.exportRowHint': '把这一个账号导出为可迁移的包。',
   'accounts.routesNow': '模型选择器里的路由：',
   'accounts.adopted': '已添加为 {route}，可在模型选择器里选择。',
+  'accounts.creditsInline': '· {available} 分',
+  'accounts.creditsError': '· 积分不可用',
+  'account.credits.total': '合计（所有账号）',
+  'account.credits.perAccount': '各账号',
   'accounts.export': '导出账号',
   'accounts.exporting': '导出中…',
   'accounts.exportHint': '会把本机能看到的凭证都导出——插件登录的账号，外加 Loomy 桌面端的登录态。文件里就是 session 本身，是凭证不是缓存：拿到它的人在你退出登录前（会话按 14 天签发）可以一直花这些账号的积分。请勿放在共享机器上。',

@@ -272,7 +272,19 @@ export interface LoomyCreditsRecord {
 }
 
 /** `GET /credits` success payload. */
+/** One account's own points. */
+export interface LoomyCreditsAccount {
+  route: string
+  account?: string
+  balance: number
+  dailyBalance: number
+  availableBalance: number
+  error?: string
+}
+
 export interface LoomyCredits {
+  /** Per-account breakdown; the totals below are their sum. */
+  perAccount?: LoomyCreditsAccount[]
   ok: true
   balance: number
   dailyBalance: number

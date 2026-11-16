@@ -39,6 +39,19 @@ export const CARD_CSS = `
   line-height: 1.6;
 }
 .loomy-acct-row:hover { background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08)); }
+.loomy-acct-credits {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+.loomy-credit-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.1));
+}
 /* The identity gets the free space and truncates only when truly cramped; the
    route badge and the action keep their natural width so a row stays a row. */
 .loomy-acct-identity {

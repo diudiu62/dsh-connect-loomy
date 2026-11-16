@@ -52,6 +52,7 @@ export interface AccountTabProps {
   adopting: boolean
   onExportRow: (id: string) => void
   exportingId: string | null
+  creditsByRoute: Map<string, { available: number; total: number; error?: string }>
 }
 
 /** Render the account tab. */
@@ -102,6 +103,7 @@ export function AccountTab(props: AccountTabProps) {
           adopting={props.adopting}
           onExportRow={props.onExportRow}
           exportingId={props.exportingId}
+          creditsByRoute={props.creditsByRoute}
         />
         <p className="loomy-row-note">
           {t('accounts.routesNow')}{' '}
@@ -270,8 +272,11 @@ function CreditsBody({ t, credits }: { t: LoomyT; credits: Loadable<LoomyCredits
   }
 
   const value = credits.value
+  const perAccount = value.perAccount ?? []
+  const multi = perAccount.length > 1
   return (
     <div className="loomy-panel">
+      {multi ? <div className="loomy-section-title">{t('account.credits.total')}</div> : null}
       <div className="loomy-credits">
         <div className="loomy-credit-cell">
           <span className="loomy-label">{t('account.credits.available')}</span>
@@ -286,6 +291,28 @@ function CreditsBody({ t, credits }: { t: LoomyT; credits: Loadable<LoomyCredits
           <span className="loomy-credit-value">{formatCount(value.dailyBalance)}</span>
         </div>
       </div>
+      {multi ? (
+        <div className="loomy-credit-accounts">
+          <div className="loomy-section-title">{t('account.credits.perAccount')}</div>
+          {perAccount.map((entry) => (
+            <div className="loomy-acct-row" key={entry.route}>
+              <span className="loomy-acct-identity">{entry.account ?? entry.route}</span>
+              <code className="loomy-code">{entry.route}</code>
+              {entry.error === undefined ? (
+                <>
+                  <span className="loomy-toolbar-spacer" />
+                  <span className="loomy-acct-credits">{formatCount(entry.availableBalance)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="loomy-toolbar-spacer" />
+                  <span className="loomy-row-note">{entry.error}</span>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {value.records.length === 0 ? null : (
         <div className="loomy-records">
           {value.records.slice(0, 5).map((record, index) => (

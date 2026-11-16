@@ -40,6 +40,7 @@ import type {
   AccountsView,
   AuthStateView,
   CredentialCandidateView,
+  CreditsAccountView,
   CreditsView,
   DiagnosticsProbe,
   DiagnosticsView,
@@ -229,47 +230,99 @@ async function buildCredits(deps: RouteDeps): Promise<
   | { kind: 'failure'; failure: UpstreamErrorView }
 > {
   const primary = await deps.credits.read()
-  if (primary.kind === 'failure') return { kind: 'failure', failure: primary.failure }
 
-  // Defensive: the merge is an enhancement. A host built before multi-account
-  // (or a test double) may not wire these, and the overview must still answer
-  // with the primary account rather than 500.
+  // Defensive: the per-account breakdown is an enhancement. A host built before
+  // multi-account (or a test double) may not wire these, and the overview must
+  // still answer with the primary account rather than 500.
   const routes =
-    typeof deps.routes === 'function'
-      ? deps.routes().filter((entry) => entry.origin === 'plugin')
-      : []
+    typeof deps.routes === 'function' ? deps.routes().filter((entry) => entry.origin === 'plugin') : []
   if (deps.creditsFor === undefined || routes.length <= 1) {
+    if (primary.kind === 'failure') return { kind: 'failure', failure: primary.failure }
     return { kind: 'ok', credits: primary.credits }
   }
 
   const stored = await deps.accounts.list({ force: false })
-  const labelOf = (route: string): string | undefined => {
+  const accountOf = (route: string) => {
     const slot = route === 'loomy' ? 1 : Number(/^loomy-(\d+)$/u.exec(route)?.[1] ?? '0')
-    const account = stored.find((entry) => entry.slot === slot)
+    return stored.find((entry) => entry.slot === slot)
+  }
+  const labelOf = (route: string): string | undefined => {
+    const account = accountOf(route)
     return account === undefined ? undefined : (account.label ?? account.phone)
   }
 
+  // Every routed account is read independently: one dead session must not blank
+  // the whole overview, and its row says why instead.
   const perRoute = await Promise.all(
     routes.map(async (entry) => {
       const result =
-        entry.route === routes[0]?.route ? primary : await (deps.creditsFor as (route: string) => CreditsCache)(entry.route).read()
+        entry.route === routes[0]?.route
+          ? primary
+          : await (deps.creditsFor as (route: string) => CreditsCache)(entry.route).read()
       return { route: entry.route, result }
     }),
   )
 
+  const perAccount: CreditsAccountView[] = []
+  let balance = 0
+  let dailyBalance = 0
+  let availableBalance = 0
+  let readable = 0
+  let fetchedAt = 0
+
+  for (const { route, result } of perRoute) {
+    const account = labelOf(route)
+    if (result.kind === 'failure') {
+      perAccount.push({
+        route,
+        ...(account === undefined ? {} : { account }),
+        balance: 0,
+        dailyBalance: 0,
+        availableBalance: 0,
+        error: result.failure.message,
+      })
+      continue
+    }
+    readable += 1
+    balance += result.credits.balance
+    dailyBalance += result.credits.dailyBalance
+    availableBalance += result.credits.availableBalance
+    fetchedAt = Math.max(fetchedAt, result.credits.fetchedAt)
+    perAccount.push({
+      route,
+      ...(account === undefined ? {} : { account }),
+      balance: result.credits.balance,
+      dailyBalance: result.credits.dailyBalance,
+      availableBalance: result.credits.availableBalance,
+    })
+  }
+
+  // Nothing readable at all is a failure, not a zero: reporting 0 would look
+  // like an empty wallet instead of a broken session.
+  if (readable === 0) {
+    return { kind: 'failure', failure: perRoute[0]?.result.kind === 'failure' ? perRoute[0].result.failure : (primary as { failure: UpstreamErrorView }).failure }
+  }
+
   const records = perRoute.flatMap(({ route, result }) => {
     if (result.kind === 'failure') return []
-    const label = labelOf(route)
+    const account = labelOf(route)
     return result.credits.records.map((record) => ({
       ...record,
-      source: { route, ...(label === undefined ? {} : { account: label }) },
+      source: { route, ...(account === undefined ? {} : { account }) },
     }))
   })
   records.sort((left, right) => right.createdAt - left.createdAt)
 
   return {
     kind: 'ok',
-    credits: { ...primary.credits, records: records.slice(0, 20) },
+    credits: {
+      balance,
+      dailyBalance,
+      availableBalance,
+      fetchedAt: fetchedAt === 0 ? Date.now() : fetchedAt,
+      records: records.slice(0, 20),
+      perAccount,
+    },
   }
 }
 
