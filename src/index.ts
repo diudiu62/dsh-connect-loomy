@@ -408,6 +408,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     credits,
     creditsFor,
     accounts,
+    routes: () => runtime.routes(),
     refreshRoutes: async () => {
       await refreshRoutes()
     },

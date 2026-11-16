@@ -108,6 +108,24 @@ export function emptyAccounts(): PersistedAccounts {
   return { version: ACCOUNTS_VERSION, accounts: [] }
 }
 
+/**
+ * Normalize one stored row on read.
+ *
+ * Older builds could store a **masked** phone (`189****2700`) where a number
+ * belongs — it came from a bundle exported while masking was still on. Left
+ * in place it masks down again to nonsense (`1*****0`) in the provider name,
+ * so it is demoted to a label on the way out. The real number is not
+ * recoverable from it; the user's next login or import supplies one.
+ */
+function normalizeStoredAccount(account: StoredAccount): StoredAccount {
+  const phone = account.phone
+  if (phone !== undefined && phone.includes('*')) {
+    const { phone: _dropped, ...rest } = account
+    return { ...rest, label: account.label ?? phone }
+  }
+  return account
+}
+
 function isStoredAccount(value: unknown): value is StoredAccount {
   if (!isRecord(value)) return false
   return (
@@ -148,7 +166,7 @@ export function parseAccounts(text: string): PersistedAccounts {
     unique.push(account)
   }
   unique.sort((left, right) => left.slot - right.slot)
-  return { version: ACCOUNTS_VERSION, accounts: unique }
+  return { version: ACCOUNTS_VERSION, accounts: unique.map(normalizeStoredAccount) }
 }
 
 /** What adding an account produced. */

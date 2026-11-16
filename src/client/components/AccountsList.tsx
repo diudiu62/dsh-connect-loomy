@@ -108,6 +108,19 @@ export function AccountsList({
           </CardButton>
         </div>
       </div>
+      {accounts.kind === 'ready' && (accounts.value.routes ?? []).length > 0 ? (
+        <div>
+          <div className="loomy-section-title">{t('accounts.registeredRoutes')}</div>
+          <p className="loomy-muted">{t('accounts.switchHint')}</p>
+          <div className="loomy-account-meta">
+            {(accounts.value.routes ?? []).map((entry) => (
+              <code className="loomy-code" key={entry.route}>
+                {entry.route} → {entry.displayName}
+              </code>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {transferNotice === null ? null : <Notice tone="ok">{transferNotice}</Notice>}
       {transferError === null ? null : <Notice tone="error">{transferError}</Notice>}
     </div>

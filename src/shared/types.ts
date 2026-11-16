@@ -82,6 +82,8 @@ export interface AccountsView {
   accounts: AccountRowView[]
   /** Route currently bound to slot 1, for the card's "primary" hint. */
   primaryRoute?: string
+  /** Every provider route the host has registered right now. */
+  routes?: Array<{ route: string; displayName: string; origin: 'plugin' | 'desktop'; slot: number }>
 }
 
 /** `GET /auth/state` — whether the plugin holds its own login. */

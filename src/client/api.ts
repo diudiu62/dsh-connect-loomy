@@ -105,6 +105,8 @@ export interface LoomyAccounts {
   ok: boolean
   accounts: LoomyAccountRow[]
   primaryRoute?: string
+  /** Routes the host has actually registered — what the picker can offer. */
+  routes?: Array<{ route: string; displayName: string; origin: 'plugin' | 'desktop'; slot: number }>
 }
 
 /** `GET /auth/state` response. */

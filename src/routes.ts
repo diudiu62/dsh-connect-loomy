@@ -69,6 +69,13 @@ export interface RouteDeps {
   creditsFor?: (route: string) => CreditsCache
   /** The multi-account store. */
   accounts: AccountsStore
+  /** Routes the adapter currently owns (what the picker can offer). */
+  routes: () => ReadonlyArray<{
+    route: string
+    displayName: string
+    origin: 'plugin' | 'desktop'
+    slot: number
+  }>
   /** Reconcile provider routes after an account change. */
   refreshRoutes: () => Promise<unknown>
   login: LoginService
@@ -466,6 +473,12 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
         const payload: AccountsView = {
           ok: true,
           accounts: rows,
+          routes: deps.routes().map((entry) => ({
+            route: entry.route,
+            displayName: entry.displayName,
+            origin: entry.origin,
+            slot: entry.slot,
+          })),
           ...(route === undefined || !rows.some((row) => row.route === route)
             ? {}
             : { primaryRoute: route }),
