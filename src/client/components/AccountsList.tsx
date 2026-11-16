@@ -56,11 +56,9 @@ export function AccountsList({
       {accounts.value.accounts.map((row) => (
         <div className="loomy-acct-row" key={row.id}>
           <span className="loomy-acct-identity">{identityOf(row, t)}</span>
-          {row.route.length > 0 ? (
-            <code className="loomy-code">{row.route}</code>
-          ) : (
+          {row.origin === 'desktop' && row.route.length === 0 ? (
             <span className="loomy-label">{t('accounts.notRouted')}</span>
-          )}
+          ) : null}
           {row.origin === 'desktop' ? <Badge tone="neutral">{t('accounts.originDesktop')}</Badge> : null}
           {balanceOf(row, creditsByRoute, t) === null ? null : (
             <span className="loomy-acct-credits">{balanceOf(row, creditsByRoute, t)}</span>

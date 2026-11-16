@@ -18,6 +18,7 @@ import {
 
 const STATUS_URL = '/plugins/dsh-connect-loomy/status'
 const CREDITS_URL = '/plugins/dsh-connect-loomy/credits'
+const ACCOUNTS_URL = '/plugins/dsh-connect-loomy/accounts'
 
 test('signed in: phone, login time, credential path and credits render', async () => {
   await setupDom()
@@ -257,5 +258,56 @@ test('mount loads the account list and the login state (never stuck on loading)'
     assert.ok(!text.includes('账号\n加载中'), 'the account panel must not stay on loading')
     // The fixture's desktop account proves the rows actually rendered.
     assert.ok(text.includes('loomy'), 'the account route is rendered')
+  })
+})
+
+test('the account rows and the credits overview do not repeat internal route ids', async () => {
+  await setupDom()
+  const { entry, t } = mountPlugin('zh')
+  installFetch(
+    defaultRoutes({
+      [ACCOUNTS_URL]: {
+        body: {
+          ok: true,
+          accounts: [
+            { id: 'a1', slot: 1, route: 'loomy', displayName: 'Loomy · 18912342700', origin: 'plugin', phone: '18912342700' },
+            { id: 'a2', slot: 2, route: 'loomy-2', displayName: 'Loomy 2 · 17166422065', origin: 'plugin', phone: '17166422065' },
+          ],
+          routes: [
+            { route: 'loomy', displayName: 'Loomy · 18912342700', origin: 'plugin', slot: 1 },
+            { route: 'loomy-2', displayName: 'Loomy 2 · 17166422065', origin: 'plugin', slot: 2 },
+          ],
+        },
+      },
+      [CREDITS_URL]: {
+        body: {
+          ok: true,
+          balance: 36700,
+          dailyBalance: 5300,
+          availableBalance: 42000,
+          fetchedAt: 1794574693000,
+          perAccount: [
+            { route: 'loomy', account: '18912342700', balance: 35500, dailyBalance: 5000, availableBalance: 40500 },
+            { route: 'loomy-2', account: '17166422065', balance: 1200, dailyBalance: 300, availableBalance: 1500 },
+          ],
+          records: [],
+        },
+      },
+    }),
+  )
+
+  await renderCard(entry, t, async ({ container }) => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const rows = [...container.querySelectorAll('.loomy-acct-row')].map((node) => node.textContent)
+    // The row shows who the account is and what it has, not the pi-ai route id.
+    assert.ok(rows.some((text) => text.includes('18912342700')))
+    assert.ok(
+      rows.every((text) => !/loomy-2?\b/u.test(text)),
+      `a row must not print the route id: ${JSON.stringify(rows)}`,
+    )
+
+    // The overview shows totals only; the per-account split lives on the rows.
+    assert.equal(container.querySelector('.loomy-credit-accounts'), null)
+    assert.ok(container.textContent.includes('42,000'), 'the total is rendered')
   })
 })
