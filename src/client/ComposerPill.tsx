@@ -26,7 +26,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   describeError,
-  fetchAccounts,
+  fetchActiveAccount,
   fetchCredits,
   fetchStatus,
   isAbortError,
@@ -81,11 +81,12 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   const owns = isLoomyRoute(provider)
 
   const [credits, setCredits] = useState<LoomyCredits | null>(null)
-  const [routeName, setRouteName] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [csrfToken, setCsrfToken] = useState<string | null>(null)
   const [creditsByRoute, setCreditsByRoute] = useState<Map<string, { available: number; error?: string }>>(new Map())
+  /** Rotation decides per call, so no single account's figure is "the" figure. */
+  const [rotating, setRotating] = useState(false)
   const inFlight = useRef<AbortController | null>(null)
 
   const load = useCallback(
@@ -99,14 +100,12 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
         .catch(() => {
           // Without a token the drawer opens read-only; switching is disabled.
         })
-      fetchAccounts({ signal })
+      fetchActiveAccount({ signal })
         .then((result) => {
-          if (result.kind !== 'ok') return
-          const entry = (result.value.routes ?? []).find((candidate) => candidate.route === route)
-          if (entry !== undefined) setRouteName(entry.displayName)
+          if (result.kind === 'ok') setRotating(result.value.rotating === true)
         })
         .catch(() => {
-          // Naming the account is a nicety; the figure below still renders.
+          // Keep the per-account figure; it is never wrong, only narrower.
         })
       fetchCredits({ signal })
         .then((result) => {
@@ -179,24 +178,21 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   // like "the plugin is not installed", which is the opposite of informative.
   if (!owns) return null
 
-  // The badge must always say *whose* number it is showing. Until the account
-  // list resolves, "Loomy" stands in for the account name rather than dropping
-  // it — a bare figure with no source is the thing this badge exists to avoid.
-  // The pool's own name is a sentence ("随机分配（2 个账号）"); the badge is 24px
-  // tall, so it gets the short form and leaves the long name to the picker.
-  const account =
-    provider === 'loomy-pool'
-      ? (t?.('composer.pillPool') ?? 'Pool')
-      : (routeName ?? (t?.('composer.pillBare') ?? 'Loomy'))
-  // This route's own points, when the host reports a split; otherwise the
-  // aggregate, which is all a single-account host can know.
+  // The badge stays short: the product name plus the figure that is actually
+  // true right now. Which account that figure belongs to is the drawer's job —
+  // putting a phone number here made the badge wider than the model picker.
+  //   rotation on  → the sum, because any account may be charged next;
+  //   rotation off → that account's own balance.
   const own = credits?.perAccount?.find((entry) => entry.route === provider)
-  const amount = own === undefined ? credits?.availableBalance : own.availableBalance
+  const amount = rotating ? credits?.availableBalance : (own?.availableBalance ?? credits?.availableBalance)
+  const accountName = t?.('composer.pillBare') ?? 'Loomy'
 
   const label =
     amount === undefined
-      ? account
-      : (t?.('composer.pill', { account, amount: formatCount(amount) }) ?? `${account} · ${formatCount(amount)}`)
+      ? accountName
+      : (t?.('composer.pill', { account: accountName, amount: formatCount(amount) }) ??
+        `${accountName} · ${formatCount(amount)}`)
+
   // The pill's own number is `availableBalance`; the tooltip spells out the two
   // buckets it adds up, so a session never shows one figure here and a
   // differently-labelled second one on hover.

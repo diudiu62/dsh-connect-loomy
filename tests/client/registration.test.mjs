@@ -369,3 +369,43 @@ test('the composer badge opens an account drawer instead of relying on picker gr
     { useProjection: () => ({ next: { provider: 'loomy' } }) },
   )
 })
+
+test('the badge stays short: Loomy plus the figure, sum when rotating', async () => {
+  const render = async (rotating) => {
+    await setupDom()
+    const { composerEntry, t } = mountPlugin('zh')
+    installFetch(
+      defaultRoutes({
+        '/plugins/dsh-connect-loomy/credits': {
+          body: {
+            ok: true,
+            balance: 36700,
+            dailyBalance: 5300,
+            availableBalance: 42000,
+            fetchedAt: 1,
+            // The single route reports the active account's own points.
+            perAccount: [
+              { route: 'loomy', account: '18912342700', balance: 35500, dailyBalance: 5000, availableBalance: 40500 },
+            ],
+            records: [],
+          },
+        },
+        '/plugins/dsh-connect-loomy/accounts/active': { body: { ok: true, activeId: 'a1', rotating } },
+      }),
+    )
+    return renderCard(
+      composerEntry,
+      t,
+      async ({ container }) => {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return container.querySelector('.loomy-pill')?.textContent ?? ''
+      },
+      { useProjection: () => ({ next: { provider: 'loomy' } }) },
+    )
+  }
+
+  // One account is paying, so its own balance is the honest number.
+  assert.equal(await render(false), 'Loomy · 40,500')
+  // Any account may be charged next, so the badge shows what is left in total.
+  assert.equal(await render(true), 'Loomy · 42,000')
+})
