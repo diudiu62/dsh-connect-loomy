@@ -84,7 +84,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [csrfToken, setCsrfToken] = useState<string | null>(null)
-  const [creditsByRoute, setCreditsByRoute] = useState<Map<string, { available: number; error?: string }>>(new Map())
+  const [creditsByAccount, setCreditsByAccount] = useState<Map<string, { available: number; error?: string }>>(new Map())
   /** Rotation decides per call, so no single account's figure is "the" figure. */
   const [rotating, setRotating] = useState(false)
   const inFlight = useRef<AbortController | null>(null)
@@ -114,14 +114,15 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
           // where that condition is explained.
           if (result.kind !== 'ok') return
           setCredits(result.value)
+          // Keyed by account: one route now serves every account.
           const map = new Map<string, { available: number; error?: string }>()
           for (const entry of result.value.perAccount ?? []) {
-            map.set(entry.route, {
+            map.set(entry.accountId ?? entry.route, {
               available: entry.availableBalance,
               ...(entry.error === undefined ? {} : { error: entry.error }),
             })
           }
-          setCreditsByRoute(map)
+          setCreditsByAccount(map)
         })
         .catch((error: unknown) => {
           if (isAbortError(error)) return
@@ -223,7 +224,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
         <AccountDrawer
           t={t as never}
           csrfToken={csrfToken}
-          creditsByRoute={creditsByRoute}
+          creditsByAccount={creditsByAccount}
           onClose={() => setOpen(false)}
           onChanged={() => {
             if (provider !== undefined) load(new AbortController().signal, provider)

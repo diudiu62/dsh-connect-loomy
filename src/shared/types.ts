@@ -281,12 +281,18 @@ export interface CreditRecordView {
    * list of amounts is ambiguous: the same description can appear twice with
    * different balances. Naming the source makes the merged list readable.
    */
-  source?: { route: string; account?: string }
+  source?: { route: string; account?: string; accountId?: string }
 }
 
 /** Read-only points overview. */
 /** One account's own points, as the card shows it per row. */
 export interface CreditsAccountView {
+  /**
+   * Stored account id. This is the key every consumer must use: several
+   * accounts share the single `loomy` route, so a route is no longer an
+   * account identifier.
+   */
+  accountId?: string
   route: string
   /** Label or phone of the account, for the row. */
   account?: string

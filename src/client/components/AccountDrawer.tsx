@@ -34,14 +34,14 @@ export interface AccountDrawerProps {
   /** CSRF token, read from /status by the badge before opening. */
   csrfToken: string | null
   /** Per-route points, so each row can show what it has. */
-  creditsByRoute: Map<string, { available: number; error?: string }>
+  creditsByAccount: Map<string, { available: number; error?: string }>
   onClose: () => void
   /** Called after any change so the badge can re-read its figure. */
   onChanged: () => void
 }
 
 /** Render the drawer panel. */
-export function AccountDrawer({ t, csrfToken, creditsByRoute, onClose, onChanged }: AccountDrawerProps) {
+export function AccountDrawer({ t, csrfToken, creditsByAccount, onClose, onChanged }: AccountDrawerProps) {
   const [accounts, setAccounts] = useState<LoomyAccountRow[] | null>(null)
   const [active, setActive] = useState<LoomyActiveAccount | null>(null)
   const [pool, setPool] = useState<LoomyPoolState | null>(null)
@@ -155,7 +155,7 @@ export function AccountDrawer({ t, csrfToken, creditsByRoute, onClose, onChanged
         ) : (
           accounts.map((row) => {
             const isActive = rotating ? false : active?.activeId === row.id
-            const credits = creditsByRoute.get(row.route)
+                    const credits = creditsByAccount.get(row.id)
             return (
               <button
                 type="button"

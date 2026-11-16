@@ -110,6 +110,7 @@ function makeDeps(overrides = {}) {
     catalog: overrides.catalog ?? catalogOf(),
     credits: overrides.credits ?? creditsOf(),
     ...(overrides.creditsFor === undefined ? {} : { creditsFor: overrides.creditsFor }),
+    ...(overrides.creditsForAccount === undefined ? {} : { creditsForAccount: overrides.creditsForAccount }),
     csrfToken: overrides.csrfToken ?? CSRF,
     baseURL: () => BASE,
     fetchImpl:
@@ -555,18 +556,15 @@ test('credits report every account separately and sum them at the top', async (t
     },
   }
   const cacheOf = (credits) => ({ read: async () => ({ kind: 'ok', credits }) })
+  const byAccount = { acc1: perRoute.loomy, acc2: perRoute['loomy-2'] }
   const deps = makeDeps({
     credits: cacheOf(perRoute.loomy),
-    creditsFor: (route) => cacheOf(perRoute[route]),
-    routes: () => [
-      { route: 'loomy', displayName: 'A', origin: 'plugin', slot: 1 },
-      { route: 'loomy-2', displayName: 'B', origin: 'plugin', slot: 2 },
-    ],
+    creditsForAccount: (account) => cacheOf(byAccount[account.id]),
     accounts: {
       ...makeDeps().accounts,
       list: async () => [
-        { id: '1', slot: 1, session: 's'.repeat(32), phone: '13800000001', addedAt: 1 },
-        { id: '2', slot: 2, session: 't'.repeat(32), phone: '13800000002', addedAt: 2 },
+        { id: 'acc1', slot: 1, session: 's'.repeat(32), phone: '13800000001', addedAt: 1 },
+        { id: 'acc2', slot: 2, session: 't'.repeat(32), phone: '13800000002', addedAt: 2 },
       ],
     },
   })
@@ -585,15 +583,15 @@ test('credits report every account separately and sum them at the top', async (t
   // ...and each account keeps its own figures for the rows.
   assert.equal(body.perAccount.length, 2)
   assert.deepEqual(
-    body.perAccount.map((entry) => [entry.route, entry.account, entry.availableBalance]),
+    body.perAccount.map((entry) => [entry.accountId, entry.account, entry.availableBalance]),
     [
-      ['loomy', '13800000001', 40500],
-      ['loomy-2', '13800000002', 1500],
+      ['acc1', '13800000001', 40500],
+      ['acc2', '13800000002', 1500],
     ],
   )
 
-  // The merged ledger keeps the source of every row.
-  assert.deepEqual(body.records.map((record) => record.source.route), ['loomy-2', 'loomy'])
+  // The merged ledger keeps the source of every row, by account.
+  assert.deepEqual(body.records.map((record) => record.source.accountId), ['acc2', 'acc1'])
 })
 
 test('one unreadable account does not blank the credits overview', async (t) => {
@@ -601,12 +599,14 @@ test('one unreadable account does not blank the credits overview', async (t) => 
   const deadCache = { read: async () => ({ kind: 'failure', failure: { at: 1, path: '/points/records', code: '100002', message: '缺少 token' } }) }
   const deps = makeDeps({
     credits: okCache,
-    creditsFor: (route) => (route === 'loomy-2' ? deadCache : okCache),
-    routes: () => [
-      { route: 'loomy', displayName: 'A', origin: 'plugin', slot: 1 },
-      { route: 'loomy-2', displayName: 'B', origin: 'plugin', slot: 2 },
-    ],
-    accounts: { ...makeDeps().accounts, list: async () => [] },
+    creditsForAccount: (account) => (account.id === 'acc2' ? deadCache : okCache),
+    accounts: {
+      ...makeDeps().accounts,
+      list: async () => [
+        { id: 'acc1', slot: 1, session: 's'.repeat(32), phone: '13800000001', addedAt: 1 },
+        { id: 'acc2', slot: 2, session: 't'.repeat(32), phone: '13800000002', addedAt: 2 },
+      ],
+    },
   })
   const baseURL = await startRoutes(t, deps)
   const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/credits`, {
@@ -615,6 +615,6 @@ test('one unreadable account does not blank the credits overview', async (t) => 
   const body = JSON.parse(response.text)
   assert.equal(body.ok, true, 'the readable account still answers')
   assert.equal(body.availableBalance, 100)
-  const broken = body.perAccount.find((entry) => entry.route === 'loomy-2')
+  const broken = body.perAccount.find((entry) => entry.accountId === 'acc2')
   assert.equal(broken.error, '缺少 token', 'the failing row says why, verbatim')
 })

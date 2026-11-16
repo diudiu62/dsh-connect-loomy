@@ -26,8 +26,8 @@ export interface AccountsListProps {
   /** Copy that one account's bundle to the clipboard. */
   onExportRow: (id: string) => void
   exportingId: string | null
-  /** Each account's own points, keyed by route. */
-  creditsByRoute?: Map<string, { available: number; total: number; error?: string }>
+  /** Each account's own points, keyed by stored account id. */
+  creditsByAccount?: Map<string, { available: number; total: number; error?: string }>
 }
 
 /** Render every account as a compact row. */
@@ -41,7 +41,7 @@ export function AccountsList({
   adopting,
   onExportRow,
   exportingId,
-  creditsByRoute,
+  creditsByAccount,
 }: AccountsListProps) {
   if (accounts.kind === 'idle' || accounts.kind === 'loading') return <p className="loomy-muted">{t('common.loading')}</p>
   if (accounts.kind === 'stale') return <Notice tone="error">{accounts.message}</Notice>
@@ -60,8 +60,8 @@ export function AccountsList({
             <span className="loomy-label">{t('accounts.notRouted')}</span>
           ) : null}
           {row.origin === 'desktop' ? <Badge tone="neutral">{t('accounts.originDesktop')}</Badge> : null}
-          {balanceOf(row, creditsByRoute, t) === null ? null : (
-            <span className="loomy-acct-credits">{balanceOf(row, creditsByRoute, t)}</span>
+          {balanceOf(row, creditsByAccount, t) === null ? null : (
+            <span className="loomy-acct-credits">{balanceOf(row, creditsByAccount, t)}</span>
           )}
           {row.unavailable === true ? <Badge tone="danger">{t('accounts.unavailableBadge')}</Badge> : null}
           <span className="loomy-toolbar-spacer" />
@@ -107,11 +107,12 @@ export function AccountsList({
 /** This account's own available balance, or null when unreadable/not routed. */
 function balanceOf(
   row: LoomyAccountRow,
-  creditsByRoute: Map<string, { available: number; total: number; error?: string }> | undefined,
+  creditsByAccount: Map<string, { available: number; total: number; error?: string }> | undefined,
   t: LoomyT,
 ): string | null {
-  if (creditsByRoute === undefined || row.route.length === 0) return null
-  const entry = creditsByRoute.get(row.route)
+  // The desktop row has no stored id, so it has no figure to show.
+  if (creditsByAccount === undefined || row.origin === 'desktop') return null
+  const entry = creditsByAccount.get(row.id)
   if (entry === undefined) return null
   if (entry.error !== undefined) return t('accounts.creditsError')
   return t('accounts.creditsInline', { available: formatCount(entry.available) })

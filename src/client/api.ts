@@ -274,7 +274,7 @@ export interface LoomyCreditsRecord {
   /** Model that produced this deduction (upstream `modelName`). */
   model?: string
   /** Which account this row came from (multi-account ledger). */
-  source?: { route: string; account?: string }
+  source?: { route: string; account?: string; accountId?: string }
   description: string
   direction: 'credit' | 'debit'
   pointsActual: number
@@ -285,6 +285,8 @@ export interface LoomyCreditsRecord {
 /** `GET /credits` success payload. */
 /** One account's own points. */
 export interface LoomyCreditsAccount {
+  /** Stored account id — the only stable key now that one route serves all. */
+  accountId?: string
   route: string
   account?: string
   balance: number

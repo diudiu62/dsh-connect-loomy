@@ -70,8 +70,10 @@ export interface RouteDeps {
   auth: AuthStore
   catalog: CatalogStore
   credits: CreditsCache
-  /** Per-route credits (multi-account); falls back to `credits` when absent. */
+  /** Per-route credits (single-route hosts); kept for older wiring. */
   creditsFor?: (route: string) => CreditsCache
+  /** Per-**account** credits, which is what the breakdown needs. */
+  creditsForAccount?: (account: { id: string; session: string; phone?: string }) => CreditsCache
   /** The multi-account store. */
   accounts: AccountsStore
   /** Read/write which account the single route authenticates as. */
@@ -237,36 +239,21 @@ async function buildCredits(deps: RouteDeps): Promise<
 > {
   const primary = await deps.credits.read()
 
-  // Defensive: the per-account breakdown is an enhancement. A host built before
-  // multi-account (or a test double) may not wire these, and the overview must
-  // still answer with the primary account rather than 500.
-  const routes =
-    typeof deps.routes === 'function' ? deps.routes().filter((entry) => entry.origin === 'plugin') : []
-  if (deps.creditsFor === undefined || routes.length <= 1) {
+  // The breakdown keys on **accounts**, not routes. Since accounts share the
+  // single `loomy` route, iterating routes found exactly one entry and fell
+  // back to the aggregate — which is why per-account figures and ledger sources
+  // silently disappeared when the picker was consolidated.
+  const stored = deps.creditsForAccount === undefined ? [] : await deps.accounts.list({ force: false })
+  if (deps.creditsForAccount === undefined || stored.length === 0) {
     if (primary.kind === 'failure') return { kind: 'failure', failure: primary.failure }
     return { kind: 'ok', credits: primary.credits }
   }
 
-  const stored = await deps.accounts.list({ force: false })
-  const accountOf = (route: string) => {
-    const slot = route === 'loomy' ? 1 : Number(/^loomy-(\d+)$/u.exec(route)?.[1] ?? '0')
-    return stored.find((entry) => entry.slot === slot)
-  }
-  const labelOf = (route: string): string | undefined => {
-    const account = accountOf(route)
-    return account === undefined ? undefined : (account.label ?? account.phone)
-  }
-
-  // Every routed account is read independently: one dead session must not blank
-  // the whole overview, and its row says why instead.
   const perRoute = await Promise.all(
-    routes.map(async (entry) => {
-      const result =
-        entry.route === routes[0]?.route
-          ? primary
-          : await (deps.creditsFor as (route: string) => CreditsCache)(entry.route).read()
-      return { route: entry.route, result }
-    }),
+    stored.map(async (account) => ({
+      account,
+      result: await deps.creditsForAccount!(account).read(),
+    })),
   )
 
   const perAccount: CreditsAccountView[] = []
@@ -276,12 +263,13 @@ async function buildCredits(deps: RouteDeps): Promise<
   let readable = 0
   let fetchedAt = 0
 
-  for (const { route, result } of perRoute) {
-    const account = labelOf(route)
+  for (const { account, result } of perRoute) {
+    const label = account.label ?? account.phone
     if (result.kind === 'failure') {
       perAccount.push({
-        route,
-        ...(account === undefined ? {} : { account }),
+        accountId: account.id,
+        route: 'loomy',
+        ...(label === undefined ? {} : { account: label }),
         balance: 0,
         dailyBalance: 0,
         availableBalance: 0,
@@ -295,8 +283,9 @@ async function buildCredits(deps: RouteDeps): Promise<
     availableBalance += result.credits.availableBalance
     fetchedAt = Math.max(fetchedAt, result.credits.fetchedAt)
     perAccount.push({
-      route,
-      ...(account === undefined ? {} : { account }),
+      accountId: account.id,
+      route: 'loomy',
+      ...(label === undefined ? {} : { account: label }),
       balance: result.credits.balance,
       dailyBalance: result.credits.dailyBalance,
       availableBalance: result.credits.availableBalance,
@@ -306,15 +295,30 @@ async function buildCredits(deps: RouteDeps): Promise<
   // Nothing readable at all is a failure, not a zero: reporting 0 would look
   // like an empty wallet instead of a broken session.
   if (readable === 0) {
-    return { kind: 'failure', failure: perRoute[0]?.result.kind === 'failure' ? perRoute[0].result.failure : (primary as { failure: UpstreamErrorView }).failure }
+    const first = perRoute[0]?.result
+    if (first !== undefined && first.kind === 'failure') return { kind: 'failure', failure: first.failure }
+    if (primary.kind === 'failure') return { kind: 'failure', failure: primary.failure }
+    return {
+      kind: 'failure',
+      failure: {
+        at: Date.now(),
+        path: '/points/records',
+        code: 'no_readable_account',
+        message: '没有任何账号的积分可以读取。',
+      },
+    }
   }
 
-  const records = perRoute.flatMap(({ route, result }) => {
+  const records = perRoute.flatMap(({ account, result }) => {
     if (result.kind === 'failure') return []
-    const account = labelOf(route)
+    const label = account.label ?? account.phone
     return result.credits.records.map((record) => ({
       ...record,
-      source: { route, ...(account === undefined ? {} : { account }) },
+      source: {
+        route: 'loomy',
+        accountId: account.id,
+        ...(label === undefined ? {} : { account: label }),
+      },
     }))
   })
   records.sort((left, right) => right.createdAt - left.createdAt)

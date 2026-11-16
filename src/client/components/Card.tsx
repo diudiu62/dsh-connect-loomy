@@ -138,12 +138,18 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [adopting, setAdopting] = useState(false)
   const [exportingId, setExportingId] = useState<string | null>(null)
 
-  /** route → that account's own points, for the inline figure on each row. */
-  const creditsByRoute = useMemo(() => {
+  /**
+   * accountId → that account's own points.
+   *
+   * Keyed by account, not route: every account shares the single `loomy` route,
+   * so a route key collapsed them onto one row's worth of numbers.
+   */
+  const creditsByAccount = useMemo(() => {
     const map = new Map<string, { available: number; total: number; error?: string }>()
     if (credits.kind !== 'ready') return map
     for (const entry of credits.value.perAccount ?? []) {
-      map.set(entry.route, {
+      const key = entry.accountId ?? entry.route
+      map.set(key, {
         available: entry.availableBalance,
         total: entry.balance,
         ...(entry.error === undefined ? {} : { error: entry.error }),
@@ -670,7 +676,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             poolSaving={poolSaving}
             onAdoptDesktop={() => void adoptDesktop()}
             adopting={adopting}
-            creditsByRoute={creditsByRoute}
+            creditsByAccount={creditsByAccount}
             onExportRow={(id) => void exportRow(id)}
             exportingId={exportingId}
           />

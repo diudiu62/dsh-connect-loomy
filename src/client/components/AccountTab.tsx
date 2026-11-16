@@ -53,7 +53,7 @@ export interface AccountTabProps {
   adopting: boolean
   onExportRow: (id: string) => void
   exportingId: string | null
-  creditsByRoute: Map<string, { available: number; total: number; error?: string }>
+  creditsByAccount: Map<string, { available: number; total: number; error?: string }>
 }
 
 /** Render the account tab. */
@@ -143,7 +143,7 @@ export function AccountTab(props: AccountTabProps) {
           adopting={props.adopting}
           onExportRow={props.onExportRow}
           exportingId={props.exportingId}
-          creditsByRoute={props.creditsByRoute}
+          creditsByAccount={props.creditsByAccount}
         />
         <p className="loomy-row-note">
           {t('accounts.routesNow')}{' '}

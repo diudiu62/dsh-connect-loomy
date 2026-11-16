@@ -277,6 +277,31 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     }
     return cache
   }
+  /**
+   * Per-account credits, keyed by stored account id. Each cache reads that
+   * account's own session, so the breakdown can never attribute one account's
+   * balance to another.
+   */
+  const creditsByAccountId = new Map<string, ReturnType<typeof createCreditsCache>>()
+  const creditsForAccount = (account: { id: string; session: string }): ReturnType<typeof createCreditsCache> => {
+    let cache = creditsByAccountId.get(account.id)
+    if (cache === undefined) {
+      cache = createCreditsCache({
+        baseURL,
+        readSession: async () => ({
+          found: true,
+          sourcePath: `accounts.json#${account.id}`,
+          candidates: [],
+          session: account.session,
+        }),
+        pageSize: () => live(config.creditsPageSize),
+        ttlMs: () => live(config.creditsTtlMs),
+      })
+      creditsByAccountId.set(account.id, cache)
+    }
+    return cache
+  }
+
   /** Slot-1 cache — what `/credits` reports when the card names no route. */
   const credits = createCreditsCache({
     baseURL,
@@ -443,6 +468,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     catalog,
     credits,
     creditsFor,
+    creditsForAccount,
     accounts,
     activeAccount: {
       read: async () => (await state.load()).activeAccountId,
