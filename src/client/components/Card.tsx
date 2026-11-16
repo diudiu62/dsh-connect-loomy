@@ -21,6 +21,7 @@ import {
   fetchDiagnostics,
   describeError,
   fetchStatus,
+  adoptDesktopAccount,
   exportAccounts,
   fetchAccounts,
   fetchPool,
@@ -135,6 +136,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [pool, setPool] = useState<LoomyPoolState | null>(null)
   const [poolSaving, setPoolSaving] = useState(false)
   const [adopting, setAdopting] = useState(false)
+  const [exportingId, setExportingId] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const csrfRef = useRef<string | null>(null)
@@ -315,33 +317,22 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     const token = csrfRef.current
     if (token === null) return
     setAdopting(true)
+    setTransferError(null)
+    setTransferNotice(null)
     try {
-      // Adopting is an import: build the document from what the list shows.
-      if (accounts.kind !== 'ready') return
-      const desktop = accounts.value.accounts.find((row) => row.origin === 'desktop')
-      if (desktop === undefined) return
-      const exported = await exportAccounts(token, { signal: abortRef.current?.signal })
-      if (exported.kind !== 'ok' || !exported.value.ok || exported.value.bundle === undefined) {
-        setTransferError(t('accounts.transferFailed'))
+      // One host call: the card used to export-then-import, and a failure in
+      // either half read as "transfer failed" with nothing added. The host can
+      // read the same session the row shows and store it directly.
+      const result = await adoptDesktopAccount(token, { signal: abortRef.current?.signal })
+      if (result.kind !== 'ok') {
+        setTransferError(result.kind === 'unavailable' ? t('accounts.unavailable') : result.message)
         return
       }
-      const document = {
-        ...exported.value.bundle,
-        accounts: exported.value.bundle.accounts.filter(
-          (entry) => entry.origin === 'desktop' || entry.origin === undefined,
-        ),
-      }
-      const result = await importAccounts(token, document, { signal: abortRef.current?.signal })
-      if (result.kind !== 'ok' || !result.value.ok) {
-        setTransferError(
-        result.kind === 'unavailable'
-          ? t('accounts.unavailable')
-          : result.kind === 'ok'
-            ? (result.value.error?.message ?? t('pool.failed'))
-            : result.message,
-      )
+      if (!result.value.ok) {
+        setTransferError(result.value.error?.message ?? t('accounts.transferFailed'))
         return
       }
+      setTransferNotice(t('accounts.adopted', { route: result.value.route ?? 'loomy' }))
       await loadAccounts()
       await loadStatus()
       await loadPool()
@@ -351,7 +342,37 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     } finally {
       setAdopting(false)
     }
-  }, [accounts, loadAccounts, loadStatus, loadPool, t])
+  }, [loadAccounts, loadStatus, loadPool, t])
+
+  const exportRow = useCallback(
+    async (id: string): Promise<void> => {
+      const token = csrfRef.current
+      if (token === null) return
+      setExportingId(id)
+      setTransferError(null)
+      setTransferNotice(null)
+      try {
+        const result = await exportAccounts(token, { id, signal: abortRef.current?.signal })
+        if (result.kind !== 'ok') {
+          setTransferError(result.kind === 'unavailable' ? t('accounts.unavailable') : result.message)
+          return
+        }
+        if (!result.value.ok || result.value.bundle === undefined) {
+          setTransferError(result.value.error?.message ?? t('accounts.exportEmpty'))
+          return
+        }
+        const text = JSON.stringify(result.value.bundle, undefined, 2)
+        const copied = await copyToClipboard(text)
+        setTransferNotice(copied ? t('accounts.exportNotice') : text)
+      } catch (error) {
+        if (isAbortError(error)) return
+        setTransferError(errorMessage(t, error))
+      } finally {
+        setExportingId(null)
+      }
+    },
+    [t],
+  )
 
   const loadCredits = useCallback(async (): Promise<void> => {
     setCredits({ kind: 'loading' })
@@ -625,6 +646,8 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             poolSaving={poolSaving}
             onAdoptDesktop={() => void adoptDesktop()}
             adopting={adopting}
+            onExportRow={(id) => void exportRow(id)}
+            exportingId={exportingId}
           />
         ) : null}
 

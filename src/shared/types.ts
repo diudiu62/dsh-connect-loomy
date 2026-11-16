@@ -29,7 +29,17 @@ export const ROUTES = {
   accountExport: `${ROUTE_PREFIX}/accounts/export`,
   accountImport: `${ROUTE_PREFIX}/accounts/import`,
   pool: `${ROUTE_PREFIX}/pool`,
+  accountAdopt: `${ROUTE_PREFIX}/accounts/adopt`,
 } as const
+
+/** `POST /accounts/adopt` — the desktop sign-in became a stored account. */
+export interface AccountAdoptView {
+  ok: boolean
+  slot?: number
+  route?: string
+  replaced?: boolean
+  error?: { code: string; message: string }
+}
 
 /** `GET`/`POST /pool` — the rotation-pool preference. */
 export interface PoolView {

@@ -22,6 +22,9 @@ export interface AccountsListProps {
   /** Materialize the desktop sign-in into a stored, routable account. */
   onAdoptDesktop: () => void
   adopting: boolean
+  /** Copy that one account's bundle to the clipboard. */
+  onExportRow: (id: string) => void
+  exportingId: string | null
 }
 
 /** Render every account as a compact row. */
@@ -33,6 +36,8 @@ export function AccountsList({
   onRemove,
   onAdoptDesktop,
   adopting,
+  onExportRow,
+  exportingId,
 }: AccountsListProps) {
   if (accounts.kind === 'idle' || accounts.kind === 'loading') return <p className="loomy-muted">{t('common.loading')}</p>
   if (accounts.kind === 'stale') return <Notice tone="error">{accounts.message}</Notice>
@@ -55,24 +60,36 @@ export function AccountsList({
           {row.origin === 'desktop' ? <Badge tone="neutral">{t('accounts.originDesktop')}</Badge> : null}
           {row.unavailable === true ? <Badge tone="danger">{t('accounts.unavailableBadge')}</Badge> : null}
           <span className="loomy-toolbar-spacer" />
-          {row.origin === 'desktop' ? (
-            <CardButton
-              variant="ghost"
-              onClick={onAdoptDesktop}
-              disabled={adopting || csrfToken === null}
-              title={t('accounts.adoptHint')}
-            >
-              {adopting ? t('accounts.adopting') : t('accounts.adopt')}
-            </CardButton>
-          ) : (
-            <CardButton
-              variant="ghost"
-              onClick={() => onRemove(row.id)}
-              disabled={removingId === row.id || csrfToken === null}
-            >
-              {removingId === row.id ? t('accounts.removing') : t('accounts.remove')}
-            </CardButton>
-          )}
+          <span className="loomy-acct-actions">
+            {row.origin === 'desktop' ? (
+              <CardButton
+                variant="ghost"
+                onClick={onAdoptDesktop}
+                disabled={adopting || csrfToken === null}
+                title={t('accounts.adoptHint')}
+              >
+                {adopting ? t('accounts.adopting') : t('accounts.adopt')}
+              </CardButton>
+            ) : (
+              <>
+                <CardButton
+                  variant="ghost"
+                  onClick={() => onExportRow(row.id)}
+                  disabled={exportingId === row.id || csrfToken === null}
+                  title={t('accounts.exportRowHint')}
+                >
+                  {exportingId === row.id ? t('accounts.exporting') : t('accounts.exportRow')}
+                </CardButton>
+                <CardButton
+                  variant="ghost"
+                  onClick={() => onRemove(row.id)}
+                  disabled={removingId === row.id || csrfToken === null}
+                >
+                  {removingId === row.id ? t('accounts.removing') : t('accounts.remove')}
+                </CardButton>
+              </>
+            )}
+          </span>
           {row.unavailable === true && row.unavailableMessage !== undefined ? (
             <p className="loomy-row-note">{row.unavailableMessage}</p>
           ) : null}

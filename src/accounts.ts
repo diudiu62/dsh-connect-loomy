@@ -206,6 +206,18 @@ export interface AccountsStore {
   desktopAccount?: () => Promise<
     { id: string; session: string; phone?: string; userId?: string } | undefined
   >
+  /**
+   * Adopt the desktop client's sign-in into the store.
+   *
+   * One host-side step on purpose: the card used to export-then-import, so a
+   * failure in either half surfaced as an unhelpful "transfer failed" with no
+   * account added. Reading the same session the list already shows and adding
+   * it directly cannot drift from what the user clicked.
+   */
+  adoptDesktop(): Promise<
+    | { kind: 'ok'; account: StoredAccount; replaced: boolean }
+    | { kind: 'failure'; code: string; message: string }
+  >
   /** Mark one account unusable (pool health), with the reason for the card. */
   markUnavailable(id: string, code: string, message: string): Promise<void>
   /** Clear the health mark after a successful call. */
@@ -213,7 +225,7 @@ export interface AccountsStore {
   /** Drop the in-memory cache so the next read hits disk. */
   invalidate(): void
   /** Produce a portable bundle carrying the sessions (secrets!). */
-  exportBundle(): Promise<{ bundle: AccountsBundle; paths: string[] }>
+  exportBundle(options?: { id?: string }): Promise<{ bundle: AccountsBundle; paths: string[] }>
   /** Merge a bundle produced elsewhere; never renumbers existing slots. */
   importBundle(bundle: unknown): Promise<ImportResult>
 }
@@ -366,6 +378,22 @@ export function createAccountsStore(options: {
       return []
     },
 
+    async adoptDesktop() {
+      const desktop = await options.readDesktop?.()
+      if (desktop?.found !== true || desktop.session === undefined) {
+        return {
+          kind: 'failure',
+          code: 'no_desktop_session',
+          message: '没有找到 Loomy 桌面端的登录态：请先打开 Loomy 客户端登录，然后点「刷新」。',
+        }
+      }
+      return store.add({
+        session: desktop.session,
+        ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
+        ...(desktop.userId === undefined ? {} : { userId: desktop.userId }),
+      })
+    },
+
     async desktopAccount() {
       const desktop = await options.readDesktop?.()
       if (desktop?.found !== true || desktop.session === undefined) return undefined
@@ -452,16 +480,20 @@ export function createAccountsStore(options: {
       }
     },
 
-    async exportBundle() {
+    async exportBundle(exportOptions = {}) {
       // Export **every credential this host can see**, not just what the store
       // happens to hold: the desktop client's session is a real sign-in the
       // user may want on another machine, and it is invisible to the store by
       // design (the plugin never writes that file). Previously any stored
       // account silently excluded it, so "export" did not mean "export what I
       // am signed in as".
-      const stored = await load(true)
-      const desktop = await options.readDesktop?.()
-      const sessions = new Set(stored.map((account) => account.session))
+      const all = await load(true)
+      // One account at a time is the per-row export: it must not hand the user
+      // every credential when they asked for one.
+      const stored =
+        exportOptions.id === undefined ? all : all.filter((account) => account.id === exportOptions.id)
+      const desktop = exportOptions.id === undefined ? await options.readDesktop?.() : undefined
+      const sessions = new Set(all.map((account) => account.session))
 
       const accounts: Array<{
         slot: number

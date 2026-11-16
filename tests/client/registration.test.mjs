@@ -145,7 +145,7 @@ test('the same card speaks English when the locale face switches', async () => {
 
     // The login form is deliberately collapsed behind "Add account"; open it to
     // prove the English face reaches the form too.
-    await click(button(container, 'Sign in with a code'))
+    await click(button(container, 'New account'))
     const phoneInput = container.querySelector('input[type="tel"]')
     assert.ok(phoneInput, 'the login form opened')
     assert.equal(phoneInput.getAttribute('placeholder'), 'Phone number', 'the form is in English too')
@@ -303,7 +303,7 @@ test('adding an account is the last row of the account list, not its own section
     // ...and they are a list row, so they align with the account rows.
     const addRow = container.querySelector('.loomy-add-row')
     assert.ok(addRow, 'the add affordances render as a row')
-    assert.ok(addRow.textContent.includes('验证码登录'))
+    assert.ok(addRow.textContent.includes('新增账号'))
 
     // The row lives inside the same section that holds the account rows.
     const section = addRow.closest('.loomy-section')

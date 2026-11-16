@@ -115,6 +115,32 @@ function makeDeps(overrides = {}) {
       overrides.fetchImpl ?? (async () => jsonResponse({ code: '000000', desc: '成功', data: {} })),
     now: () => 1_794_574_693_000,
     logger: { warn() {} },
+    // Defaults for the multi-account routes so a test can drive one without
+    // wiring the whole account store.
+    accounts:
+      overrides.accounts ?? {
+        list: async () => [],
+        routes: async () => [],
+        adoptDesktop: async () => ({ kind: 'failure', code: 'none', message: '无桌面端登录态' }),
+        exportBundle: async () => ({ bundle: { kind: 'dsh-connect-loomy/accounts', version: 1, exportedAt: 0, accounts: [] }, paths: [] }),
+        importBundle: async () => ({ kind: 'ok', added: 0, refreshed: 0, skipped: 0, reassigned: 0 }),
+        remove: async () => ({ kind: 'ok', removed: false }),
+        rename: async () => ({ kind: 'ok' }),
+        markUnavailable: async () => undefined,
+        markHealthy: async () => undefined,
+        invalidate: () => undefined,
+        accountForRoute: async () => undefined,
+      },
+    poolPreference: overrides.poolPreference ?? { read: async () => false, write: async () => undefined },
+    routes: overrides.routes ?? (() => []),
+    refreshRoutes: overrides.refreshRoutes ?? (async () => undefined),
+    login:
+      overrides.login ?? {
+        sendCode: async () => ({ ok: false, code: 'off', message: '未接线' }),
+        login: async () => ({ ok: false, code: 'off', message: '未接线' }),
+        logout: async () => ({ ok: false, code: 'off', message: '未接线' }),
+        resetConfigCache: () => undefined,
+      },
   }
 }
 
@@ -477,4 +503,35 @@ test('routes: diagnostics is read-only and never hands the session to the browse
   assert.equal(body.ok, true)
   assert.deepEqual(body.probes.map((probe) => probe.path), ['/models', '/points/records', '/user/identity'])
   assert.ok(!response.text.includes(SESSION))
+})
+
+test('the pool route answers both GET and POST (one registration per path)', async (t) => {
+  // REGRESSION: registering GET and POST as two specs for the same path made the
+  // web server keep only one (it keys handlers by path), so a POST answered
+  // "只支持 GET" and the rotation switch could never be turned on.
+  const written = []
+  const baseURL = await startRoutes(
+    t,
+    makeDeps({
+      poolPreference: { read: async () => written.at(-1) ?? false, write: async (value) => written.push(value) },
+    }),
+  )
+
+  const get = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/pool`, {
+    headers: { host: new URL(baseURL).host, origin: baseURL },
+  })
+  assert.equal(get.status, 200, 'GET answers')
+
+  const post = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/pool`, {
+    method: 'POST',
+    headers: {
+      host: new URL(baseURL).host,
+      origin: baseURL,
+      'content-type': 'application/json',
+      'x-loomy-csrf': CSRF,
+    },
+    body: JSON.stringify({ enabled: true }),
+  })
+  assert.equal(post.status, 200, `POST answers, got ${post.status} ${post.text}`)
+  assert.deepEqual(written, [true], 'the preference was written')
 })

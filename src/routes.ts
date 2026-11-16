@@ -33,6 +33,7 @@ import type {
   AuthLoginView,
   AuthLogoutView,
   AuthSendCodeView,
+  AccountAdoptView,
   AccountExportView,
   AccountImportView,
   PoolView,
@@ -284,7 +285,7 @@ async function buildPoolView(deps: RouteDeps): Promise<PoolView> {
     accountCount,
     active,
     ...(enabled && accountCount < 2
-      ? { message: '开启后需要至少两个账号才会出现在模型选择器里。' }
+      ? { message: '随机分配需要至少两个账号，才会出现在模型选择器里。' }
       : {}),
   }
 }
@@ -367,15 +368,20 @@ export function credentialCandidatesOf(snapshot: {
 /** One route spec before guards are applied. */
 interface RouteSpec {
   path: string
-  method: 'GET' | 'POST'
+  /**
+   * Accepted verbs. An array because the web server keys handlers by **path**:
+   * registering the same path twice silently keeps one of them, which made
+   * `POST /pool` answer "只支持 GET" while the GET route looked fine.
+   */
+  methods: ReadonlyArray<'GET' | 'POST'>
   mutating: boolean
   run: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 }
 
 function routeHandler(deps: RouteDeps, spec: RouteSpec) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (req.method !== spec.method) {
-      failure(res, 405, 'method_not_allowed', `只支持 ${spec.method}`)
+    if (!spec.methods.includes(req.method as 'GET' | 'POST')) {
+      failure(res, 405, 'method_not_allowed', `只支持 ${spec.methods.join(' / ')}`)
       return
     }
     const verdict = checkLoopback(req)
@@ -390,7 +396,9 @@ function routeHandler(deps: RouteDeps, spec: RouteSpec) {
       )
       return
     }
-    if (spec.mutating) {
+    // CSRF guards state changes only: a route that accepts both verbs must
+    // still answer a plain GET without a token.
+    if (spec.mutating && req.method !== 'GET') {
       if (!isJsonContentType(req)) {
         failure(res, 415, 'unsupported_media_type', 'POST 请求必须使用 Content-Type: application/json')
         return
@@ -414,7 +422,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
   const specs: RouteSpec[] = [
     {
       path: ROUTES.status,
-      method: 'GET',
+      methods: ['GET'],
       mutating: false,
       run: async (_req, res) => {
         corsSafeJson(res, 200, await buildStatus(deps))
@@ -422,7 +430,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.diagnostics,
-      method: 'GET',
+      methods: ['GET'],
       mutating: false,
       run: async (_req, res) => {
         corsSafeJson(res, 200, await buildDiagnostics(deps))
@@ -430,7 +438,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.credits,
-      method: 'GET',
+      methods: ['GET'],
       mutating: false,
       run: async (_req, res) => {
         const merged = await buildCredits(deps)
@@ -445,7 +453,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.refresh,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -469,7 +477,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.save,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -493,7 +501,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.authState,
-      method: 'GET',
+      methods: ['GET'],
       mutating: false,
       run: async (_req, res) => {
         const snapshot = await deps.auth.read()
@@ -517,7 +525,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.authSendCode,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -543,7 +551,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.authLogin,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -571,16 +579,8 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
       },
     },
     {
-      path: ROUTES.pool,
-      method: 'GET',
-      mutating: false,
-      run: async (_req, res) => {
-        corsSafeJson(res, 200, await buildPoolView(deps))
-      },
-    },
-    {
       path: ROUTES.accounts,
-      method: 'GET',
+      methods: ['GET'],
       mutating: false,
       run: async (req, res) => {
         const url = req.url ?? ''
@@ -605,7 +605,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.accountRemove,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -629,7 +629,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.accountRename,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -653,10 +653,41 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
       },
     },
     {
+      path: ROUTES.accountAdopt,
+      methods: ['POST'],
+      mutating: true,
+      run: async (_req, res) => {
+        const result = await deps.accounts.adoptDesktop()
+        if (result.kind === 'failure') {
+          const payload: AccountAdoptView = {
+            ok: false,
+            error: { code: result.code, message: result.message },
+          }
+          corsSafeJson(res, 200, payload)
+          return
+        }
+        await deps.refreshRoutes()
+        deps.auth.invalidate()
+        const payload: AccountAdoptView = {
+          ok: true,
+          slot: result.account.slot,
+          route: result.account.slot === 1 ? 'loomy' : `loomy-${result.account.slot}`,
+          replaced: result.replaced,
+        }
+        corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      // One spec for both verbs: the web server keys by path, so a second
+      // registration for the same path would silently drop this one.
       path: ROUTES.pool,
-      method: 'POST',
+      methods: ['GET', 'POST'],
       mutating: true,
       run: async (req, res) => {
+        if (req.method === 'GET') {
+          corsSafeJson(res, 200, await buildPoolView(deps))
+          return
+        }
         const body = await readJsonObject(req)
         if (body === undefined) {
           failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
@@ -675,13 +706,15 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.accountExport,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
-      run: async (_req, res) => {
+      run: async (req, res) => {
         // POST + CSRF on purpose: a GET would let a same-machine page trigger
         // a secret export through an <img>/navigation without our token.
+        const body = await readJsonObject(req)
+        const id = body !== undefined && typeof body['id'] === 'string' && body['id'].length > 0 ? body['id'] : undefined
         try {
-          const exported = await deps.accounts.exportBundle()
+          const exported = await deps.accounts.exportBundle(id === undefined ? {} : { id })
           if (exported.bundle.accounts.length === 0) {
             const payload: AccountExportView = {
               ok: false,
@@ -711,7 +744,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.accountImport,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (req, res) => {
         const body = await readJsonObject(req)
@@ -748,7 +781,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
     },
     {
       path: ROUTES.authLogout,
-      method: 'POST',
+      methods: ['POST'],
       mutating: true,
       run: async (_req, res) => {
         const result = await deps.login.logout()

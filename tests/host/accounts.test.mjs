@@ -405,3 +405,50 @@ test('the list shows the desktop sign-in next to stored accounts', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('adopting the desktop sign-in is one store call and becomes a route', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-adopt-'))
+  try {
+    const desktopSession = 'e'.repeat(32)
+    const store = createAccountsStore({
+      storageDir: () => dir,
+      now: () => 1000,
+      readDesktop: async () => ({ found: true, session: desktopSession, phone: '18100000000' }),
+    })
+    // Shown in the list but not routable yet.
+    let routes = await store.routes({ force: true })
+    assert.equal(routes[0].origin, 'desktop')
+
+    const adopted = await store.adoptDesktop()
+    assert.equal(adopted.kind, 'ok')
+    routes = await store.routes({ force: true })
+    assert.equal(routes[0].origin, 'plugin', 'the desktop sign-in now has its own route')
+    assert.equal(routes[0].route, 'loomy')
+
+    // Nothing to adopt: an executable message, not a crash or a silent no-op.
+    const empty = createAccountsStore({ storageDir: () => dir, now: () => 1000, readDesktop: async () => ({ found: false }) })
+    const none = await empty.adoptDesktop()
+    assert.equal(none.kind, 'failure')
+    assert.match(none.message, /桌面端/u)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a single-account export carries only that account', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-exp-one-'))
+  try {
+    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
+    const a = await store.add({ session: SESSION_A, phone: '13800000001' })
+    await store.add({ session: SESSION_B, phone: '13800000002' })
+
+    const one = await store.exportBundle({ id: a.account.id })
+    assert.equal(one.bundle.accounts.length, 1)
+    assert.equal(one.bundle.accounts[0].session, SESSION_A)
+
+    const unknown = await store.exportBundle({ id: 'nope' })
+    assert.equal(unknown.bundle.accounts.length, 0, 'an unknown id exports nothing rather than everything')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

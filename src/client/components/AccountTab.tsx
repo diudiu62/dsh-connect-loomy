@@ -50,6 +50,8 @@ export interface AccountTabProps {
   /** Import the desktop sign-in as a stored account. */
   onAdoptDesktop: () => void
   adopting: boolean
+  onExportRow: (id: string) => void
+  exportingId: string | null
 }
 
 /** Render the account tab. */
@@ -98,7 +100,18 @@ export function AccountTab(props: AccountTabProps) {
           onRemove={props.onRemoveAccount}
           onAdoptDesktop={props.onAdoptDesktop}
           adopting={props.adopting}
+          onExportRow={props.onExportRow}
+          exportingId={props.exportingId}
         />
+        <p className="loomy-row-note">
+          {t('accounts.routesNow')}{' '}
+          <code className="loomy-code">
+            {(accounts.kind === 'ready' && (accounts.value.routes ?? []).length > 0
+              ? (accounts.value.routes ?? []).map((entry) => entry.route)
+              : ['—']
+            ).join(', ')}
+          </code>
+        </p>
         <AddAccountPanel
           t={t}
           csrfToken={props.csrfToken}

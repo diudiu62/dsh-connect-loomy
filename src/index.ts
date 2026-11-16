@@ -324,7 +324,9 @@ export function apply(ctx: Context, config: LoomyConfig): void {
    * an inference call never waits for a disk read just to learn its route list.
    */
   const refreshRoutes = async (): Promise<readonly AccountRoute[]> => {
-    const poolEnabled = (await state.load()).poolEnabled === true
+    // Default on: the feature must be visible, not hidden behind a switch the
+    // user has to discover. Turning it off is the deliberate act now.
+    const poolEnabled = (await state.load()).poolEnabled !== false
     const candidates = await accounts.routes({ force: true })
     // The pool route is a preference, not a fact about the accounts: register
     // it only when the user asked for automatic rotation.
@@ -428,7 +430,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     creditsFor,
     accounts,
     poolPreference: {
-      read: async () => (await state.load()).poolEnabled === true,
+      read: async () => (await state.load()).poolEnabled !== false,
       write: async (enabled: boolean) => {
         const current = await state.load()
         await state.save({ ...current, poolEnabled: enabled })

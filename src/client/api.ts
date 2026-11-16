@@ -52,7 +52,17 @@ export const ROUTES = {
   accountExport: `${ROUTE_PREFIX}/accounts/export`,
   accountImport: `${ROUTE_PREFIX}/accounts/import`,
   pool: `${ROUTE_PREFIX}/pool`,
+  accountAdopt: `${ROUTE_PREFIX}/accounts/adopt`,
 } as const
+
+/** `POST /accounts/adopt` */
+export interface LoomyAccountAdopt {
+  ok: boolean
+  slot?: number
+  route?: string
+  replaced?: boolean
+  error?: { code: string; message: string }
+}
 
 /** `GET`/`POST /pool` */
 export interface LoomyPoolState {
@@ -511,12 +521,21 @@ export function savePool(
   return postJson<LoomyPoolState>(ROUTES.pool, csrfToken, { enabled }, options)
 }
 
-/** Export every account as a portable bundle (secrets included). */
+/** Export one account (`id`) or every account as a portable bundle. */
 export function exportAccounts(
   csrfToken: string,
-  options: RouteOptions = {},
+  options: RouteOptions & { id?: string } = {},
 ): Promise<RouteResult<LoomyAccountExport>> {
-  return postJson<LoomyAccountExport>(ROUTES.accountExport, csrfToken, {}, options)
+  const { id, ...rest } = options
+  return postJson<LoomyAccountExport>(ROUTES.accountExport, csrfToken, id === undefined ? {} : { id }, rest)
+}
+
+/** Turn the desktop sign-in into a stored, routable account. */
+export function adoptDesktopAccount(
+  csrfToken: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyAccountAdopt>> {
+  return postJson<LoomyAccountAdopt>(ROUTES.accountAdopt, csrfToken, {}, options)
 }
 
 /** Merge a bundle produced on another machine. */

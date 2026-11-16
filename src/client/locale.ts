@@ -84,6 +84,10 @@ export type LoomyLocaleKey =
   | 'accounts.slotOnly'
   | 'add.title'
   | 'add.login'
+  | 'accounts.exportRow'
+  | 'accounts.exportRowHint'
+  | 'accounts.routesNow'
+  | 'accounts.adopted'
   | 'add.transfer'
   | 'add.export'
   | 'add.import'
@@ -267,6 +271,10 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.desktopNote': 'Owned by the Loomy desktop client — sign out there to remove it.',
   'accounts.unknownPhone': 'Unknown account',
   'accounts.removeFailed': 'Could not remove the account.',
+  'accounts.exportRow': 'Export',
+  'accounts.exportRowHint': 'Copy this account as a portable bundle.',
+  'accounts.routesNow': 'Model picker routes:',
+  'accounts.adopted': 'Added as {route} — pick it in the model picker.',
   'accounts.export': 'Export accounts',
   'accounts.exporting': 'Exporting…',
   'accounts.exportHint': 'Exports every credential this machine can see — plugin accounts plus the Loomy desktop client sign-in. The file contains the session tokens themselves: it is the credential, not a cache. Anyone holding it can spend these accounts until the session expires (issued with a 14-day lifetime) or until you sign out. Keep it off shared machines.',
@@ -287,7 +295,7 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.poolNote': 'The Loomy pool route rotates between the healthy accounts above.',
   'accounts.slotOnly': 'Account {slot}',
   'add.title': 'Add account',
-  'add.login': 'Sign in with a code',
+  'add.login': 'New account',
   'add.transfer': 'Import / export',
   'add.export': 'Export all',
   'add.import': 'Import',
@@ -472,6 +480,10 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.desktopNote': '该账号属于 Loomy 桌面端——请在桌面端退出登录来移除。',
   'accounts.unknownPhone': '未知账号',
   'accounts.removeFailed': '移除账号失败。',
+  'accounts.exportRow': '导出',
+  'accounts.exportRowHint': '把这一个账号导出为可迁移的包。',
+  'accounts.routesNow': '模型选择器里的路由：',
+  'accounts.adopted': '已添加为 {route}，可在模型选择器里选择。',
   'accounts.export': '导出账号',
   'accounts.exporting': '导出中…',
   'accounts.exportHint': '会把本机能看到的凭证都导出——插件登录的账号，外加 Loomy 桌面端的登录态。文件里就是 session 本身，是凭证不是缓存：拿到它的人在你退出登录前（会话按 14 天签发）可以一直花这些账号的积分。请勿放在共享机器上。',
@@ -492,7 +504,7 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.poolNote': '「Loomy 池」路由会在上面健康的账号之间轮换。',
   'accounts.slotOnly': '账号 {slot}',
   'add.title': '添加账号',
-  'add.login': '验证码登录',
+  'add.login': '新增账号',
   'add.transfer': '导入 / 导出',
   'add.export': '全部导出',
   'add.import': '导入',
