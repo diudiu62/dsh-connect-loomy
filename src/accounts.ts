@@ -495,10 +495,16 @@ export function parseBundle(
     const slot =
       typeof rawSlot === 'number' && Number.isInteger(rawSlot) && rawSlot >= 1 ? rawSlot : defaultSlot
     // `userid` is the desktop spelling, `userId` ours; `phone` is shared.
-    const phone = typeof item['phone'] === 'string' && item['phone'].length > 0 ? item['phone'] : undefined
+    const rawPhone = typeof item['phone'] === 'string' && item['phone'].length > 0 ? item['phone'] : undefined
+    // A masked phone (`189****2700`) is display copy, never an identifier: it
+    // must not be stored where a real number belongs, or a later login cannot
+    // recognise the same person. It is preserved as a label instead.
+    const masked = rawPhone !== undefined && rawPhone.includes('*')
+    const phone = rawPhone === undefined || masked ? undefined : rawPhone
     const rawUser = item['userId'] ?? item['userid']
     const userId = typeof rawUser === 'string' && rawUser.length > 0 ? rawUser : undefined
-    const label = typeof item['label'] === 'string' && item['label'].length > 0 ? item['label'] : undefined
+    const explicitLabel = typeof item['label'] === 'string' && item['label'].length > 0 ? item['label'] : undefined
+    const label = explicitLabel ?? (masked ? rawPhone : undefined)
     return {
       slot,
       session: rawSession,

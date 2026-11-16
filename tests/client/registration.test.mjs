@@ -247,3 +247,37 @@ test('the settings section omits its own title because the shell draws the panel
     surface,
   )
 })
+
+test('every accepted paste is normalized to one canonical bundle before it is sent', () => {
+  const { normalizeImportDocument } = loadClient()
+  assert.equal(typeof normalizeImportDocument, 'function')
+
+  const raw = { session: 'b19824de45524cc59cf419bb800ae12f', userid: '261113195919807686', phone: '17166422065' }
+  const fromRaw = normalizeImportDocument(raw)
+  assert.equal(fromRaw.kind, 'dsh-connect-loomy/accounts')
+  assert.equal(fromRaw.version, 1)
+  assert.equal(fromRaw.accounts.length, 1)
+  assert.equal(fromRaw.accounts[0].session, raw.session)
+  assert.equal(fromRaw.accounts[0].phone, raw.phone, 'the lowercase userid is mapped to userId')
+  assert.equal(fromRaw.accounts[0].userId, raw.userid)
+
+  // The reported paste, which carries a masked phone from an earlier export.
+  const masked = normalizeImportDocument({
+    kind: 'dsh-connect-loomy/accounts',
+    version: 1,
+    exportedAt: 1794809822224,
+    accounts: [{ slot: 1, session: '6850e7f2fd6541aa8a5f2deeb889d344', phone: '189****2700', userId: '261113120739987535', addedAt: 1794809814418 }],
+  })
+  assert.equal(masked.kind, 'dsh-connect-loomy/accounts', 'a canonical bundle is passed through untouched')
+
+  // An array and an unmarked wrapper reach the same shape.
+  const fromArray = normalizeImportDocument([raw, { session: 'c'.repeat(32) }])
+  assert.equal(fromArray.accounts.length, 2)
+  const fromWrapper = normalizeImportDocument({ accounts: [raw] })
+  assert.equal(fromWrapper.accounts.length, 1)
+
+  // A masked phone never survives as an identifier.
+  const maskedOnly = normalizeImportDocument({ session: 'd'.repeat(32), phone: '189****2700' })
+  assert.equal(maskedOnly.accounts[0].phone, undefined, 'a masked phone is not a phone')
+  assert.equal(maskedOnly.accounts[0].label, '189****2700', 'it is kept as a label instead')
+})

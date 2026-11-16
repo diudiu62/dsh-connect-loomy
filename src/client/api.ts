@@ -476,14 +476,84 @@ export function exportAccounts(
 }
 
 /** Merge a bundle produced on another machine. */
+/**
+ * Normalize whatever the user pasted into this plugin's bundle shape.
+ *
+ * Why client-side: the host route used to accept only `{bundle: <canonical
+ * bundle>}` and a running host keeps the route table it booted with, so a
+ * browser holding a newer client than the host would fail on a raw paste.
+ * Normalizing here makes every accepted input work against both the old and the
+ * new host, instead of requiring a restart before an import can be attempted.
+ */
+export function normalizeImportDocument(value: unknown): unknown {
+  const isRecordValue = (candidate: unknown): candidate is Record<string, unknown> =>
+    typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
+
+  /** One entry: our camelCase plus the desktop file's lowercase spelling. */
+  const toAccount = (item: unknown): Record<string, unknown> | undefined => {
+    if (!isRecordValue(item)) return undefined
+    const session = item['session']
+    if (typeof session !== 'string' || session.length < 16 || /\s/u.test(session)) return undefined
+    const rawPhone = typeof item['phone'] === 'string' && item['phone'].length > 0 ? item['phone'] : undefined
+    // A masked phone is display copy, not an identifier; keep it as a label so
+    // the stored record never carries `189****2700` where a number belongs.
+    const masked = rawPhone !== undefined && rawPhone.includes('*')
+    const userIdRaw = item['userId'] ?? item['userid']
+    const userId = typeof userIdRaw === 'string' && userIdRaw.length > 0 ? userIdRaw : undefined
+    const rawSlot = item['slot']
+    return {
+      ...(typeof rawSlot === 'number' && Number.isInteger(rawSlot) && rawSlot >= 1 ? { slot: rawSlot } : {}),
+      session,
+      ...(rawPhone === undefined || masked ? {} : { phone: rawPhone }),
+      ...(userId === undefined ? {} : { userId }),
+      ...(masked ? { label: rawPhone as string } : {}),
+    }
+  }
+
+  const wrap = (accounts: Array<Record<string, unknown>>): unknown =>
+    accounts.length === 0
+      ? value
+      : { kind: 'dsh-connect-loomy/accounts', version: 1, exportedAt: Date.now(), accounts }
+
+  // Already canonical: leave it alone.
+  if (isRecordValue(value) && value['kind'] === 'dsh-connect-loomy/accounts') return value
+
+  if (Array.isArray(value)) {
+    const accounts = value.map(toAccount).filter((entry): entry is Record<string, unknown> => entry !== undefined)
+    return wrap(accounts)
+  }
+
+  if (isRecordValue(value)) {
+    // A bare desktop `auth-session.json`.
+    const single = toAccount(value)
+    if (single !== undefined) return wrap([single])
+    // An unmarked `{accounts: [...]}` wrapper.
+    const raw = value['accounts']
+    if (Array.isArray(raw)) {
+      const accounts = raw.map(toAccount).filter((entry): entry is Record<string, unknown> => entry !== undefined)
+      return wrap(accounts)
+    }
+  }
+  // Unknown shape: hand it to the host, which owns the rejection message.
+  return value
+}
+
+/**
+ * Import accounts. Sends `{bundle: …}` on purpose: the current host unwraps it
+ * and an older host only understands that envelope, so one request shape works
+ * against both.
+ */
 export function importAccounts(
   csrfToken: string,
   document: unknown,
   options: RouteOptions = {},
 ): Promise<RouteResult<LoomyAccountImport>> {
-  // Sent unwrapped: the host accepts our bundle, a desktop auth-session.json,
-  // or an array of such documents, so a paste needs no envelope knowledge.
-  return postJson<LoomyAccountImport>(ROUTES.accountImport, csrfToken, document, options)
+  return postJson<LoomyAccountImport>(
+    ROUTES.accountImport,
+    csrfToken,
+    { bundle: normalizeImportDocument(document) },
+    options,
+  )
 }
 
 /** Refresh the catalog (persisted and effective immediately; draft is untouched). */
