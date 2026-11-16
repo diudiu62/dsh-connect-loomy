@@ -303,7 +303,7 @@ try {
     ensure(statusRun !== undefined, 'status --json did not run')
     const document = JSON.parse(statusRun.stdout)
     ensureEqual(document.ok, true, 'ok')
-    const masked = document.account?.maskedPhone
+    const masked = document.account?.phone
     ensure(typeof masked === 'string' && /^\d{3}\*+\d{4}$/u.test(masked), `masked phone shape: ${JSON.stringify(masked)}`)
     ensureEqual(document.credential.found, true, 'credential.found')
     ensure(document.credits.ok === true, 'credits.ok')

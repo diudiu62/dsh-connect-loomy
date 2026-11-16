@@ -80,6 +80,29 @@ node lib/bin.js status --json    # 登录状态 + 目录计数 + 积分概览
 node lib/bin.js doctor --json    # 凭据候选路径 + 上游三探针 + 诊断
 ```
 
+## 登录态从哪里读（含 Windows）
+
+macOS 的路径是实测的：`~/Library/Application Support/loomy/auth-session.json`。Windows 上 Electron 的
+`userData` 目录名随构建而变，插件按两级发现：
+
+1. **固定候选**：`%APPDATA%\loomy`、`\Loomy`、`\iFlytek\loomy`、`\iFlytek\Loomy`、`\讯飞办公助手`、
+   `\iflytek-loomy`，以及 `%LOCALAPPDATA%\loomy`、`\Loomy`（环境变量缺失时按 `<home>\AppData\…` 兜底）。
+2. **有界搜索**：上面全未命中时才扫描 app-data 根目录（深度 ≤3、4000 个目录、1.2s 预算、不跟随
+   符号链接），只在**未登录**状态触发；设置卡片「重新检测」会清掉它的缓存。
+
+两级都没找到时，报错会列出**每一个**查过的路径，而不是只报插件自己的存储目录。客户端装在非常规
+位置（MSIX 包、自定义目录）时，跳过全部猜测：
+
+```bash
+# Windows（PowerShell）
+$env:LOOMY_AUTH_SESSION_FILE = "C:\path\to\loomy\auth-session.json"
+# macOS / Linux
+export LOOMY_AUTH_SESSION_FILE="$HOME/Library/Application Support/loomy/auth-session.json"
+node lib/bin.js doctor   # 第一段就是候选清单与逐项结论
+```
+
+该变量是**排他替换**：设置后不会再检查任何桌面端默认路径。
+
 ## 配置（cordis / profile 配置，暂不在卡片里编辑）
 
 卡片三栏只做账号、模型与诊断，不渲染 `Config` 字段；宿主也关闭了自动生成的设置表单（`configure({ auto: false })`），因此下面这些键目前通过 cordis / profile 配置修改（改完即时生效，无需重启，`enabled` 除外——它决定路由是否注册）。

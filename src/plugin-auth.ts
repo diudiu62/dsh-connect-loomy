@@ -16,12 +16,13 @@
  * @module dsh-connect-loomy/plugin-auth
  */
 
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULT_SESSION_TTL_MS } from './shared/types.js'
 import { authSessionCandidates, type AuthCandidate } from './shared/paths.js'
 import { sessionFingerprint, type AuthSnapshot } from './auth.js'
+import { applyMode, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './shared/modes.js'
 import { displayPhone, displayUserId, safeErrorMessage, toEpochMs } from './shared/text.js'
 
 /** File name inside the plugin storage directory. */
@@ -66,13 +67,15 @@ export async function writePluginAuthSession(options: {
   }
   const payload = `${JSON.stringify(document, undefined, 2)}\n`
   try {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await mkdir(dirname(path), { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
     const tmp = `${path}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`
-    await writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 })
-    await chmod(tmp, 0o600)
+    await writeFile(tmp, payload, { encoding: 'utf8', mode: PRIVATE_FILE_MODE })
+    // Windows ignores POSIX bits; `applyMode` degrades instead of failing a
+    // write that already succeeded.
+    await applyMode(tmp, PRIVATE_FILE_MODE)
     await rename(tmp, path)
-    await chmod(path, 0o600)
-    await chmod(dirname(path), 0o700).catch(() => undefined)
+    await applyMode(path, PRIVATE_FILE_MODE)
+    await applyMode(dirname(path), PRIVATE_DIRECTORY_MODE)
     return { kind: 'ok', path, fingerprint: sessionFingerprint(options.session) }
   } catch (error) {
     return {

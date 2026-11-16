@@ -219,7 +219,11 @@ export interface AccountView {
 
 /** Credential conclusion reported to the card. */
 export interface CredentialView {
-  /** Primary path inspected (or the path that actually parsed). */
+  /**
+   * The path that actually parsed, or — while signed out — the first desktop
+   * candidate the user is expected to produce (never this plugin's own store:
+   * the card renders this value as `未找到：<path>`).
+   */
   sourcePath: string
   /** Whether a usable session was found and parsed. */
   found: boolean

@@ -39,6 +39,8 @@
 | 项 | 取值 |
 | --- | --- |
 | 路径（macOS） | `~/Library/Application Support/loomy/auth-session.json` |
+| 路径（Windows）`[推断]` | `%APPDATA%\loomy\auth-session.json`，同族候选 `Loomy`、`iFlytek\loomy`、`iFlytek\Loomy`、`讯飞办公助手`、`iflytek-loomy`，以及 `%LOCALAPPDATA%\loomy` / `\Loomy`。`APPDATA`/`LOCALAPPDATA` 缺失时按 `<home>\AppData\Roaming` / `Local` 兜底 |
+| 路径（兜底搜索）`[推断]` | 上面全未命中时，在 `%APPDATA%`、`%LOCALAPPDATA`（macOS 为 `~/Library/Application Support`，Linux 为 `$XDG_CONFIG_HOME`）下按目录深度 ≤3 搜 `auth-session.json`；预算 4000 个目录 / 1.2s、不跟随符号链接、跳过 `node_modules`/`Cache`/点目录 |
 | 写入者 | Electron 主进程 `electron-store`（`electron/auth/auth-session-runtime.js`） |
 | 格式 | 明文 JSON（非加密），文件权限 `-rw-r--r--`（同机其他用户可读，注意不要落日志） |
 | 读取时机 | 客户端启动 `restore()`；`update()` 在登录/换号时重写；`clear()` 清空 |
@@ -62,6 +64,13 @@
 > 读取建议：插件按 5s TTL 重读（客户端换号会重写文件，但不会通知外部进程）；文件缺失/JSON
 > 解析失败时降级为“未登录”，不要抛错误弹窗。`updatedAt` 只可用于展示“登录时间”，不可用于
 > 判断有效性——有效性只能靠上游响应。
+
+**Windows 说明**：上表的 Windows 路径与兜底搜索是 Electron `userData` 惯例的**推断**，未在 Windows
+实机取证（本文其余标注 `[实测]` 的结论都来自 macOS）。产品名在不同构建里并不稳定，因此插件按
+「固定候选 → 有界搜索」两级发现：候选全部未命中时才扫描 app-data 根，且扫描只发生在**未登录**
+状态；设置卡片「重新检测」会同时清掉登录态缓存与扫描缓存。若客户端装在非常规目录（MSIX 包、
+自定义安装路径），把它的 `auth-session.json` 绝对路径写进 `LOOMY_AUTH_SESSION_FILE` 即可跳过全部
+猜测——该变量是**排他替换**，设置后不会再碰任何桌面端默认路径。
 
 ### 1.2 会话失效的上游响应（重点）
 

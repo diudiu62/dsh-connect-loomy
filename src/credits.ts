@@ -22,7 +22,7 @@ import {
   DEFAULT_CREDITS_TTL_MS,
   MAX_CREDITS_PAGE_SIZE,
 } from './shared/types.js'
-import { asNumber, asString, isRecord, redactSensitive, safeErrorMessage, toEpochMs } from './shared/text.js'
+import { asNumber, asString, isRecord, notSignedInMessage, redactSensitive, safeErrorMessage, toEpochMs } from './shared/text.js'
 import { requestPlatform } from './shared/upstream.js'
 
 /** Session facts the reader needs; shared shape with `src/auth.ts`. */
@@ -112,7 +112,7 @@ export async function fetchCredits(options: {
         at,
         '/points/records',
         'not_signed_in',
-        `未找到可用的 Loomy 登录态（${options.session.sourcePath}）${options.session.problem === undefined ? '' : `：${options.session.problem}`}`,
+        notSignedInMessage(options.session.sourcePath, options.session.problem),
       ),
     }
   }
@@ -150,7 +150,7 @@ export async function fetchIdentity(options: {
         at,
         '/user/identity',
         'not_signed_in',
-        `未找到可用的 Loomy 登录态（${options.session.sourcePath}）${options.session.problem === undefined ? '' : `：${options.session.problem}`}`,
+        notSignedInMessage(options.session.sourcePath, options.session.problem),
       ),
     }
   }

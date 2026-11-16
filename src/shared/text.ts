@@ -139,6 +139,23 @@ export function redactSensitive(text: string): string {
     .replace(/\b1[3-9]\d{9}\b/gu, '[redacted phone]')
 }
 
+/**
+ * Message for "there is no session at all".
+ *
+ * `problem` already names every path that was inspected, so also prefixing the
+ * headline path produced `未找到可用的 Loomy 登录态（<path>）：…（<path>）` — the
+ * same path twice in the red box the settings card renders.
+ */
+export function notSignedInMessage(sourcePath: string, problem?: string): string {
+  if (problem === undefined || problem.trim().length === 0) {
+    return `未找到可用的 Loomy 登录态（${sourcePath}）`
+  }
+  // Keep the headline path when the explanation does not already carry it,
+  // but never print the same path twice.
+  if (problem.includes(sourcePath)) return `未找到可用的 Loomy 登录态：${problem}`
+  return `未找到可用的 Loomy 登录态（${sourcePath}）：${problem}`
+}
+
 /** Turn any thrown value into a redacted, length-bounded diagnostic string. */
 export function safeErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)

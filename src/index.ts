@@ -35,6 +35,7 @@ import { createCreditsCache, type CreditsCache } from './credits.js'
 import { createProviderRuntime } from './provider.js'
 import { registerLoomyRoutes } from './routes.js'
 import { stateFilePath } from './shared/paths.js'
+import { createAuthDiscovery } from './shared/discover.js'
 import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
 import { createLoginService } from './login.js'
 import { createAccountPool, POOL_ROUTE } from './pool.js'
@@ -105,6 +106,7 @@ export {
   isRecord,
   maskPhone,
   maskUserId,
+  notSignedInMessage,
   parseMultiplier,
   redactSensitive,
   safeErrorMessage,
@@ -113,7 +115,22 @@ export {
 export { buildTracingHeaders, isTraceparent } from './shared/trace.js'
 export { checkLoopback, hostMatchesListener, originIsLocal } from './shared/loopback.js'
 export { createStateStore, emptyState, parseState, serializeState, STATE_VERSION } from './shared/state.js'
-export { authSessionCandidates, resolveDshHome, stateFilePath } from './shared/paths.js'
+export {
+  authSessionCandidates,
+  discoveryRoots,
+  resolveDshHome,
+  stateFilePath,
+  windowsAppData,
+  windowsLocalAppData,
+} from './shared/paths.js'
+export {
+  AUTH_FILE_NAME,
+  createAuthDiscovery,
+  DEFAULT_DISCOVERY_TTL_MS,
+  discoverAuthSessionFiles,
+  type AuthDiscovery,
+  type DiscoveryOptions,
+} from './shared/discover.js'
 export { PROVIDER_ID, ROUTE_PREFIX, ROUTES } from './shared/types.js'
 export { requestPlatform } from './shared/upstream.js'
 export {
@@ -181,9 +198,18 @@ export function apply(ctx: Context, config: LoomyConfig): void {
   // settings card → the desktop client's file. `auth.invalidate()` after a
   // login/logout is what makes the switch immediate.
   const pluginStorageDir = defaultPluginStorageDir()
+  const authCandidates = authSessionCandidatesWithPlugin(pluginStorageDir)
+  // `LOOMY_AUTH_SESSION_FILE` is an exclusive replacement: the fallback scan is
+  // wired only when that pin is absent, so a pinned run can never reach a real
+  // desktop credential through the scan.
+  const authPinned = authCandidates.length === 1 && authCandidates[0]?.origin === 'env'
   const auth = createAuthStore({
-    candidates: authSessionCandidatesWithPlugin(pluginStorageDir),
+    candidates: authCandidates,
     ttlMs: () => live(config.sessionTtlMs),
+    // Windows ships the client under several `userData` names, so a fixed
+    // candidate list is not enough there; the bounded fallback search only runs
+    // while signed out and is dropped by `auth.invalidate()` on 「重新检测」.
+    ...(authPinned ? {} : { discover: createAuthDiscovery() }),
   })
   const accounts = createAccountsStore({
     storageDir: () => pluginStorageDir,

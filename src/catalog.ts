@@ -20,7 +20,7 @@
 
 import type { CatalogModel, CatalogModelView, CatalogSnapshot, UpstreamErrorView } from './shared/types.js'
 import { DEFAULT_BASE_URL, DEFAULT_CATALOG_TTL_MS } from './shared/types.js'
-import { asPositiveInt, asString, asStringArray, isRecord, redactSensitive, safeErrorMessage } from './shared/text.js'
+import { asPositiveInt, asString, asStringArray, isRecord, notSignedInMessage, redactSensitive, safeErrorMessage } from './shared/text.js'
 import type { StateStore } from './shared/state.js'
 import { emptyState, type PersistedState } from './shared/state.js'
 import { modelsUrl, requestPlatform } from './shared/upstream.js'
@@ -255,7 +255,7 @@ export function createCatalogStore(deps: CatalogDeps): CatalogStore {
         at,
         '/models',
         'not_signed_in',
-        `未找到可用的 Loomy 登录态（${readout.sourcePath}）${readout.problem === undefined ? '' : `：${readout.problem}`}`,
+        notSignedInMessage(readout.sourcePath, readout.problem),
       )
       state = { ...state, lastError: failure }
       await persist()

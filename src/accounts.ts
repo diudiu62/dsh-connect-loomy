@@ -27,10 +27,11 @@
  * @module dsh-connect-loomy/accounts
  */
 
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { displayPhone, displayUserId, isRecord, safeErrorMessage } from './shared/text.js'
+import { applyMode, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from './shared/modes.js'
 
 
 /** Current accounts-file schema version. */
@@ -321,13 +322,13 @@ export function createAccountsStore(options: {
   const persist = async (accounts: StoredAccount[]): Promise<void> => {
     const path = accountsFilePath(options.storageDir())
     const payload = `${JSON.stringify({ version: ACCOUNTS_VERSION, accounts }, undefined, 2)}\n`
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await mkdir(dirname(path), { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
     const tmp = `${path}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`
-    await writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 })
-    await chmod(tmp, 0o600)
+    await writeFile(tmp, payload, { encoding: 'utf8', mode: PRIVATE_FILE_MODE })
+    await applyMode(tmp, PRIVATE_FILE_MODE)
     await rename(tmp, path)
-    await chmod(path, 0o600)
-    await chmod(dirname(path), 0o700).catch(() => undefined)
+    await applyMode(path, PRIVATE_FILE_MODE)
+    await applyMode(dirname(path), PRIVATE_DIRECTORY_MODE)
     cached = { accounts, at: now() }
   }
 

@@ -79,7 +79,7 @@ try {
     const body = JSON.parse(statusResponse.text)
     ensureEqual(body.ok, true, 'ok')
     ensureMatch(body.csrfToken, /^[A-Za-z0-9_-]{16,}$/u, 'csrfToken')
-    ensureEqual(body.account.maskedPhone, '138****1234', 'masked phone')
+    ensureEqual(body.account.phone, '138****1234', 'masked phone')
     ensureEqual(body.account.userId, '1234**********5678', 'masked user id')
     ensureEqual(body.credential.found, true, 'credential.found')
     ensureEqual(body.enabledModelIds, MOCK_CHAT_IDS, 'enabledModelIds')
@@ -118,7 +118,7 @@ try {
       ],
       'probe verdicts',
     )
-    ensureEqual(body.account.maskedPhone, '138****1234', 'masked phone')
+    ensureEqual(body.account.phone, '138****1234', 'masked phone')
     ensure(!diagnosticsResponse.text.includes(FAKE_SESSION), 'the session must never reach the browser payload')
   })
 

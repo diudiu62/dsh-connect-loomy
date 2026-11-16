@@ -22,6 +22,7 @@ import { accountViewOf, credentialViewOf, readAuthSession } from './auth.js'
 import { normalizeCatalog } from './catalog.js'
 import { fetchCredits, fetchIdentity } from './credits.js'
 import { authSessionCandidates, resolveDshHome, stateFilePath } from './shared/paths.js'
+import { createAuthDiscovery } from './shared/discover.js'
 import { createStateStore } from './shared/state.js'
 import { resolveEnabledIds } from './catalog.js'
 import {
@@ -132,6 +133,21 @@ interface DoctorDocument {
   lastError?: UpstreamErrorView
 }
 
+/**
+ * Credential read for the CLI.
+ *
+ * `LOOMY_AUTH_SESSION_FILE` is an **exclusive** replacement by contract, so a
+ * pinned run never scans: the whole point of pinning is that this process can
+ * not pick up a real desktop credential. Everything else gets the same bounded
+ * fallback search the host uses, which is what makes `doctor` useful on a
+ * Windows install whose `userData` directory is named differently.
+ */
+function readAuthForCli(): ReturnType<typeof readAuthSession> {
+  const candidates = authSessionCandidates()
+  const pinned = candidates.length === 1 && candidates[0]?.origin === 'env'
+  return readAuthSession(candidates, pinned ? {} : { discover: createAuthDiscovery() })
+}
+
 function credentialCandidates(snapshot: Awaited<ReturnType<typeof readAuthSession>>): CandidateReport[] {
   return snapshot.candidates.map((candidate: CredentialCandidateView) => ({
     path: candidate.path,
@@ -148,7 +164,7 @@ async function readSavedSelection(): Promise<string[] | null> {
 }
 
 async function statusDocument(): Promise<StatusDocument> {
-  const snapshot = await readAuthSession(authSessionCandidates())
+  const snapshot = await readAuthForCli()
   const catalog = await fetchCatalog(snapshot.session, snapshot.sourcePath)
   const selection = await readSavedSelection()
   const enabledModelIds = resolveEnabledIds(catalog.models, selection)
@@ -177,7 +193,7 @@ async function statusDocument(): Promise<StatusDocument> {
 }
 
 async function doctorDocument(): Promise<DoctorDocument> {
-  const snapshot = await readAuthSession(authSessionCandidates())
+  const snapshot = await readAuthForCli()
   const urls = catalogUrls(baseURL())
   const probes: DoctorDocument['probes'] = []
   let lastError: UpstreamErrorView | undefined

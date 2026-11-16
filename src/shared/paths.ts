@@ -79,8 +79,6 @@ export function authSessionCandidates(
     return [{ path: resolve(override.trim()), origin: 'env' }]
   }
   const candidates: AuthCandidate[] = []
-  const appData = env['APPDATA']
-  const localAppData = env['LOCALAPPDATA']
   const xdg = env['XDG_CONFIG_HOME']
   if (platform === 'darwin') {
     candidates.push(
@@ -88,15 +86,27 @@ export function authSessionCandidates(
       { path: join(home, 'Library', 'Application Support', 'Loomy', 'auth-session.json'), origin: 'default' },
     )
   } else if (platform === 'win32') {
-    if (appData !== undefined && appData.trim().length > 0) {
-      candidates.push(
-        { path: join(appData, 'loomy', 'auth-session.json'), origin: 'default' },
-        { path: join(appData, 'Loomy', 'auth-session.json'), origin: 'default' },
-      )
-    }
-    if (localAppData !== undefined && localAppData.trim().length > 0) {
-      candidates.push({ path: join(localAppData, 'loomy', 'auth-session.json'), origin: 'default' })
-    }
+    const appData = windowsAppData(env, home)
+    // Electron's `userData` is `%APPDATA%\<productName>`, and the product name
+    // is not stable across builds of the same app: the macOS bundle calls
+    // itself `loomy`, a Windows build may ship as `Loomy`, nest under the
+    // vendor (`iFlytek\Loomy`) or use the Chinese display name. `auth-session.json`
+    // is a plain JSON file, so trying all of them costs four `stat` calls.
+    candidates.push(
+      { path: join(appData, 'loomy', 'auth-session.json'), origin: 'default' },
+      { path: join(appData, 'Loomy', 'auth-session.json'), origin: 'default' },
+      { path: join(appData, 'iFlytek', 'loomy', 'auth-session.json'), origin: 'default' },
+      { path: join(appData, 'iFlytek', 'Loomy', 'auth-session.json'), origin: 'default' },
+      { path: join(appData, '讯飞办公助手', 'auth-session.json'), origin: 'default' },
+      { path: join(appData, 'iflytek-loomy', 'auth-session.json'), origin: 'default' },
+      // Some Electron builds fall back to a dot-directory in the profile.
+      { path: join(home, '.loomy', 'auth-session.json'), origin: 'default' },
+    )
+    const localAppData = windowsLocalAppData(env, home)
+    candidates.push(
+      { path: join(localAppData, 'loomy', 'auth-session.json'), origin: 'default' },
+      { path: join(localAppData, 'Loomy', 'auth-session.json'), origin: 'default' },
+    )
   } else {
     const configHome = xdg !== undefined && xdg.trim().length > 0 ? xdg : join(home, '.config')
     candidates.push(
@@ -113,6 +123,57 @@ export function authSessionCandidates(
     unique.push(candidate)
   }
   return unique
+}
+
+/**
+ * `%APPDATA%` for this process.
+ *
+ * The environment variable is the authority, but it is **not always there**: a
+ * DSH started from a service, a stripped-down shell or a GUI launcher may hand
+ * the plugin an environment without `APPDATA`, and an empty candidate list is
+ * indistinguishable from "the user never logged in". Falling back to
+ * `<home>\AppData\Roaming` keeps discovery working in that case.
+ */
+export function windowsLocalAppData(
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string {
+  const configured = env['LOCALAPPDATA']
+  if (typeof configured === 'string' && configured.trim().length > 0) return configured.trim()
+  return join(home, 'AppData', 'Local')
+}
+
+/**
+ * `%APPDATA%` for the process, or the Electron default when it is absent.
+ */
+export function windowsAppData(
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string {
+  const configured = env['APPDATA']
+  if (typeof configured === 'string' && configured.trim().length > 0) return configured.trim()
+  return join(home, 'AppData', 'Roaming')
+}
+
+/**
+ * Directories a bounded fallback search may look into when none of the
+ * {@link authSessionCandidates} parsed.
+ *
+ * Kept narrow on purpose: one level of Electron `userData` directories is what
+ * the desktop client can plausibly use, and the search runs only while signed
+ * out, with its own entry budget (see `shared/discover.ts`).
+ */
+export function discoveryRoots(
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string[] {
+  if (platform === 'darwin') return [join(home, 'Library', 'Application Support')]
+  if (platform === 'win32') {
+    return [windowsAppData(env, home), windowsLocalAppData(env, home)]
+  }
+  const xdg = env['XDG_CONFIG_HOME']
+  return [typeof xdg === 'string' && xdg.trim().length > 0 ? xdg.trim() : join(home, '.config')]
 }
 
 /** The primary credential path the card shows when nothing parsed. */
