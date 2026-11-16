@@ -31,7 +31,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { displayPhone, displayUserId, isRecord, safeErrorMessage } from './shared/text.js'
-import { POOL_ROUTE } from './pool.js'
+
 
 /** Current accounts-file schema version. */
 export const ACCOUNTS_VERSION = 1
@@ -80,6 +80,9 @@ export interface AccountRoute {
   accountId?: string
   phone?: string
 }
+
+/** What the single route is called in the model picker. */
+export const PROVIDER_ROUTE_NAME = 'Loomy'
 
 /** The base route id; slot 1 uses it verbatim. */
 export const BASE_ROUTE = 'loomy'
@@ -342,42 +345,34 @@ export function createAccountsStore(options: {
 
     async routes(routeOptions = {}) {
       const accounts = await load(routeOptions.force === true)
-      if (accounts.length > 0) {
-        const perAccount: AccountRoute[] = accounts.map((account) => ({
-          route: routeForSlot(account.slot),
-          slot: account.slot,
-          displayName: routeDisplayName(account),
-          origin: 'plugin' as const,
-          accountId: account.id,
-          ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
-        }))
-        // The pool is only offered once there is something to pool over:
-        // rotating between one account would just be a slower alias for it.
-        if (accounts.length >= 2) {
-          perAccount.push({
-            route: POOL_ROUTE,
-            slot: 0,
-            displayName: `随机分配（${accounts.length} 个账号）`,
-            origin: 'plugin' as const,
-          })
-        }
-        return perAccount
-      }
-      // No plugin account: fall back to the desktop client's sign-in on slot 1,
-      // which is byte-for-byte the single-account behaviour that shipped first.
       const desktop = await options.readDesktop?.()
-      if (desktop?.found === true && desktop.session !== undefined) {
+      // One route, always: the account is chosen in the composer drawer, not by
+      // picking a different provider. Registering one route per account meant
+      // the model picker grew a group per sign-in and account switching looked
+      // like model selection.
+      if (accounts.length > 0 || desktop?.found === true) {
         return [
           {
             route: BASE_ROUTE,
             slot: 1,
-            displayName: 'Loomy',
-            origin: 'desktop' as const,
-            ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
+            displayName: PROVIDER_ROUTE_NAME,
+            origin: accounts.length > 0 ? ('plugin' as const) : ('desktop' as const),
+            ...(accounts.length > 0 ? {} : {}),
           },
         ]
       }
       return []
+    },
+
+    async desktopAccount() {
+      const desktop = await options.readDesktop?.()
+      if (desktop?.found !== true || desktop.session === undefined) return undefined
+      return {
+        id: accountIdOf(desktop.session),
+        session: desktop.session,
+        ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
+        ...(desktop.userId === undefined ? {} : { userId: desktop.userId }),
+      }
     },
 
     async adoptDesktop() {
@@ -394,17 +389,6 @@ export function createAccountsStore(options: {
         ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
         ...(desktop.userId === undefined ? {} : { userId: desktop.userId }),
       })
-    },
-
-    async desktopAccount() {
-      const desktop = await options.readDesktop?.()
-      if (desktop?.found !== true || desktop.session === undefined) return undefined
-      return {
-        id: accountIdOf(desktop.session),
-        session: desktop.session,
-        ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
-        ...(desktop.userId === undefined ? {} : { userId: desktop.userId }),
-      }
     },
 
     async accountForRoute(route) {

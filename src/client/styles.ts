@@ -25,6 +25,72 @@ export const CARD_CSS = `
 .loomy-header { display: flex; flex-direction: column; gap: 4px; }
 .loomy-title { font-size: 15px; font-weight: 600; }
 .loomy-subtitle { color: var(--dsw-alias-label-tertiary, #6b7280); }
+/* Composer account drawer: anchored above the badge, never widening the row. */
+.loomy-pill-anchor { position: relative; display: inline-flex; }
+.loomy-pill-open { background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.12)); }
+.loomy-drawer {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: 260px;
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.16));
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.28);
+  text-align: left;
+}
+.loomy-drawer-head { display: flex; align-items: center; gap: 8px; }
+.loomy-drawer-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.loomy-drawer-pool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.1));
+  font-size: 12px;
+}
+.loomy-drawer-list { display: flex; flex-direction: column; gap: 2px; }
+.loomy-drawer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.loomy-drawer-row:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.1)); }
+.loomy-drawer-row:disabled { cursor: default; opacity: 0.65; }
+.loomy-drawer-row-active {
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.14));
+  font-weight: 600;
+}
+.loomy-drawer-identity { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loomy-drawer-credits { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary, #4b5563); }
+.loomy-drawer-check { flex: 0 0 auto; color: var(--dsw-alias-state-success-primary, #15803d); }
+
 /* Account list: one compact line per account (identity · route · badges · action). */
 .loomy-acct-list { display: flex; flex-direction: column; gap: 2px; }
 .loomy-acct-row {

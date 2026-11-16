@@ -324,3 +324,48 @@ test('add-account actions live in the accounts section toolbar', async () => {
 })
 
 
+
+test('the composer badge opens an account drawer instead of relying on picker groups', async () => {
+  await setupDom()
+  const { composerEntry, t } = mountPlugin('zh')
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-loomy/accounts': {
+        body: {
+          ok: true,
+          accounts: [
+            { id: 'a1', slot: 1, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '18912342700' },
+            { id: 'a2', slot: 2, route: 'loomy-2', displayName: 'Loomy', origin: 'plugin', phone: '17166422065' },
+          ],
+          routes: [{ route: 'loomy', displayName: 'Loomy', origin: 'plugin', slot: 1 }],
+        },
+      },
+      '/plugins/dsh-connect-loomy/accounts/active': { body: { ok: true, activeId: 'a1', rotating: false } },
+      '/plugins/dsh-connect-loomy/pool': { body: { ok: true, enabled: false, accountCount: 2, active: false } },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(container.querySelector('.loomy-drawer'), null, 'closed by default')
+
+      const pill = container.querySelector('.loomy-pill')
+      assert.ok(pill, 'the badge renders')
+      await click(pill)
+
+      const drawer = container.querySelector('.loomy-drawer')
+      assert.ok(drawer, 'clicking the badge opens the account drawer')
+      // The drawer is where switching happens now: every account is a row.
+      const rows = [...drawer.querySelectorAll('.loomy-drawer-row')].map((node) => node.textContent)
+      assert.equal(rows.length, 2)
+      assert.ok(rows[0].includes('18912342700'))
+      assert.ok(rows[1].includes('17166422065'))
+      // ...and the pool switch lives here, not in the settings card alone.
+      assert.ok(drawer.textContent.includes('每次调用随机选一个健康账号'))
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})

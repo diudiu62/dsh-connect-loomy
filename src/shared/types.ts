@@ -30,7 +30,18 @@ export const ROUTES = {
   accountImport: `${ROUTE_PREFIX}/accounts/import`,
   pool: `${ROUTE_PREFIX}/pool`,
   accountAdopt: `${ROUTE_PREFIX}/accounts/adopt`,
+  accountActive: `${ROUTE_PREFIX}/accounts/active`,
 } as const
+
+/** `GET`/`POST /accounts/active` — which account the single route uses. */
+export interface ActiveAccountView {
+  ok: boolean
+  /** Stored account id in use, or `undefined` when rotation is on. */
+  activeId?: string
+  /** True while rotation decides per call instead of this selection. */
+  rotating?: boolean
+  error?: { code: string; message: string }
+}
 
 /** `POST /accounts/adopt` — the desktop sign-in became a stored account. */
 export interface AccountAdoptView {

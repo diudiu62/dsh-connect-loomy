@@ -24,9 +24,17 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { describeError, fetchAccounts, fetchCredits, isAbortError, type LoomyCredits } from './api.js'
+import {
+  describeError,
+  fetchAccounts,
+  fetchCredits,
+  fetchStatus,
+  isAbortError,
+  type LoomyCredits,
+} from './api.js'
 import { formatCount } from './format.js'
 import { ensureStyles } from './styles.js'
+import { AccountDrawer } from './components/AccountDrawer.js'
 import type { LoomyT } from './components/types.js'
 
 /** The provider route this pill reports on. */
@@ -75,12 +83,22 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   const [credits, setCredits] = useState<LoomyCredits | null>(null)
   const [routeName, setRouteName] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [csrfToken, setCsrfToken] = useState<string | null>(null)
+  const [creditsByRoute, setCreditsByRoute] = useState<Map<string, { available: number; error?: string }>>(new Map())
   const inFlight = useRef<AbortController | null>(null)
 
   const load = useCallback(
     (signal: AbortSignal, route: string) => {
       // The route id is internal; the picker names each group after the account,
       // so the badge reads the same word the user just selected.
+      fetchStatus({ signal })
+        .then((result) => {
+          if (result.kind === 'ok') setCsrfToken(result.value.csrfToken ?? null)
+        })
+        .catch(() => {
+          // Without a token the drawer opens read-only; switching is disabled.
+        })
       fetchAccounts({ signal })
         .then((result) => {
           if (result.kind !== 'ok') return
@@ -95,7 +113,16 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
           // `unavailable` means this host serves no credits route (the host half
           // is disabled or not restarted). Stay silent: the settings card is
           // where that condition is explained.
-          if (result.kind === 'ok') setCredits(result.value)
+          if (result.kind !== 'ok') return
+          setCredits(result.value)
+          const map = new Map<string, { available: number; error?: string }>()
+          for (const entry of result.value.perAccount ?? []) {
+            map.set(entry.route, {
+              available: entry.availableBalance,
+              ...(entry.error === undefined ? {} : { error: entry.error }),
+            })
+          }
+          setCreditsByRoute(map)
         })
         .catch((error: unknown) => {
           if (isAbortError(error)) return
@@ -116,6 +143,11 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
     load(controller.signal, provider)
     return () => controller.abort()
   }, [owns, provider, load])
+
+  const openDrawer = useCallback(() => {
+    if (!owns) return
+    setOpen((previous) => !previous)
+  }, [owns])
 
   const refresh = useCallback(() => {
     if (!owns || busy || provider === undefined) return
@@ -179,15 +211,29 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
       `Loomy credits — available ${formatCount(credits.availableBalance)} (monthly ${formatCount(credits.balance)} + today ${formatCount(credits.dailyBalance)})`
 
   return (
-    <button
-      type="button"
-      className={`loomy-pill${busy ? ' loomy-pill-busy' : ''}`}
-      onClick={refresh}
-      title={title}
-      aria-label={label}
-      data-provider={provider}
-    >
-      {label}
-    </button>
+    <span className="loomy-pill-anchor">
+      <button
+        type="button"
+        className={`loomy-pill${busy ? ' loomy-pill-busy' : ''}${open ? ' loomy-pill-open' : ''}`}
+        onClick={openDrawer}
+        title={title}
+        aria-label={t?.('drawer.open') ?? label}
+        aria-expanded={open}
+        data-provider={provider}
+      >
+        {label}
+      </button>
+      {open ? (
+        <AccountDrawer
+          t={t as never}
+          csrfToken={csrfToken}
+          creditsByRoute={creditsByRoute}
+          onClose={() => setOpen(false)}
+          onChanged={() => {
+            if (provider !== undefined) load(new AbortController().signal, provider)
+          }}
+        />
+      ) : null}
+    </span>
   )
 }

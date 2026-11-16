@@ -25,6 +25,14 @@ export type LoomyLocaleKey =
   | 'composer.pill'
   | 'composer.pillAmount'
   | 'composer.pillPool'
+  | 'drawer.title'
+  | 'drawer.close'
+  | 'drawer.empty'
+  | 'drawer.rotating'
+  | 'drawer.footHint'
+  | 'drawer.switchFailed'
+  | 'drawer.desktopHint'
+  | 'drawer.open'
   | 'composer.pillBare'
   | 'composer.pillPending'
   | 'composer.pillTitle'
@@ -336,6 +344,14 @@ export const en: Record<LoomyLocaleKey, string> = {
   'composer.pill': '{account} · {amount}',
   'composer.pillAmount': '{amount}',
   'composer.pillPool': 'Pool',
+  'drawer.title': 'Account',
+  'drawer.close': 'Close',
+  'drawer.empty': 'No account yet — add one in Settings → Loomy.',
+  'drawer.rotating': 'Rotation is on: each call picks a healthy account, so no single row is active.',
+  'drawer.footHint': 'Add or remove accounts in Settings → Loomy.',
+  'drawer.switchFailed': 'Could not switch the account.',
+  'drawer.desktopHint': 'Add it in Settings → Loomy to make it selectable.',
+  'drawer.open': 'Choose account',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
   'composer.pillTitle': 'Loomy credits — available {available} (monthly {balance} + today {daily}). Click to refresh.',
@@ -554,6 +570,14 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'composer.pill': '{account} · {amount}',
   'composer.pillAmount': '{amount}',
   'composer.pillPool': '随机',
+  'drawer.title': '账号',
+  'drawer.close': '关闭',
+  'drawer.empty': '还没有账号——在「设置 → Loomy」里添加。',
+  'drawer.rotating': '已开启随机：每次调用随机选一个健康账号，因此没有单一「当前账号」。',
+  'drawer.footHint': '增删账号请到「设置 → Loomy」。',
+  'drawer.switchFailed': '切换账号失败。',
+  'drawer.desktopHint': '到「设置 → Loomy」加入后才能选择。',
+  'drawer.open': '选择账号',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',
   'composer.pillTitle': 'Loomy 积分：可用 {available}（包月剩余 {balance} + 今日额度 {daily}）。点击可刷新。',

@@ -34,6 +34,7 @@ import type {
   AuthLogoutView,
   AuthSendCodeView,
   AccountAdoptView,
+  ActiveAccountView,
   AccountExportView,
   AccountImportView,
   PoolView,
@@ -73,6 +74,11 @@ export interface RouteDeps {
   creditsFor?: (route: string) => CreditsCache
   /** The multi-account store. */
   accounts: AccountsStore
+  /** Read/write which account the single route authenticates as. */
+  activeAccount: {
+    read: () => Promise<string | undefined>
+    write: (id: string) => Promise<void>
+  }
   /** Read/write the rotation-pool preference (persisted in the state file). */
   poolPreference: {
     read: () => Promise<boolean>
@@ -323,6 +329,17 @@ async function buildCredits(deps: RouteDeps): Promise<
       records: records.slice(0, 20),
       perAccount,
     },
+  }
+}
+
+/** Which account the single route currently uses. */
+async function buildActiveView(deps: RouteDeps): Promise<ActiveAccountView> {
+  const rotating = (await deps.poolPreference.read()) && (await deps.accounts.list({ force: false })).length > 1
+  const activeId = await deps.activeAccount.read()
+  return {
+    ok: true,
+    ...(activeId === undefined ? {} : { activeId }),
+    rotating,
   }
 }
 
@@ -703,6 +720,35 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
         }
         await deps.refreshRoutes()
         corsSafeJson(res, 200, { ok: true })
+      },
+    },
+    {
+      path: ROUTES.accountActive,
+      methods: ['GET', 'POST'],
+      mutating: true,
+      run: async (req, res) => {
+        if (req.method === 'GET') {
+          corsSafeJson(res, 200, await buildActiveView(deps))
+          return
+        }
+        const body = await readJsonObject(req)
+        const id = body === undefined ? undefined : body['id']
+        if (typeof id !== 'string' || id.length === 0) {
+          failure(res, 400, 'bad_request', 'id 必须是非空字符串')
+          return
+        }
+        const known = await deps.accounts.list({ force: false })
+        if (!known.some((account) => account.id === id)) {
+          const payload: ActiveAccountView = {
+            ok: false,
+            error: { code: 'unknown_account', message: '该账号不在账号表里，请先刷新。' },
+          }
+          corsSafeJson(res, 200, payload)
+          return
+        }
+        await deps.activeAccount.write(id)
+        deps.auth.invalidate()
+        corsSafeJson(res, 200, await buildActiveView(deps))
       },
     },
     {

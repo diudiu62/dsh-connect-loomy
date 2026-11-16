@@ -53,7 +53,16 @@ export const ROUTES = {
   accountImport: `${ROUTE_PREFIX}/accounts/import`,
   pool: `${ROUTE_PREFIX}/pool`,
   accountAdopt: `${ROUTE_PREFIX}/accounts/adopt`,
+  accountActive: `${ROUTE_PREFIX}/accounts/active`,
 } as const
+
+/** `GET`/`POST /accounts/active` */
+export interface LoomyActiveAccount {
+  ok: boolean
+  activeId?: string
+  rotating?: boolean
+  error?: { code: string; message: string }
+}
 
 /** `POST /accounts/adopt` */
 export interface LoomyAccountAdopt {
@@ -522,6 +531,20 @@ export function renameAccount(
 /** Read the rotation-pool preference. */
 export function fetchPool(options: RouteOptions = {}): Promise<RouteResult<LoomyPoolState>> {
   return getJson<LoomyPoolState>(ROUTES.pool, options)
+}
+
+/** Which account the single Loomy route uses. */
+export function fetchActiveAccount(options: RouteOptions = {}): Promise<RouteResult<LoomyActiveAccount>> {
+  return getJson<LoomyActiveAccount>(ROUTES.accountActive, options)
+}
+
+/** Point the single route at one account (rotation must be off to stick). */
+export function setActiveAccount(
+  csrfToken: string,
+  id: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyActiveAccount>> {
+  return postJson<LoomyActiveAccount>(ROUTES.accountActive, csrfToken, { id }, options)
 }
 
 /** Turn the rotation pool on or off (persisted by the host). */

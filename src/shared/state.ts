@@ -41,6 +41,14 @@ export interface PersistedState {
    * account is paying. Stored here because it must survive a restart.
    */
   poolEnabled?: boolean
+  /**
+   * Which account the single `loomy` route should authenticate as.
+   *
+   * Accounts are no longer one provider route each: the picker shows one
+   * `loomy` group and the account is chosen in the composer's account drawer.
+   * `undefined` means "first healthy account" (or the desktop sign-in).
+   */
+  activeAccountId?: string
 }
 
 /** Empty state: no cache, no explicit selection. */
@@ -97,6 +105,9 @@ export function parseState(text: string): PersistedState {
   if (isUpstreamError(parsed.lastError)) state.lastError = parsed.lastError
   if (typeof parsed.savedAt === 'number' && Number.isFinite(parsed.savedAt)) state.savedAt = parsed.savedAt
   if (typeof parsed.poolEnabled === 'boolean') state.poolEnabled = parsed.poolEnabled
+  if (typeof parsed.activeAccountId === 'string' && parsed.activeAccountId.length > 0) {
+    state.activeAccountId = parsed.activeAccountId
+  }
   return state
 }
 
@@ -120,6 +131,7 @@ export function serializeState(state: PersistedState): string {
   if (state.lastError !== undefined) document['lastError'] = state.lastError
   if (state.savedAt !== undefined) document['savedAt'] = state.savedAt
   if (state.poolEnabled !== undefined) document['poolEnabled'] = state.poolEnabled
+  if (state.activeAccountId !== undefined) document['activeAccountId'] = state.activeAccountId
   return `${JSON.stringify(document, null, 2)}\n`
 }
 

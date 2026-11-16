@@ -115,73 +115,26 @@ test('a health mark expires after the cooldown and success clears it', async () 
   }
 })
 
-test('the pool route appears only once there are two accounts to rotate over', async () => {
+test('rotation is a mode, not a provider route: the picker keeps one group', async () => {
   const { store, cleanup } = freshStore()
   try {
     await store.add({ session: S('a'), phone: '13800000001' })
-    let routes = await store.routes({ force: true })
-    assert.deepEqual(routes.map((route) => route.route), ['loomy'])
-
     await store.add({ session: S('b'), phone: '13800000002' })
-    routes = await store.routes({ force: true })
-    assert.deepEqual(routes.map((route) => route.route), ['loomy', 'loomy-2', POOL_ROUTE])
-    const poolRoute = routes.find((route) => route.route === POOL_ROUTE)
-    assert.match(poolRoute.displayName, /2 个账号/u)
-  } finally {
-    cleanup()
-  }
-})
-
-test('a pooled call authenticates as the account the pool chose, per call', async () => {
-  const { dir, store, cleanup } = freshStore()
-  try {
-    await store.add({ session: S('a'), phone: '13800000001' })
-    await store.add({ session: S('b'), phone: '13800000002' })
-    const draws = [0, 0.99]
-    let cursor = 0
-    const pool = createAccountPool({
-      accounts: store,
-      now: () => 1_000_000,
-      random: () => draws[cursor++ % draws.length],
-    })
     const routes = await store.routes({ force: true })
+    // Two accounts, still one picker group: accounts are chosen in the composer
+    // drawer, which is why this list no longer grows with every sign-in.
+    assert.deepEqual(routes.map((route) => route.route), ['loomy'])
+    assert.equal(routes[0].displayName, 'Loomy')
 
-    const seen = []
-    const runtime = createProviderRuntime({
-      catalog: {
-        kickStaleRefresh() {},
-        enabledModels: () => [
-          {
-            id: 'm1',
-            name: 'Model One',
-            multiplier: 1,
-            contextWindow: 1000,
-            maxOutput: 100,
-            vision: false,
-            efforts: [],
-            defaultEffort: '',
-          },
-        ],
-      },
-      baseURL: () => 'https://example.invalid/api/v1',
-      loomyVersion: () => '0.9.39',
-      readSession: async () => ({ found: false, sourcePath: 'x', candidates: [] }),
-      sessionForRoute: async (route) => {
-        seen.push(route)
-        return { found: false, sourcePath: 'x', candidates: [] }
-      },
-      pool,
-      precheck: async () => ({ ok: true, definite: false }),
-    })
-    runtime.setRoutes(routes)
-
-    // The pool profile exists and serves the same catalog under its own id.
-    const poolProfile = runtime.profiles.get(POOL_ROUTE)
-    assert.ok(poolProfile, 'the pool route is registered')
-    const models = poolProfile.piProvider.getModels()
-    assert.equal(models[0].provider, POOL_ROUTE)
-
-    assert.ok(dir.length > 0)
+    // The pool still decides who pays, per call, independently of the route.
+    const pool = createAccountPool({ accounts: store, now: () => 1_000_000 })
+    const seen = new Set()
+    for (let index = 0; index < 12; index += 1) {
+      const pick = await pool.pick()
+      assert.equal(pick.kind, 'ok')
+      seen.add(pick.account.slot)
+    }
+    assert.equal(seen.size, 2, 'both accounts get picked')
   } finally {
     cleanup()
   }

@@ -203,32 +203,47 @@ export function apply(ctx: Context, config: LoomyConfig): void {
   /**
    * The session a given route must authenticate as.
    *
-   * Slot 1 with no stored account falls through to the desktop/plugin snapshot
-   * (single-account behaviour); every other route resolves to its own stored
-   * account. Returning a snapshot rather than a bare string keeps the existing
-   * `missingCredentialMessage` wording intact for the error path.
+ */
+  /**
+   * The rotation pool. It shares the accounts store, so a failure mark written
+   * by one call is what the next call's candidate filter reads.
    */
-  const sessionForRoute = async (route: string): Promise<AuthSnapshot> => {
-    const account = await accounts.accountForRoute(route)
-    if (account === undefined) return auth.read()
+  const pool = createAccountPool({ accounts })
+
+  /**
+   * The session the single `loomy` route must authenticate as.
+   *
+   * Accounts are plugin state now, not provider routes: this picks the active
+   * account, or a random healthy one when rotation is on, and falls back to the
+   * desktop sign-in. `route` is kept in the signature because pi-ai hands it to
+   * us and a future second route would need it.
+   */
+  const sessionForRoute = async (_route: string): Promise<AuthSnapshot> => {
+    const stateNow = await state.load()
+    const stored = await accounts.list({ force: false })
+    if (stored.length === 0) return auth.read()
+
+    const rotate = stateNow.poolEnabled !== false && stored.length > 1
+    let chosen: (typeof stored)[number] | undefined
+    if (rotate) {
+      const pick = await pool.pick()
+      chosen = pick.kind === 'empty' ? undefined : pick.account
+    } else {
+      chosen = stored.find((account) => account.id === stateNow.activeAccountId) ?? stored[0]
+    }
+    if (chosen === undefined) return auth.read()
     return {
       found: true,
-      sourcePath: `accounts.json#slot-${account.slot}`,
+      sourcePath: `accounts.json#slot-${chosen.slot}`,
       candidates: [],
-      session: account.session,
-      fingerprint: accountIdOf(account.session),
-      ...(account.phone === undefined ? {} : { phone: displayPhone(account.phone) }),
-      ...(account.userId === undefined ? {} : { userId: displayUserId(account.userId) }),
-      loginAt: account.addedAt,
+      session: chosen.session,
+      fingerprint: accountIdOf(chosen.session),
+      ...(chosen.phone === undefined ? {} : { phone: chosen.phone }),
+      ...(chosen.userId === undefined ? {} : { userId: chosen.userId }),
+      loginAt: chosen.addedAt,
       sourceOrigin: 'plugin' as const,
     }
   }
-
-  /**
-   * The opt-in rotation pool. It shares the accounts store, so a failure mark
-   * written by one call is what the next call's candidate filter reads.
-   */
-  const pool = createAccountPool({ accounts })
 
   const catalog = createCatalogStore({
     baseURL,
@@ -429,6 +444,13 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     credits,
     creditsFor,
     accounts,
+    activeAccount: {
+      read: async () => (await state.load()).activeAccountId,
+      write: async (id: string) => {
+        const current = await state.load()
+        await state.save({ ...current, activeAccountId: id })
+      },
+    },
     poolPreference: {
       read: async () => (await state.load()).poolEnabled !== false,
       write: async (enabled: boolean) => {
