@@ -194,7 +194,10 @@ export function installFetch(routes) {
   const handler = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.url
     calls.push({ url, init, body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined })
-    const route = routes[url]
+    // Match by path first, the way a real server routes: a request may carry a
+    // query (`?force=1`) that is not part of the route identity.
+    const pathname = url.startsWith('http') ? new URL(url).pathname : url.split('?')[0]
+    const route = routes[url] ?? routes[pathname]
     if (route === undefined) {
       return new Response(JSON.stringify({ ok: false, error: { code: 'not_found', message: 'no route' } }), {
         status: 404,

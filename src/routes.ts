@@ -233,11 +233,11 @@ async function routeOfSession(
  * merged and each row is tagged with the account it came from — otherwise a
  * multi-account user reads a list of amounts with no way to tell whose they are.
  */
-async function buildCredits(deps: RouteDeps): Promise<
+async function buildCredits(deps: RouteDeps, options: { force?: boolean } = {}): Promise<
   | { kind: 'ok'; credits: CreditsView }
   | { kind: 'failure'; failure: UpstreamErrorView }
 > {
-  const primary = await deps.credits.read()
+  const primary = await deps.credits.read(options.force === true ? { force: true } : {})
 
   // The breakdown keys on **accounts**, not routes. Since accounts share the
   // single `loomy` route, iterating routes found exactly one entry and fell
@@ -252,7 +252,7 @@ async function buildCredits(deps: RouteDeps): Promise<
   const perRoute = await Promise.all(
     stored.map(async (account) => ({
       account,
-      result: await deps.creditsForAccount!(account).read(),
+      result: await deps.creditsForAccount!(account).read(options.force === true ? { force: true } : {}),
     })),
   )
 
@@ -514,8 +514,11 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
       path: ROUTES.credits,
       methods: ['GET'],
       mutating: false,
-      run: async (_req, res) => {
-        const merged = await buildCredits(deps)
+      run: async (req, res) => {
+        // A user-pressed refresh must not be answered from the 60s cache, or the
+        // button would look broken right after a call was made.
+        const force = typeof req.url === 'string' && /[?&]force=1\b/u.test(req.url)
+        const merged = await buildCredits(deps, { force })
         if (merged.kind === 'failure') {
           // Contract v2: HTTP 200 + ok:false so the card renders a truthful
           // upstream failure instead of treating it as a missing route.

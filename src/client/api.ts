@@ -474,9 +474,17 @@ export function fetchDiagnostics(options: RouteOptions = {}): Promise<RouteResul
   return getJson<LoomyDiagnostics>(ROUTES.diagnostics, options)
 }
 
-/** Read the read-only points overview. */
-export function fetchCredits(options: RouteOptions = {}): Promise<RouteResult<LoomyCredits>> {
-  return getJson<LoomyCredits>(ROUTES.credits, options)
+/**
+ * Read the points overview.
+ *
+ * `force` bypasses the host's 60s cache — used only by an explicit refresh, so
+ * a button press is never answered with a number the user is trying to replace.
+ */
+export function fetchCredits(
+  options: RouteOptions & { force?: boolean } = {},
+): Promise<RouteResult<LoomyCredits>> {
+  const { force, ...rest } = options
+  return getJson<LoomyCredits>(force === true ? `${ROUTES.credits}?force=1` : ROUTES.credits, rest)
 }
 
 /** Read the plugin's own sign-in state and which source is effective. */

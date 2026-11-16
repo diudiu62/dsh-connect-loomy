@@ -47,8 +47,19 @@ export const CARD_CSS = `
   text-align: left;
 }
 .loomy-drawer-head { display: flex; align-items: center; gap: 8px; }
-.loomy-drawer-close {
+.loomy-drawer-refresh {
   margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.loomy-drawer-refresh:disabled { opacity: 0.5; cursor: default; }
+.loomy-drawer-refresh:hover:not(:disabled) { color: var(--dsw-alias-label-primary, #1f2328); }
+.loomy-drawer-close {
   border: none;
   background: transparent;
   color: var(--dsw-alias-label-tertiary, #6b7280);

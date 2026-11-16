@@ -38,14 +38,21 @@ export interface AccountDrawerProps {
   onClose: () => void
   /** Called after any change so the badge can re-read its figure. */
   onChanged: () => void
+  /**
+   * Re-read the points from upstream, bypassing the host cache. The figures in
+   * this panel live in the badge's state, so the drawer asks the badge to fetch
+   * rather than reading /credits a second time.
+   */
+  onRefreshCredits: () => void
 }
 
 /** Render the drawer panel. */
-export function AccountDrawer({ t, csrfToken, creditsByAccount, onClose, onChanged }: AccountDrawerProps) {
+export function AccountDrawer({ t, csrfToken, creditsByAccount, onClose, onChanged, onRefreshCredits }: AccountDrawerProps) {
   const [accounts, setAccounts] = useState<LoomyAccountRow[] | null>(null)
   const [active, setActive] = useState<LoomyActiveAccount | null>(null)
   const [pool, setPool] = useState<LoomyPoolState | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
@@ -82,6 +89,18 @@ export function AccountDrawer({ t, csrfToken, creditsByAccount, onClose, onChang
       document.removeEventListener('mousedown', onPointer)
     }
   }, [onClose])
+
+  /** One press: re-read the account list and the points behind it. */
+  const refresh = async (): Promise<void> => {
+    setRefreshing(true)
+    setError(null)
+    try {
+      await load()
+      onRefreshCredits()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const select = async (id: string): Promise<void> => {
     if (csrfToken === null) return
@@ -129,6 +148,16 @@ export function AccountDrawer({ t, csrfToken, creditsByAccount, onClose, onChang
     <div className="loomy-drawer" ref={panelRef} role="dialog" aria-label={t('drawer.title')}>
       <div className="loomy-drawer-head">
         <span className="loomy-section-title">{t('drawer.title')}</span>
+        <button
+          type="button"
+          className="loomy-drawer-refresh"
+          disabled={refreshing}
+          onClick={() => void refresh()}
+          title={t('drawer.refreshHint')}
+          aria-label={t('drawer.refresh')}
+        >
+          {refreshing ? '⋯' : '⟳'}
+        </button>
         <button type="button" className="loomy-drawer-close" onClick={onClose} aria-label={t('drawer.close')}>
           ×
         </button>

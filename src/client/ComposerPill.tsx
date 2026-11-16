@@ -92,7 +92,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   const inFlight = useRef<AbortController | null>(null)
 
   const load = useCallback(
-    (signal: AbortSignal) => {
+    (signal: AbortSignal, force = false) => {
       fetchStatus({ signal })
         .then((result) => {
           if (result.kind === 'ok') setCsrfToken(result.value.csrfToken ?? null)
@@ -109,7 +109,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
         .catch(() => {
           // Keep the per-account figure; it is never wrong, only narrower.
         })
-      fetchCredits({ signal })
+      fetchCredits(force ? { signal, force: true } : { signal })
         .then((result) => {
           // `unavailable` means this host serves no credits route (the host half
           // is disabled or not restarted). Stay silent: the settings card is
@@ -232,6 +232,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
           creditsByAccount={creditsByAccount}
           onClose={() => setOpen(false)}
           onChanged={() => load(new AbortController().signal)}
+          onRefreshCredits={() => load(new AbortController().signal, true)}
         />
       ) : null}
     </span>

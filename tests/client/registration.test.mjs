@@ -473,3 +473,65 @@ test('switching account in the drawer moves the badge figure', async () => {
     { useProjection: () => ({ next: { provider: 'loomy' } }) },
   )
 })
+
+test('the drawer refreshes the points, and bypasses the host cache when it does', async () => {
+  await setupDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  let available = 40500
+  const calls = installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-loomy/credits': () => {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            balance: available,
+            dailyBalance: 0,
+            availableBalance: available,
+            fetchedAt: 1,
+            perAccount: [{ accountId: 'acc1', route: 'loomy', account: '18912342700', availableBalance: available, balance: available, dailyBalance: 0 }],
+            records: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      },
+      '/plugins/dsh-connect-loomy/accounts': {
+        body: {
+          ok: true,
+          accounts: [{ id: 'acc1', slot: 1, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '18912342700' }],
+          routes: [{ route: 'loomy', displayName: 'Loomy', origin: 'plugin', slot: 1 }],
+        },
+      },
+      '/plugins/dsh-connect-loomy/accounts/active': { body: { ok: true, activeId: 'acc1', rotating: false } },
+      '/plugins/dsh-connect-loomy/pool': { body: { ok: true, enabled: false, accountCount: 1, active: false } },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      await click(container.querySelector('.loomy-pill'))
+      const drawer = container.querySelector('.loomy-drawer')
+      assert.ok(drawer, 'drawer open')
+
+      const before = calls.filter((call) => call.url.includes('/credits')).length
+      available = 12345 // the upstream figure moved
+      await click(drawer.querySelector('.loomy-drawer-refresh'))
+      await new Promise((resolve) => setTimeout(resolve, 60))
+
+      const after = calls
+        .filter((call) => call.url.includes('/credits'))
+        .slice(before)
+        .map((call) => call.url)
+      assert.ok(after.length >= 1, 'the button re-reads the points')
+      assert.ok(
+        after.some((url) => url.includes('force=1')),
+        `a manual refresh must skip the host cache: ${JSON.stringify(after)}`,
+      )
+      assert.match(container.querySelector('.loomy-pill')?.textContent ?? '', /12,345/u, 'the badge shows the new figure')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
