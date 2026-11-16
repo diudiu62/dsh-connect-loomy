@@ -72,13 +72,6 @@ export const CARD_CSS = `
   color: var(--dsw-alias-label-tertiary, #6b7280);
 }
 .loomy-add { display: flex; flex-direction: column; gap: 6px; }
-.loomy-add-row {
-  margin-top: 2px;
-  border-top: 1px dashed var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.12));
-  border-radius: 0;
-  padding-top: 8px;
-}
-.loomy-add-body { margin-left: 6px; }
 
 /* Account rows (multi-account): one row per provider route. */
 .loomy-accounts { display: flex; flex-direction: column; gap: 10px; }

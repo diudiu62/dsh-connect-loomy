@@ -290,24 +290,35 @@ test('every accepted paste is normalized to one canonical bundle before it is se
   assert.equal(maskedOnly.accounts[0].label, '189****2700', 'it is kept as a label instead')
 })
 
-test('adding an account is the last row of the account list, not its own section', async () => {
+test('add-account actions live in the accounts section toolbar', async () => {
   await setupDom()
   const { entry, t } = mountPlugin('zh')
   installFetch(defaultRoutes())
 
-  await renderCard(entry, t, ({ container }) => {
-    // Only one "账号" heading: the add affordances live inside it.
+  await renderCard(entry, t, async ({ container }) => {
+    // No separate 添加账号 section heading...
     const headings = [...container.querySelectorAll('.loomy-section-title')].map((node) => node.textContent)
-    assert.equal(headings.filter((text) => text === '添加账号').length, 0, 'no separate 添加账号 section')
+    assert.equal(headings.filter((text) => text === '添加账号').length, 0)
 
-    // ...and they are a list row, so they align with the account rows.
-    const addRow = container.querySelector('.loomy-add-row')
-    assert.ok(addRow, 'the add affordances render as a row')
-    assert.ok(addRow.textContent.includes('新增账号'))
+    // ...the actions sit in the accounts section's own toolbar, top-right.
+    const section = [...container.querySelectorAll('.loomy-section')].find((node) =>
+      node.textContent.includes('账号（'),
+    )
+    assert.ok(section, 'the accounts section renders')
+    const toolbar = section.querySelector('.loomy-toolbar')
+    const labels = [...toolbar.querySelectorAll('button')].map((node) => node.textContent)
+    assert.ok(labels.includes('新增账号'), `toolbar holds the add action: ${JSON.stringify(labels)}`)
+    assert.ok(labels.includes('导入 / 导出'))
+    assert.ok(labels.includes('全部导出'))
+    assert.ok(labels.includes('刷新'))
 
-    // The row lives inside the same section that holds the account rows.
-    const section = addRow.closest('.loomy-section')
-    assert.ok(section, 'inside a section')
-    assert.ok(section.querySelector('.loomy-acct-list'), 'the section holds the account rows')
+    // The form appears only once asked for, and inline under that toolbar.
+    assert.equal(container.querySelector('.loomy-add-body'), null)
+    await click(button(container, '新增账号'))
+    const body = container.querySelector('.loomy-add-body')
+    assert.ok(body, 'the login form expands')
+    assert.ok(section.contains(body), 'inside the same section')
   })
 })
+
+

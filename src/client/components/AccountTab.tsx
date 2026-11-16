@@ -14,10 +14,11 @@
  * @module dsh-connect-loomy/client/components/AccountTab
  */
 
+import { useState } from 'react'
 import type { LoomyAccounts, LoomyAuthState, LoomyCredits, LoomyPoolState, LoomyStatus } from '../api.js'
 import { formatCount, formatDateTime } from '../format.js'
 import { AccountsList } from './AccountsList.js'
-import { AddAccountPanel } from './AddAccountPanel.js'
+import { AddAccountPanel, type AddMode } from './AddAccountPanel.js'
 import { Badge, CardButton, FactRow, Notice, Section } from './common.js'
 import { loadableMessage, type Loadable, type LoomyT } from './types.js'
 
@@ -58,6 +59,11 @@ export interface AccountTabProps {
 /** Render the account tab. */
 export function AccountTab(props: AccountTabProps) {
   const { t, status, credits, redetecting, onRedetect, onRetryCredits, accounts } = props
+  // Which add flow is expanded. The buttons that set it live in the section's
+  // top-right toolbar, next to 刷新, so every action sits where the section's
+  // actions belong.
+  const [addMode, setAddMode] = useState<AddMode>(null)
+  const [importText, setImportText] = useState('')
   const accountCount = accounts.kind === 'ready' ? accounts.value.accounts.length : null
 
   return (
@@ -85,14 +91,48 @@ export function AccountTab(props: AccountTabProps) {
       <Section
         title={accountCount === null ? t('accounts.title') : t('accounts.titleCount', { count: String(accountCount) })}
         actions={
-          <CardButton variant="ghost" onClick={props.onRefreshAccounts}>
-            {t('common.refresh')}
-          </CardButton>
+          <>
+            <CardButton
+              variant={addMode === 'login' ? 'primary' : 'default'}
+              onClick={() => setAddMode(addMode === 'login' ? null : 'login')}
+            >
+              {t('add.login')}
+            </CardButton>
+            <CardButton
+              variant={addMode === 'transfer' ? 'primary' : 'default'}
+              onClick={() => setAddMode(addMode === 'transfer' ? null : 'transfer')}
+            >
+              {t('add.transfer')}
+            </CardButton>
+            <CardButton
+              variant="ghost"
+              onClick={props.onExportAccounts}
+              disabled={props.exporting || props.importing || props.csrfToken === null}
+            >
+              {props.exporting ? t('accounts.exporting') : t('add.export')}
+            </CardButton>
+            <CardButton variant="ghost" onClick={props.onRefreshAccounts}>
+              {t('common.refresh')}
+            </CardButton>
+          </>
         }
       >
-        {/* One panel: the rows, then the ways to add another row. Adding is a
-            list operation, so it lives at the end of the list rather than in a
-            section of its own. */}
+        {addMode === null ? null : (
+          <AddAccountPanel
+            t={t}
+            mode={addMode}
+            csrfToken={props.csrfToken}
+            authState={props.authState}
+            onAuthChanged={props.onAuthChanged}
+            {...(props.signal === undefined ? {} : { signal: props.signal })}
+            onImport={props.onImportAccounts}
+            importing={props.importing}
+            text={importText}
+            onText={setImportText}
+            notice={props.transferNotice}
+            error={props.transferError}
+          />
+        )}
         <AccountsList
           t={t}
           accounts={accounts}
@@ -112,19 +152,6 @@ export function AccountTab(props: AccountTabProps) {
             : [t('common.none')]
           ).join(' · ')}
         </p>
-        <AddAccountPanel
-          t={t}
-          csrfToken={props.csrfToken}
-          authState={props.authState}
-          onAuthChanged={props.onAuthChanged}
-          {...(props.signal === undefined ? {} : { signal: props.signal })}
-          onImport={props.onImportAccounts}
-          onExport={props.onExportAccounts}
-          exporting={props.exporting}
-          importing={props.importing}
-          notice={props.transferNotice}
-          error={props.transferError}
-        />
         <PoolToggle
           t={t}
           pool={props.pool}
