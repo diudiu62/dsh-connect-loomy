@@ -176,7 +176,9 @@ test('the composer readout registers the real component with an inject face', as
   assert.equal(typeof composerEntry.options.inject, 'function')
   const injected = composerEntry.options.inject()
   assert.equal(typeof injected.t, 'function')
-  assert.equal(injected.t('composer.pill', { amount: '1' }), 'Loomy · 1')
+  // The badge names the account first, then the figure: with several accounts a
+  // bare number says nothing about whose points it is.
+  assert.equal(injected.t('composer.pill', { account: '18912342700', amount: '1' }), '18912342700 · 1')
 })
 
 test('the composer readout only appears for the loomy provider', async () => {
@@ -308,7 +310,7 @@ test('add-account actions live in the accounts section toolbar', async () => {
     const toolbar = section.querySelector('.loomy-toolbar')
     const labels = [...toolbar.querySelectorAll('button')].map((node) => node.textContent)
     assert.ok(labels.includes('新增账号'), `toolbar holds the add action: ${JSON.stringify(labels)}`)
-    assert.ok(labels.includes('导入 / 导出'))
+    assert.ok(labels.includes('导入'), `toolbar holds the import action: ${JSON.stringify(labels)}`)
     assert.ok(labels.includes('全部导出'))
     assert.ok(labels.includes('刷新'))
 

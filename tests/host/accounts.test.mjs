@@ -133,13 +133,12 @@ test('with no stored account, the desktop session becomes slot 1', async () => {
 })
 
 test('routeDisplayName distinguishes slots and shows the phone as stored', () => {
-  const first = routeDisplayName({ slot: 1, phone: '13800000001' })
-  const second = routeDisplayName({ slot: 2, phone: '13800000002' })
-  assert.equal(first.startsWith('Loomy · '), true)
-  assert.equal(second.startsWith('Loomy 2 · '), true)
-  assert.equal(first.includes('13800000001'), true, 'the number is shown: this is the user\'s own machine')
-  assert.equal(routeDisplayName({ slot: 3, label: '工作号' }), 'Loomy 3 · 工作号')
-  assert.equal(routeDisplayName({ slot: 4 }), 'Loomy 4 · 账号 4')
+  // The name IS the account: the picker groups by it, so a shared prefix hid
+  // the only part that differs.
+  assert.equal(routeDisplayName({ slot: 1, phone: '13800000001' }), '13800000001')
+  assert.equal(routeDisplayName({ slot: 2, phone: '13800000002' }), '13800000002')
+  assert.equal(routeDisplayName({ slot: 3, label: '工作号' }), '工作号')
+  assert.equal(routeDisplayName({ slot: 4 }), '账号 4')
 })
 
 test('accountsView reports rows; ids are session fingerprints', async () => {
@@ -191,7 +190,7 @@ test('the provider installs one profile per route and re-collects on change', as
     runtime.setRoutes(routes)
     assert.deepEqual(runtime.routes().map((r) => r.route), ['loomy', 'loomy-2', 'loomy-pool'])
     assert.equal(runtime.profiles.size, 3, 'two accounts plus the rotation pool')
-    assert.equal(runtime.profiles.get('loomy-2').displayName.includes('Loomy 2'), true)
+    assert.equal(runtime.profiles.get('loomy-2').displayName, '13800000002')
 
     // Each route's provider stamps its own id on the models it serves.
     const modelsA = runtime.profiles.get('loomy').piProvider.getModels()
@@ -290,7 +289,7 @@ test('import accepts the desktop client auth-session.json verbatim', async () =>
 
     const routes = await store.routes({ force: true })
     assert.equal(routes[0].route, 'loomy')
-    assert.equal(routes[0].displayName.includes('16292320818'), true)
+    assert.equal(routes[0].displayName, '16292320818')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -117,16 +117,46 @@ export const CARD_CSS = `
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 22%, transparent);
 }
 .loomy-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.loomy-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.12));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08));
+}
+/* Import box: full width, monospace, and a footer that keeps the button where
+   the eye expects it (right) with the state text on the left. */
 .loomy-textarea {
-  flex: 1 1 auto;
-  height: auto;
-  min-height: 72px;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 84px;
+  max-height: 220px;
   padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.14));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, transparent);
+  color: var(--dsw-alias-label-primary, #1f2328);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.5;
   resize: vertical;
 }
+.loomy-textarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary, #2563eb);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 22%, transparent);
+}
+.loomy-add-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.loomy-add-foot .loomy-button { margin-left: auto; flex: 0 0 auto; }
 
 /* Composer credit readout (conversation.input.right), sitting just before the
    model picker. Deliberately tiny and shrinkable: the model name must keep its

@@ -311,3 +311,43 @@ test('the account rows and the credits overview do not repeat internal route ids
     assert.ok(container.textContent.includes('42,000'), 'the total is rendered')
   })
 })
+
+test('a successful import refreshes the points, not just the list', async () => {
+  await setupDom()
+  const { entry, t } = mountPlugin('zh')
+  const calls = []
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-loomy/accounts/import': () => {
+        calls.push('import')
+        return new Response(JSON.stringify({ ok: true, added: 1, refreshed: 0, skipped: 0, reassigned: 0 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+      [CREDITS_URL]: () => {
+        calls.push('credits')
+        return new Response(JSON.stringify(CREDITS), { status: 200, headers: { 'content-type': 'application/json' } })
+      },
+    }),
+  )
+
+  await renderCard(entry, t, async ({ container }) => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    calls.length = 0
+
+    await click(button(container, '导入'))
+    const textarea = container.querySelector('.loomy-textarea')
+    assert.ok(textarea, 'the import box is open')
+    const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+    setValue.call(textarea, '{"session":"s","userid":"u","phone":"13800000000"}')
+    textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    await click(button(container, '确认导入'))
+
+    // The account now exists with its own balance, so the figures must be
+    // re-read: listing accounts alone would leave stale points on screen.
+    assert.ok(calls.includes('credits'), `points were refreshed after import: ${JSON.stringify(calls)}`)
+  })
+})

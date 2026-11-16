@@ -186,6 +186,26 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     }
   }, [])
 
+  const loadPool = useCallback(async (): Promise<void> => {
+    try {
+      const result = await fetchPool({ signal: abortRef.current?.signal })
+      if (result.kind === 'ok') setPool(result.value)
+    } catch (error) {
+      if (isAbortError(error)) return
+      // The switch is auxiliary: a failed read leaves it hidden, the list works.
+    }
+  }, [])
+
+  const loadCredits = useCallback(async (): Promise<void> => {
+    setCredits({ kind: 'loading' })
+    try {
+      setCredits(mapResult(await fetchCredits({ signal: abortRef.current?.signal })))
+    } catch (error) {
+      if (isAbortError(error)) return
+      setCredits({ kind: 'error', code: 'network', message: errorMessage(t, error) })
+    }
+  }, [t])
+
   const loadAccounts = useCallback(async (): Promise<void> => {
     setAccounts({ kind: 'loading' })
     try {
@@ -195,6 +215,17 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
       setAccounts({ kind: 'error', code: 'network', message: errorMessage(t, error) })
     }
   }, [t])
+
+  /**
+   * One refresh for the whole accounts panel.
+   *
+   * An import or an adopt changes which accounts exist, so the points figures
+   * and the route list go stale together; the 刷新 button and the post-import
+   * path must both move all four, never one of them.
+   */
+  const refreshAccountsPanel = useCallback(async (): Promise<void> => {
+    await Promise.all([loadAccounts(), loadStatus(), loadCredits(), loadPool()])
+  }, [loadAccounts, loadStatus, loadCredits, loadPool])
 
   const removeAccountRow = useCallback(async (id: string): Promise<void> => {
     const token = csrfRef.current
@@ -218,7 +249,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     } finally {
       setRemovingId(null)
     }
-  }, [loadAccounts, loadStatus, t])
+  }, [refreshAccountsPanel, t])
 
   const exportAccountsNow = useCallback(async (): Promise<void> => {
     const token = csrfRef.current
@@ -279,25 +310,16 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
           skipped: String(result.value.skipped ?? 0),
         }),
       )
-      await loadAccounts()
-      await loadStatus()
+      // The new account has its own points: show them without the user having
+      // to hunt for a refresh.
+      await refreshAccountsPanel()
     } catch (error) {
       if (isAbortError(error)) return
       setTransferError(errorMessage(t, error))
     } finally {
       setImporting(false)
     }
-  }, [loadAccounts, loadStatus, t])
-
-  const loadPool = useCallback(async (): Promise<void> => {
-    try {
-      const result = await fetchPool({ signal: abortRef.current?.signal })
-      if (result.kind === 'ok') setPool(result.value)
-    } catch (error) {
-      if (isAbortError(error)) return
-      // The switch is auxiliary: a failed read leaves it hidden, the list works.
-    }
-  }, [])
+  }, [refreshAccountsPanel, t])
 
   const togglePool = useCallback(async (enabled: boolean): Promise<void> => {
     const token = csrfRef.current
@@ -347,16 +369,14 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
         return
       }
       setTransferNotice(t('accounts.adopted', { route: result.value.route ?? 'loomy' }))
-      await loadAccounts()
-      await loadStatus()
-      await loadPool()
+      await refreshAccountsPanel()
     } catch (error) {
       if (isAbortError(error)) return
       setTransferError(errorMessage(t, error))
     } finally {
       setAdopting(false)
     }
-  }, [loadAccounts, loadStatus, loadPool, t])
+  }, [refreshAccountsPanel, t])
 
   const exportRow = useCallback(
     async (id: string): Promise<void> => {
@@ -387,16 +407,6 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     },
     [t],
   )
-
-  const loadCredits = useCallback(async (): Promise<void> => {
-    setCredits({ kind: 'loading' })
-    try {
-      setCredits(mapResult(await fetchCredits({ signal: abortRef.current?.signal })))
-    } catch (error) {
-      if (isAbortError(error)) return
-      setCredits({ kind: 'error', code: 'network', message: errorMessage(t, error) })
-    }
-  }, [t])
 
   const loadDiagnostics = useCallback(async (): Promise<void> => {
     setDiagnostics({ kind: 'loading' })
@@ -648,7 +658,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             accounts={accounts}
             removingId={removingId}
             onRemoveAccount={(id) => void removeAccountRow(id)}
-            onRefreshAccounts={() => void loadAccounts()}
+            onRefreshAccounts={() => void refreshAccountsPanel()}
             onExportAccounts={() => void exportAccountsNow()}
             onImportAccounts={(text) => void importAccountsNow(text)}
             exporting={exporting}

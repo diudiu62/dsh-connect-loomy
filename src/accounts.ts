@@ -264,9 +264,11 @@ export interface ImportResult {
 /** Route display name for one account. */
 export function routeDisplayName(account: Pick<StoredAccount, 'slot' | 'label' | 'phone'>): string {
   const identity = account.label?.trim() || displayPhone(account.phone) || `账号 ${account.slot}`
-  // Slot 1 keeps the bare product name so the single-account case looks exactly
-  // as it did before multi-account; later slots are disambiguated by identity.
-  return account.slot === 1 ? `Loomy · ${identity}` : `Loomy ${account.slot} · ${identity}`
+  // The picker groups models by this name, and the name of a group is the
+  // account: 'Loomy · 18912342700' made every row start with the same word and
+  // hid the only part that differs. Product context is already given by the
+  // surrounding UI.
+  return identity
 }
 
 /** Create the accounts store. One per plugin instance. */
@@ -355,7 +357,7 @@ export function createAccountsStore(options: {
           perAccount.push({
             route: POOL_ROUTE,
             slot: 0,
-            displayName: `Loomy 池 · ${accounts.length} 个账号自动轮换`,
+            displayName: `随机分配（${accounts.length} 个账号）`,
             origin: 'plugin' as const,
           })
         }

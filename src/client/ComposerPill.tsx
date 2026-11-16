@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { describeError, fetchCredits, isAbortError, type LoomyCredits } from './api.js'
+import { describeError, fetchAccounts, fetchCredits, isAbortError, type LoomyCredits } from './api.js'
 import { formatCount } from './format.js'
 import { ensureStyles } from './styles.js'
 import type { LoomyT } from './components/types.js'
@@ -33,7 +33,8 @@ import type { LoomyT } from './components/types.js'
 /** Every route this plugin owns: `loomy`, `loomy-2`, … */
 function isLoomyRoute(provider: string | undefined): boolean {
   if (provider === undefined) return false
-  return provider === 'loomy' || /^loomy-\d+$/u.test(provider)
+  // `loomy` (slot 1), `loomy-2`, … and the rotation pool `loomy-pool`.
+  return provider === 'loomy' || provider === 'loomy-pool' || /^loomy-\d+$/u.test(provider)
 }
 
 /** Minimal shape of the host's `modelSelection` projection snapshot. */
@@ -72,11 +73,23 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   const owns = isLoomyRoute(provider)
 
   const [credits, setCredits] = useState<LoomyCredits | null>(null)
+  const [routeName, setRouteName] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const inFlight = useRef<AbortController | null>(null)
 
   const load = useCallback(
-    (signal: AbortSignal) => {
+    (signal: AbortSignal, route: string) => {
+      // The route id is internal; the picker names each group after the account,
+      // so the badge reads the same word the user just selected.
+      fetchAccounts({ signal })
+        .then((result) => {
+          if (result.kind !== 'ok') return
+          const entry = (result.value.routes ?? []).find((candidate) => candidate.route === route)
+          if (entry !== undefined) setRouteName(entry.displayName)
+        })
+        .catch(() => {
+          // Naming the account is a nicety; the figure below still renders.
+        })
       fetchCredits({ signal })
         .then((result) => {
           // `unavailable` means this host serves no credits route (the host half
@@ -97,15 +110,15 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   useEffect(() => {
     // Another provider's session never subscribes: gating here (not inside the
     // render) is what keeps the fetch count at zero while Loomy is not selected.
-    if (!owns) return undefined
+    if (!owns || provider === undefined) return undefined
     ensureStyles()
     const controller = new AbortController()
-    load(controller.signal)
+    load(controller.signal, provider)
     return () => controller.abort()
-  }, [owns, load])
+  }, [owns, provider, load])
 
   const refresh = useCallback(() => {
-    if (!owns || busy) return
+    if (!owns || busy || provider === undefined) return
     inFlight.current?.abort()
     const controller = new AbortController()
     inFlight.current = controller
@@ -124,7 +137,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
           setBusy(false)
         }
       })
-  }, [busy, owns])
+  }, [busy, owns, provider])
 
   useEffect(() => () => inFlight.current?.abort(), [])
 
@@ -134,11 +147,24 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   // like "the plugin is not installed", which is the opposite of informative.
   if (!owns) return null
 
+  // The badge must always say *whose* number it is showing. Until the account
+  // list resolves, "Loomy" stands in for the account name rather than dropping
+  // it — a bare figure with no source is the thing this badge exists to avoid.
+  // The pool's own name is a sentence ("随机分配（2 个账号）"); the badge is 24px
+  // tall, so it gets the short form and leaves the long name to the picker.
+  const account =
+    provider === 'loomy-pool'
+      ? (t?.('composer.pillPool') ?? 'Pool')
+      : (routeName ?? (t?.('composer.pillBare') ?? 'Loomy'))
+  // This route's own points, when the host reports a split; otherwise the
+  // aggregate, which is all a single-account host can know.
+  const own = credits?.perAccount?.find((entry) => entry.route === provider)
+  const amount = own === undefined ? credits?.availableBalance : own.availableBalance
+
   const label =
-    credits === null
-      ? (t?.('composer.pillBare') ?? 'Loomy')
-      : (t?.('composer.pill', { amount: formatCount(credits.availableBalance) }) ??
-        `Loomy · ${formatCount(credits.availableBalance)}`)
+    amount === undefined
+      ? account
+      : (t?.('composer.pill', { account, amount: formatCount(amount) }) ?? `${account} · ${formatCount(amount)}`)
   // The pill's own number is `availableBalance`; the tooltip spells out the two
   // buckets it adds up, so a session never shows one figure here and a
   // differently-labelled second one on hover.

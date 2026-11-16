@@ -60,18 +60,22 @@ export function AddAccountPanel({
         <>
           <p className="loomy-row-note">{t('add.transferHint')}</p>
           <textarea
-            className="loomy-input loomy-textarea"
+            className="loomy-textarea"
             placeholder={t('add.pastePlaceholder')}
             value={text}
-            rows={3}
+            rows={4}
+            spellCheck={false}
             onChange={(event) => onText(event.target.value)}
           />
-          <div className="loomy-actions">
+          <div className="loomy-add-foot">
+            <span className="loomy-row-note">
+              {text.trim().length === 0 ? t('add.pasteEmpty') : t('add.pasteReady')}
+            </span>
             <CardButton
               onClick={() => onImport(text)}
               disabled={importing || csrfToken === null || text.trim().length === 0}
             >
-              {importing ? t('accounts.importing') : t('add.import')}
+              {importing ? t('accounts.importing') : t('add.importNow')}
             </CardButton>
           </div>
         </>

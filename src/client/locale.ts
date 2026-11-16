@@ -23,6 +23,8 @@ export const NS = 'settings.loomy'
 export type LoomyLocaleKey =
   | 'tab.label'
   | 'composer.pill'
+  | 'composer.pillAmount'
+  | 'composer.pillPool'
   | 'composer.pillBare'
   | 'composer.pillPending'
   | 'composer.pillTitle'
@@ -95,7 +97,10 @@ export type LoomyLocaleKey =
   | 'add.transfer'
   | 'add.export'
   | 'add.import'
+  | 'add.importNow'
   | 'add.transferHint'
+  | 'add.pasteEmpty'
+  | 'add.pasteReady'
   | 'add.pastePlaceholder'
   | 'account.routeOf'
   | 'account.signedInAt'
@@ -304,10 +309,13 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.slotOnly': 'Account {slot}',
   'add.title': 'Add account',
   'add.login': 'New account',
-  'add.transfer': 'Import / export',
+  'add.transfer': 'Import',
   'add.export': 'Export all',
   'add.import': 'Import',
-  'add.transferHint': 'Paste a file exported here, or a Loomy desktop auth-session.json. The file contains the sessions themselves — treat it like a password.',
+  'add.importNow': 'Confirm import',
+  'add.transferHint': 'Paste a Loomy desktop auth-session.json, or an accounts export from another machine.',
+  'add.pasteEmpty': 'Nothing pasted yet.',
+  'add.pasteReady': 'Ready to import.',
   'add.pastePlaceholder': 'Paste the JSON here',
   'account.routeOf': 'route {route}',
   'account.signedInAt': 'Signed in {time}',
@@ -325,7 +333,9 @@ export const en: Record<LoomyLocaleKey, string> = {
   'pool.failed': 'Could not change the rotation setting.',
   'credits.source': 'from {account}',
   'credits.allAccounts': 'Ledger merges every routed account.',
-  'composer.pill': 'Loomy · {amount}',
+  'composer.pill': '{account} · {amount}',
+  'composer.pillAmount': '{amount}',
+  'composer.pillPool': 'Pool',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
   'composer.pillTitle': 'Loomy credits — available {available} (monthly {balance} + today {daily}). Click to refresh.',
@@ -517,10 +527,13 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.slotOnly': '账号 {slot}',
   'add.title': '添加账号',
   'add.login': '新增账号',
-  'add.transfer': '导入 / 导出',
+  'add.transfer': '导入',
   'add.export': '全部导出',
   'add.import': '导入',
-  'add.transferHint': '粘贴本插件导出的文件，或 Loomy 桌面端的 auth-session.json。文件里就是登录凭证本身，请当作密码保管。',
+  'add.importNow': '确认导入',
+  'add.transferHint': '粘贴 Loomy 桌面端的 auth-session.json，或另一台机器导出的账号包。',
+  'add.pasteEmpty': '还没有粘贴内容。',
+  'add.pasteReady': '可以导入了。',
   'add.pastePlaceholder': '把 JSON 粘贴到这里',
   'account.routeOf': '路由 {route}',
   'account.signedInAt': '登录于 {time}',
@@ -538,7 +551,9 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'pool.failed': '切换轮换设置失败。',
   'credits.source': '来自 {account}',
   'credits.allAccounts': '流水合并所有已接入账号。',
-  'composer.pill': 'Loomy · {amount}',
+  'composer.pill': '{account} · {amount}',
+  'composer.pillAmount': '{amount}',
+  'composer.pillPool': '随机',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',
   'composer.pillTitle': 'Loomy 积分：可用 {available}（包月剩余 {balance} + 今日额度 {daily}）。点击可刷新。',
