@@ -48,6 +48,21 @@ export type LoomyLocaleKey =
   | 'login.sourceDesktop'
   | 'login.sourceEnv'
   | 'login.sourceNone'
+  | 'accounts.title'
+  | 'accounts.intro'
+  | 'accounts.empty'
+  | 'accounts.unavailable'
+  | 'accounts.failed'
+  | 'accounts.originPlugin'
+  | 'accounts.originDesktop'
+  | 'accounts.route'
+  | 'accounts.userId'
+  | 'accounts.addedAt'
+  | 'accounts.remove'
+  | 'accounts.removing'
+  | 'accounts.desktopNote'
+  | 'accounts.unknownPhone'
+  | 'accounts.removeFailed'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -195,6 +210,21 @@ export const en: Record<LoomyLocaleKey, string> = {
   'login.sourceDesktop': 'Source: desktop client',
   'login.sourceEnv': 'Source: env override',
   'login.sourceNone': 'Signed out',
+  'accounts.title': 'Accounts',
+  'accounts.intro': 'Each sign-in below is its own provider route — pick that route in the model picker to use that account, so two conversations can spend two different accounts.',
+  'accounts.empty': 'No account yet. Sign in above to add one.',
+  'accounts.unavailable': 'The account list is not available on this host build.',
+  'accounts.failed': 'Could not read the account list: {message}',
+  'accounts.originPlugin': 'plugin',
+  'accounts.originDesktop': 'desktop',
+  'accounts.route': 'Route',
+  'accounts.userId': 'User',
+  'accounts.addedAt': 'Added',
+  'accounts.remove': 'Remove',
+  'accounts.removing': 'Removing…',
+  'accounts.desktopNote': 'Owned by the Loomy desktop client — sign out there to remove it.',
+  'accounts.unknownPhone': 'Unknown account',
+  'accounts.removeFailed': 'Could not remove the account.',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
@@ -344,6 +374,21 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'login.sourceDesktop': '来源：桌面端',
   'login.sourceEnv': '来源：环境变量指定',
   'login.sourceNone': '未登录',
+  'accounts.title': '账号',
+  'accounts.intro': '下面每个登录都对应一个独立的供应商路由——在模型选择器里选那条路由就是使用该账号，因此两个会话可以分别花两个账号的积分。',
+  'accounts.empty': '还没有账号。在上方登录即可添加。',
+  'accounts.unavailable': '当前宿主版本没有提供账号列表。',
+  'accounts.failed': '读取账号列表失败：{message}',
+  'accounts.originPlugin': '插件登录',
+  'accounts.originDesktop': '桌面端',
+  'accounts.route': '路由',
+  'accounts.userId': '用户',
+  'accounts.addedAt': '添加时间',
+  'accounts.remove': '移除',
+  'accounts.removing': '移除中…',
+  'accounts.desktopNote': '该账号属于 Loomy 桌面端——请在桌面端退出登录来移除。',
+  'accounts.unknownPhone': '未知账号',
+  'accounts.removeFailed': '移除账号失败。',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',

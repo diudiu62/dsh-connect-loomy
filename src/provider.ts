@@ -34,6 +34,7 @@
  * @module dsh-connect-loomy/provider
  */
 
+import { BASE_ROUTE, isOurRoute, type AccountRoute } from './accounts.js'
 import {
   LlmError,
   resolveImageAttachmentAccess,
@@ -170,14 +171,18 @@ export function displayNameFor(model: CatalogModel): string {
 
 
 /** Convert one catalog entry into a pi-ai chat model descriptor. */
-export function toPiModel(model: CatalogModel, baseURL: string): Model<'openai-completions'> {
+export function toPiModel(
+  model: CatalogModel,
+  baseURL: string,
+  route: string = PROVIDER_ID,
+): Model<'openai-completions'> {
   const input: ModelInputModality[] = model.vision ? ['text', 'image'] : ['text']
   const reasoning = model.efforts.length > 0
   return {
     id: model.id,
     name: displayNameFor(model),
     api: LOOMY_API,
-    provider: PROVIDER_ID,
+    provider: route,
     baseUrl: baseURL.replace(/\/+$/u, ''),
     input,
     cost: { ...NO_COST },
@@ -195,7 +200,7 @@ export function prepareLoomyHeaders(
   headers: Headers,
   version: string,
 ): Headers {
-  if (request.provider !== PROVIDER_ID) return headers
+  if (!isOurRoute(request.provider)) return headers
   const tracing = buildTracingHeaders({ version, invokeOrigin: 'user' })
   for (const [name, value] of Object.entries(tracing)) headers.set(name, value)
   return headers
@@ -204,9 +209,21 @@ export function prepareLoomyHeaders(
 /** Everything the plugin needs from the provider half. */
 export interface ProviderRuntime {
   adapter: PiAiAdapter
+  /**
+   * The *first* route's pi-ai provider. Kept for single-account parity and for
+   * tests; multi-route callers use {@link ProviderRuntime.routes}.
+   */
   provider: Provider
-  /** Stable profile map (PiAiAdapter memoises its snapshot by map identity). */
+  /** The profile map as of the last {@link ProviderRuntime.setRoutes} call. */
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
+  /**
+   * Replace the route set (accounts added/removed). Rebuilds the profile map —
+   * a **new Map instance**, which is what makes `PiAiAdapter` drop its memoised
+   * snapshot and re-collect models. Returns the routes actually installed.
+   */
+  setRoutes(routes: readonly AccountRoute[]): readonly AccountRoute[]
+  /** The route set currently installed. */
+  routes(): readonly AccountRoute[]
 }
 
 /** Dependencies of {@link createProviderRuntime}. */
@@ -215,6 +232,13 @@ export interface ProviderDeps {
   baseURL: () => string
   loomyVersion: () => string
   readSession: () => Promise<AuthSnapshot>
+  /**
+   * Per-route session lookup. Multi-account: route `loomy-3` must authenticate
+   * as *its* account, so the adapter's per-request `resolveApiKey(provider)`
+   * maps through this. When omitted, every route falls back to
+   * {@link ProviderDeps.readSession} (single-account behaviour).
+   */
+  sessionForRoute?: (route: string) => Promise<AuthSnapshot>
   precheck: (
     session: string,
     options?: { force?: boolean },
@@ -372,9 +396,17 @@ class LoomyAdapter extends PiAiAdapter {
   }
 }
 
-/** Build the single Loomy pi-ai provider plus its harness adapter. */
+/** Build the Loomy pi-ai providers (one per account route) plus the adapter. */
 export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
-  const buildModels = (): Model<'openai-completions'>[] => {
+  /**
+   * Models for one route.
+   *
+   * Every route serves the same catalog (the upstream model list is
+   * account-independent) but stamps `provider: route`, so the host groups them
+   * under that account's own entry in the picker and a saved selection
+   * `{provider: 'loomy-3', model}` keeps meaning "account 3".
+   */
+  const buildModels = (route: string): Model<'openai-completions'>[] => {
     try {
       // Background sync for the inference path: `getModels()` is synchronous
       // and must never throw (pi-ai's Provider contract), so a stale catalog is
@@ -388,7 +420,7 @@ export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
       deps.logger?.warn('dsh-connect-loomy: could not schedule a catalog refresh', error)
     }
     try {
-      return deps.catalog.enabledModels().map((model) => toPiModel(model, deps.baseURL()))
+      return deps.catalog.enabledModels().map((model) => toPiModel(model, deps.baseURL(), route))
     } catch (error) {
       // Provider.getModels() must never throw; a throw means "no models".
       deps.logger?.warn('dsh-connect-loomy: could not build the model list', error)
@@ -396,85 +428,149 @@ export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
     }
   }
 
-  const provider: Provider = {
-    ...createProvider({
-      id: PROVIDER_ID,
-      name: PROVIDER_DISPLAY_NAME,
-      auth: {
-        apiKey: {
-          name: 'Loomy desktop session',
-          // pi-ai funnels the harness' request-level `apiKey` override (the
-          // desktop session from `resolveApiKey`) **through this method**:
-          // `Models.applyAuth()` treats a falsy resolution as "provider is not
-          // configured" and fails the request before any I/O
-          // (`@earendil-works/pi-ai/dist/models.js:428-443` +
-          // `dist/auth/resolve.js:17-22`). So the override must be echoed
-          // back as the resolved auth; returning `undefined` here — the
-          // intuitive reading of "inert credential plane" — breaks every
-          // inference call. Nothing is ever looked up ambiently, and no pi-ai
-          // credential is ever manufactured for this route.
-          async resolve({ credential }) {
-            const apiKey = credential?.key
-            if (apiKey === undefined || apiKey.length === 0) return undefined
-            return { auth: { apiKey }, source: 'Loomy desktop session' }
+  /** One pi-ai provider bound to one account route. */
+  const buildProvider = (route: string): Provider => {
+    const displayName = requiredRouteName(route)
+    return {
+      ...createProvider({
+        id: route,
+        name: displayName,
+        auth: {
+          apiKey: {
+            name: 'Loomy desktop session',
+            // pi-ai funnels the harness' request-level `apiKey` override (the
+            // session from `resolveApiKey`) **through this method**:
+            // `Models.applyAuth()` treats a falsy resolution as "provider is not
+            // configured" and fails the request before any I/O
+            // (`@earendil-works/pi-ai/dist/models.js:428-443` +
+            // `dist/auth/resolve.js:17-22`). So the override must be echoed
+            // back as the resolved auth; returning `undefined` here — the
+            // intuitive reading of "inert credential plane" — breaks every
+            // inference call. Nothing is ever looked up ambiently, and no pi-ai
+            // credential is ever manufactured for this route.
+            async resolve({ credential }) {
+              const apiKey = credential?.key
+              if (apiKey === undefined || apiKey.length === 0) return undefined
+              return { auth: { apiKey }, source: 'Loomy desktop session' }
+            },
           },
         },
-      },
-      models: [],
-      api: openAICompletionsApi(),
-    }),
-    getModels: () => buildModels(),
+        models: [],
+        api: openAICompletionsApi(),
+      }),
+      getModels: () => buildModels(route),
+    } as Provider
   }
 
-  const profile: ResolvedPiAiProviderProfile = {
-    provider: PROVIDER_ID,
+  /** Default route: keeps the single-account shape for callers that never
+   * call `setRoutes` (and for every test written before multi-account). */
+  const DEFAULT_ROUTE: AccountRoute = {
+    route: BASE_ROUTE,
+    slot: 1,
     displayName: PROVIDER_DISPLAY_NAME,
-    streamIdleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
-    retryPolicy: resolveRetryPolicy(undefined, 'dsh-connect-loomy retryPolicy'),
-    configuredMaxTokens: new Map(),
-    modelErrors: new Map(),
-    ...REQUEST_IMAGE_BUDGETS,
-    piProvider: provider,
+    origin: 'desktop',
+  }
+  /** Latest route set; `profiles()` must answer synchronously from here. */
+  let installed: readonly AccountRoute[] = [DEFAULT_ROUTE]
+  /** Display names handed to {@link buildProvider} so it can name itself. */
+  const routeNames = new Map<string, string>()
+  let profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile> = new Map()
+
+  const requiredRouteName = (route: string): string =>
+    routeNames.get(route) ?? (route === BASE_ROUTE ? PROVIDER_DISPLAY_NAME : route)
+
+  const buildProfiles = (routes: readonly AccountRoute[]): ReadonlyMap<string, ResolvedPiAiProviderProfile> => {
+    const next = new Map<string, ResolvedPiAiProviderProfile>()
+    for (const entry of routes) {
+      next.set(entry.route, {
+        provider: entry.route,
+        displayName: entry.displayName,
+        streamIdleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
+        retryPolicy: resolveRetryPolicy(undefined, 'dsh-connect-loomy retryPolicy'),
+        configuredMaxTokens: new Map(),
+        modelErrors: new Map(),
+        ...REQUEST_IMAGE_BUDGETS,
+        piProvider: providerFor(entry.route),
+      })
+    }
+    return next
   }
 
-  // The map identity must stay stable: PiAiAdapter treats a new map as a new
-  // configuration snapshot and rebuilds its Models collection on every call.
-  // Everything that changes per request (base URL, catalog, selection) is
-  // read live by the provider instead.
-  const profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile> = new Map([[PROVIDER_ID, profile]])
+  /** Memoised per-route providers, so a rebuild does not churn identities. */
+  const providers = new Map<string, Provider>()
+  const providerFor = (route: string): Provider => {
+    let provider = providers.get(route)
+    if (provider === undefined) {
+      provider = buildProvider(route)
+      providers.set(route, provider)
+    }
+    return provider
+  }
 
-  const adapter = new LoomyAdapter({
-    profiles: () => profiles,
-    resolveApiKey: async (_provider, _profile) => {
-      const snapshot = await deps.readSession()
-      if (!snapshot.found || snapshot.session === undefined) {
-        throw new LlmError(missingCredentialMessage(snapshot), 'MISSING_CREDENTIAL')
-      }
-      const verdict = await deps.precheck(snapshot.session)
-      if (!verdict.ok && verdict.definite) {
-        throw new LlmError(
-          verdict.message ?? `Loomy 登录态已失效（${snapshot.sourcePath}），请在 Loomy 客户端重新登录后重试。`,
-          'MISSING_CREDENTIAL',
-        )
-      }
-      return snapshot.session
+  profiles = buildProfiles(installed)
+
+  const adapter = new LoomyAdapter(
+    {
+      // A new Map instance is what tells PiAiAdapter its snapshot is stale; an
+      // unchanged map is recognised by identity and costs nothing.
+      profiles: () => profiles,
+      resolveApiKey: async (route, _profile) => {
+        const snapshot =
+          deps.sessionForRoute === undefined
+            ? await deps.readSession()
+            : await deps.sessionForRoute(route)
+        if (!snapshot.found || snapshot.session === undefined) {
+          throw new LlmError(missingCredentialMessage(snapshot), 'MISSING_CREDENTIAL')
+        }
+        const verdict = await deps.precheck(snapshot.session)
+        if (!verdict.ok && verdict.definite) {
+          throw new LlmError(
+            verdict.message ?? `Loomy 登录态已失效（${snapshot.sourcePath}），请在设置卡片重新登录后重试。`,
+            'MISSING_CREDENTIAL',
+          )
+        }
+        return snapshot.session
+      },
+      auth: INERT_AUTH,
+      prepareHeaders: (request, headers) => prepareLoomyHeaders(request, headers, deps.loomyVersion()),
+      // Without these two hooks every image request fails before I/O: the adapter
+      // refuses image content unless it can read the durable attachment back
+      // (`dsh-llm-pi-ai/lib/index.js:2003`). They are optional in the host types
+      // because not every plugin routes images, but this route declares
+      // `input: ['text', 'image']` from upstream capabilities, so both must be
+      // present and must resolve lazily (the service may mount later).
+      resolveAttachments: () => deps.resolveAttachments?.(),
+      ...(deps.resolveImageAccess === undefined
+        ? {}
+        : {
+            resolveImageAccess: (attachments: AttachmentStore, ref: ImageAttachmentRef) =>
+              deps.resolveImageAccess?.(attachments, ref),
+          }),
     },
-    auth: INERT_AUTH,
-    prepareHeaders: (request, headers) => prepareLoomyHeaders(request, headers, deps.loomyVersion()),
-    // Without these two hooks every image request fails before I/O: the adapter
-    // refuses image content unless it can read the durable attachment back
-    // (`dsh-llm-pi-ai/lib/index.js:2003`). They are optional in the host types
-    // because not every plugin routes images, but this route declares
-    // `input: ['text', 'image']` from upstream capabilities, so both must be
-    // present and must resolve lazily (the service may mount later).
-    resolveAttachments: () => deps.resolveAttachments?.(),
-    ...(deps.resolveImageAccess === undefined
-      ? {}
-      : {
-          resolveImageAccess: (attachments: AttachmentStore, ref: ImageAttachmentRef) =>
-            deps.resolveImageAccess?.(attachments, ref),
-        }),
-  }, deps)
+    deps,
+  )
 
-  return { adapter, provider, profiles }
+  const runtime: ProviderRuntime = {
+    adapter,
+    get provider(): Provider {
+      return providerFor(installed[0]?.route ?? BASE_ROUTE)
+    },
+    get profiles(): ReadonlyMap<string, ResolvedPiAiProviderProfile> {
+      return profiles
+    },
+    setRoutes(routes) {
+      // Drop memoised providers for routes that no longer exist, so a removed
+      // account cannot keep answering from a stale closure.
+      const keep = new Set(routes.map((entry) => entry.route))
+      for (const route of [...providers.keys()]) if (!keep.has(route)) providers.delete(route)
+      for (const entry of routes) routeNames.set(entry.route, entry.displayName)
+      installed = routes
+      profiles = buildProfiles(routes)
+      return installed
+    },
+    routes() {
+      return installed
+    },
+  }
+  return runtime
 }

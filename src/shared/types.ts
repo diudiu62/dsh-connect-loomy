@@ -23,7 +23,32 @@ export const ROUTES = {
   authSendCode: `${ROUTE_PREFIX}/auth/send-code`,
   authLogin: `${ROUTE_PREFIX}/auth/login`,
   authLogout: `${ROUTE_PREFIX}/auth/logout`,
+  accounts: `${ROUTE_PREFIX}/accounts`,
+  accountRemove: `${ROUTE_PREFIX}/accounts/remove`,
+  accountRename: `${ROUTE_PREFIX}/accounts/rename`,
 } as const
+
+/** One account row in the settings card (never carries a session). */
+export interface AccountRowView {
+  id: string
+  slot: number
+  /** Provider route this account is reachable as (`loomy`, `loomy-2`, …). */
+  route: string
+  displayName: string
+  origin: 'plugin' | 'desktop'
+  label?: string
+  maskedPhone?: string
+  maskedUserId?: string
+  addedAt?: number
+}
+
+/** `GET /accounts` */
+export interface AccountsView {
+  ok: boolean
+  accounts: AccountRowView[]
+  /** Route currently bound to slot 1, for the card's "primary" hint. */
+  primaryRoute?: string
+}
 
 /** `GET /auth/state` — whether the plugin holds its own login. */
 export interface AuthStateView {

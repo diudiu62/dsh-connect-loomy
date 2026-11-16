@@ -25,6 +25,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { AuthStore } from './auth.js'
 import type { LoginService } from './login.js'
+import { accountsView, type AccountsStore } from './accounts.js'
 import { accountViewOf, credentialViewOf, nextStepsFor } from './auth.js'
 import { catalogUrls, type CatalogStore } from './catalog.js'
 import { fetchIdentity, type CreditsCache } from './credits.js'
@@ -32,6 +33,7 @@ import type {
   AuthLoginView,
   AuthLogoutView,
   AuthSendCodeView,
+  AccountsView,
   AuthStateView,
   CredentialCandidateView,
   DiagnosticsProbe,
@@ -54,6 +56,12 @@ export interface RouteDeps {
   auth: AuthStore
   catalog: CatalogStore
   credits: CreditsCache
+  /** Per-route credits (multi-account); falls back to `credits` when absent. */
+  creditsFor?: (route: string) => CreditsCache
+  /** The multi-account store. */
+  accounts: AccountsStore
+  /** Reconcile provider routes after an account change. */
+  refreshRoutes: () => Promise<unknown>
   login: LoginService
   /** Process-level token minted once per plugin instance. */
   csrfToken: string
@@ -435,6 +443,74 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
           ...(result.maskedUserId === undefined ? {} : { maskedUserId: result.maskedUserId }),
         }
         corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      path: ROUTES.accounts,
+      method: 'GET',
+      mutating: false,
+      run: async (req, res) => {
+        const url = req.url ?? ''
+        const match = /[?&]route=([^&]*)/u.exec(url)
+        const route = match?.[1] === undefined ? undefined : decodeURIComponent(match[1])
+        const rows = await accountsView(deps.accounts, { force: true })
+        const payload: AccountsView = {
+          ok: true,
+          accounts: rows,
+          ...(route === undefined || !rows.some((row) => row.route === route)
+            ? {}
+            : { primaryRoute: route }),
+        }
+        corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      path: ROUTES.accountRemove,
+      method: 'POST',
+      mutating: true,
+      run: async (req, res) => {
+        const body = await readJsonObject(req)
+        if (body === undefined) {
+          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
+          return
+        }
+        const id = body['id']
+        if (typeof id !== 'string' || id.length === 0) {
+          failure(res, 400, 'bad_request', 'id 必须是非空字符串')
+          return
+        }
+        const result = await deps.accounts.remove(id)
+        if (result.kind === 'failure') {
+          corsSafeJson(res, 200, { ok: false, error: { code: result.code, message: result.message } })
+          return
+        }
+        await deps.refreshRoutes()
+        corsSafeJson(res, 200, { ok: true, removed: result.removed })
+      },
+    },
+    {
+      path: ROUTES.accountRename,
+      method: 'POST',
+      mutating: true,
+      run: async (req, res) => {
+        const body = await readJsonObject(req)
+        if (body === undefined) {
+          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
+          return
+        }
+        const id = body['id']
+        const label = body['label']
+        if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string') {
+          failure(res, 400, 'bad_request', 'id 与 label 必须是字符串')
+          return
+        }
+        const result = await deps.accounts.rename(id, label.slice(0, 40))
+        if (result.kind === 'failure') {
+          corsSafeJson(res, 200, { ok: false, error: { code: result.code, message: result.message } })
+          return
+        }
+        await deps.refreshRoutes()
+        corsSafeJson(res, 200, { ok: true })
       },
     },
     {

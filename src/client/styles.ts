@@ -25,6 +25,30 @@ export const CARD_CSS = `
 .loomy-header { display: flex; flex-direction: column; gap: 4px; }
 .loomy-title { font-size: 15px; font-weight: 600; }
 .loomy-subtitle { color: var(--dsw-alias-label-tertiary, #6b7280); }
+/* Account rows (multi-account): one row per provider route. */
+.loomy-accounts { display: flex; flex-direction: column; gap: 10px; }
+.loomy-account-rows { display: flex; flex-direction: column; gap: 8px; }
+.loomy-account-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.12));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08));
+}
+.loomy-account-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.loomy-account-identity { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loomy-account-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.loomy-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-layer-1, transparent);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.1));
+}
+
 /* SMS login form (account tab). Inputs mirror the host's settings fields. */
 .loomy-login { display: flex; flex-direction: column; gap: 10px; }
 .loomy-login-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

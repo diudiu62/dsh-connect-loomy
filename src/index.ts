@@ -29,13 +29,16 @@ import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { createAuthStore } from './auth.js'
+import type { AuthSnapshot } from './auth.js'
 import { createCatalogStore } from './catalog.js'
-import { createCreditsCache } from './credits.js'
+import { createCreditsCache, type CreditsCache } from './credits.js'
 import { createProviderRuntime } from './provider.js'
 import { registerLoomyRoutes } from './routes.js'
 import { stateFilePath } from './shared/paths.js'
 import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
 import { createLoginService } from './login.js'
+import { accountIdOf, createAccountsStore, type AccountRoute } from './accounts.js'
+import { maskPhone, maskUserId } from './shared/text.js'
 import { createSessionPrecheck } from './auth.js'
 import { createStateStore } from './shared/state.js'
 import { PROVIDER_ID } from './shared/types.js'
@@ -125,6 +128,17 @@ export {
   PHONE_PATTERN,
 } from './shared/xfyun.js'
 export {
+  accountIdOf,
+  accountsFilePath,
+  accountsView,
+  createAccountsStore,
+  parseAccounts,
+  routeDisplayName,
+  routeForSlot,
+  slotForRoute,
+  isOurRoute,
+} from './accounts.js'
+export {
   authSessionCandidatesWithPlugin,
   clearPluginAuthSession,
   defaultPluginStorageDir,
@@ -162,6 +176,45 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     candidates: authSessionCandidatesWithPlugin(pluginStorageDir),
     ttlMs: () => live(config.sessionTtlMs),
   })
+  const accounts = createAccountsStore({
+    storageDir: () => pluginStorageDir,
+    ttlMs: () => live(config.sessionTtlMs),
+    readDesktop: async () => {
+      const snapshot = await auth.read()
+      return snapshot.found
+        ? {
+            found: true,
+            ...(snapshot.session === undefined ? {} : { session: snapshot.session }),
+            ...(snapshot.maskedPhone === undefined ? {} : { maskedPhone: snapshot.maskedPhone }),
+            ...(snapshot.maskedUserId === undefined ? {} : { maskedUserId: snapshot.maskedUserId }),
+          }
+        : { found: false }
+    },
+  })
+  /**
+   * The session a given route must authenticate as.
+   *
+   * Slot 1 with no stored account falls through to the desktop/plugin snapshot
+   * (single-account behaviour); every other route resolves to its own stored
+   * account. Returning a snapshot rather than a bare string keeps the existing
+   * `missingCredentialMessage` wording intact for the error path.
+   */
+  const sessionForRoute = async (route: string): Promise<AuthSnapshot> => {
+    const account = await accounts.accountForRoute(route)
+    if (account === undefined) return auth.read()
+    return {
+      found: true,
+      sourcePath: `accounts.json#slot-${account.slot}`,
+      candidates: [],
+      session: account.session,
+      fingerprint: accountIdOf(account.session),
+      ...(account.phone === undefined ? {} : { maskedPhone: maskPhone(account.phone) }),
+      ...(account.userId === undefined ? {} : { maskedUserId: maskUserId(account.userId) }),
+      loginAt: account.addedAt,
+      sourceOrigin: 'plugin' as const,
+    }
+  }
+
   const catalog = createCatalogStore({
     baseURL,
     readSession: () => auth.read(),
@@ -175,6 +228,26 @@ export function apply(ctx: Context, config: LoomyConfig): void {
       ctx.emit('llm/models-updated', PROVIDER_ID)
     },
   })
+  /**
+   * Credits are per-account: each route gets its own cache so account 2's
+   * balance never renders under account 1's name. Caches are created lazily
+   * and dropped when a route disappears.
+   */
+  const creditsByRoute = new Map<string, CreditsCache>()
+  const creditsFor = (route: string): CreditsCache => {
+    let cache = creditsByRoute.get(route)
+    if (cache === undefined) {
+      cache = createCreditsCache({
+        baseURL,
+        readSession: () => sessionForRoute(route),
+        pageSize: () => live(config.creditsPageSize),
+        ttlMs: () => live(config.creditsTtlMs),
+      })
+      creditsByRoute.set(route, cache)
+    }
+    return cache
+  }
+  /** Slot-1 cache — what `/credits` reports when the card names no route. */
   const credits = createCreditsCache({
     baseURL,
     readSession: () => auth.read(),
@@ -188,7 +261,14 @@ export function apply(ctx: Context, config: LoomyConfig): void {
   })
   const login = createLoginService({
     storageDir: () => pluginStorageDir,
-    invalidateAuth: () => auth.invalidate(),
+    invalidateAuth: () => {
+      auth.invalidate()
+      accounts.invalidate()
+    },
+    accounts,
+    refreshRoutes: async () => {
+      await refreshRoutes()
+    },
     logger: ctx.logger,
   })
   const runtime = createProviderRuntime({
@@ -196,6 +276,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     baseURL,
     loomyVersion,
     readSession: () => auth.read(),
+    sessionForRoute,
     precheck,
     logger: ctx.logger,
     // Image input is served through the host's durable attachment service.
@@ -213,47 +294,84 @@ export function apply(ctx: Context, config: LoomyConfig): void {
 
   const isEnabled = (): boolean => live(config.enabled) === true
   let registration: AdapterRegistrationHandle | undefined
+  /** Signature of the route set currently installed, to skip no-op refreshes. */
+  let routeSignature = ''
+
+  const routeSignatureOf = (routes: readonly { route: string; displayName: string }[]): string =>
+    routes.map((entry) => `${entry.route}\u0000${entry.displayName}`).join('\u0001')
 
   /**
-   * Keep the single `loomy` route in sync with the master switch.
+   * Re-read the accounts and reconcile the provider routes.
    *
-   * `registerAdapter` rejects an empty route list, so a disabled plugin simply
-   * owns no route and `replace([])` is never needed for mounting. When the
-   * switch flips on later, registration happens here under the same fiber, so
-   * unloading still disposes it.
+   * Called on mount, after every login/logout/account edit, and whenever a
+   * request discovers the set changed — never on the request path itself, so
+   * an inference call never waits for a disk read just to learn its route list.
    */
-  const syncRegistration = (): void => {
+  const refreshRoutes = async (): Promise<readonly AccountRoute[]> => {
+    const routes = await accounts.routes({ force: true })
+    const next = routeSignatureOf(routes)
+    if (next === routeSignature) return runtime.routes()
+    routeSignature = next
+    try {
+      const installed = runtime.setRoutes(routes)
+      if (isEnabled()) {
+        const ids = installed.map((entry) => entry.route)
+        if (ids.length === 0) {
+          if (registration !== undefined) {
+            registration()
+            registration = undefined
+          }
+        } else if (registration === undefined) {
+          registration = ctx.llm.registerAdapter(ids, runtime.adapter)
+        } else {
+          registration.replace(ids)
+        }
+        // Selectors must re-list: both the provider set and each provider's
+        // display name changed.
+        ctx.emit('llm/models-updated', ids[0] ?? PROVIDER_ID)
+      }
+    } catch (error) {
+      ctx.logger.error('dsh-connect-loomy: could not reconcile the Loomy provider routes')
+      ctx.logger.error(error)
+    }
+    return runtime.routes()
+  }
+
+  /**
+   * Synchronous initial install.
+   *
+   * The provider runtime already carries the single base route (`loomy`), so
+   * mounting registers exactly what the pre-multi-account build registered —
+   * the model picker works the instant the plugin loads, with no window where
+   * the plugin owns no route. `refreshRoutes()` then reconciles the real
+   * account list over the top.
+   */
+  ctx.effect(() => {
     try {
       if (isEnabled()) {
-        if (registration === undefined) {
-          registration = ctx.llm.registerAdapter([PROVIDER_ID], runtime.adapter)
-        } else {
-          registration.replace([PROVIDER_ID])
-        }
-        return
-      }
-      if (registration !== undefined) {
-        registration()
-        registration = undefined
+        registration = ctx.llm.registerAdapter(
+          runtime.routes().map((entry) => entry.route),
+          runtime.adapter,
+        )
       }
     } catch (error) {
       ctx.logger.error('dsh-connect-loomy: could not register the Loomy provider route')
       ctx.logger.error(error)
     }
-  }
-
-  ctx.effect(() => {
-    syncRegistration()
     return () => {
       registration?.()
       registration = undefined
     }
   }, 'dsh-connect-loomy: provider route')
 
+  void refreshRoutes().catch((error: unknown) => {
+    ctx.logger.warn('dsh-connect-loomy: initial route reconciliation failed', error)
+  })
   let lastBaseURL = baseURL()
   ctx.on('loader/volatile-update', () => {
     auth.invalidate()
-    syncRegistration()
+    accounts.invalidate()
+    void refreshRoutes()
     const nextBaseURL = baseURL()
     if (nextBaseURL !== lastBaseURL) {
       lastBaseURL = nextBaseURL
@@ -287,6 +405,11 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     auth,
     catalog,
     credits,
+    creditsFor,
+    accounts,
+    refreshRoutes: async () => {
+      await refreshRoutes()
+    },
     login,
     csrfToken: randomBytes(24).toString('base64url'),
     baseURL,

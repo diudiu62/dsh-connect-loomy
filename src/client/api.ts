@@ -46,7 +46,30 @@ export const ROUTES = {
   authSendCode: `${ROUTE_PREFIX}/auth/send-code`,
   authLogin: `${ROUTE_PREFIX}/auth/login`,
   authLogout: `${ROUTE_PREFIX}/auth/logout`,
+  accounts: `${ROUTE_PREFIX}/accounts`,
+  accountRemove: `${ROUTE_PREFIX}/accounts/remove`,
+  accountRename: `${ROUTE_PREFIX}/accounts/rename`,
 } as const
+
+/** One account row (never carries a session). */
+export interface LoomyAccountRow {
+  id: string
+  slot: number
+  route: string
+  displayName: string
+  origin: 'plugin' | 'desktop'
+  label?: string
+  maskedPhone?: string
+  maskedUserId?: string
+  addedAt?: number
+}
+
+/** `GET /accounts` */
+export interface LoomyAccounts {
+  ok: boolean
+  accounts: LoomyAccountRow[]
+  primaryRoute?: string
+}
 
 /** `GET /auth/state` response. */
 export interface LoomyAuthState {
@@ -365,6 +388,30 @@ export function authLogin(
 /** Remove the plugin-side session (desktop client untouched). */
 export function authLogout(csrfToken: string, options: RouteOptions = {}): Promise<RouteResult<LoomyAuthLogout>> {
   return postJson<LoomyAuthLogout>(ROUTES.authLogout, csrfToken, {}, options)
+}
+
+/** Read every account the plugin can route to. */
+export function fetchAccounts(options: RouteOptions = {}): Promise<RouteResult<LoomyAccounts>> {
+  return getJson<LoomyAccounts>(ROUTES.accounts, options)
+}
+
+/** Remove one stored account (its provider route disappears). */
+export function removeAccount(
+  csrfToken: string,
+  id: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<{ ok: boolean; removed: boolean }>> {
+  return postJson<{ ok: boolean; removed: boolean }>(ROUTES.accountRemove, csrfToken, { id }, options)
+}
+
+/** Rename one stored account (changes its provider display name). */
+export function renameAccount(
+  csrfToken: string,
+  id: string,
+  label: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<{ ok: boolean }>> {
+  return postJson<{ ok: boolean }>(ROUTES.accountRename, csrfToken, { id, label }, options)
 }
 
 /** Refresh the catalog (persisted and effective immediately; draft is untouched). */

@@ -18,6 +18,7 @@
 
 import { PHONE_PATTERN, resolveXfyunConfig, resetXfyunConfigCache, sendSmsCode, verifySmsCode } from './shared/xfyun.js'
 import { clearPluginAuthSession, writePluginAuthSession } from './plugin-auth.js'
+import { routeForSlot } from './accounts.js'
 import { maskPhone, maskUserId } from './shared/text.js'
 
 /** Rate-limit guard for `sendMsgCode`: the account API rejects early resends. */
@@ -33,7 +34,18 @@ export type SendCodeResult =
 
 /** What one "verify code" turn produced. */
 export type LoginResult =
-  | { ok: true; maskedPhone?: string; maskedUserId?: string; sourcePath: string; fingerprint: string }
+  | {
+      ok: true
+      maskedPhone?: string
+      maskedUserId?: string
+      sourcePath: string
+      fingerprint: string
+      /** Slot the account landed on; the route is derived from it. */
+      slot?: number
+      route?: string
+      /** True when an existing account's session was refreshed instead of added. */
+      replaced?: boolean
+    }
   | { ok: false; code: string; message: string }
 
 /** What "sign out" produced. */
@@ -46,6 +58,19 @@ export interface LoginDeps {
   storageDir: () => string
   /** Invalidate the auth snapshot cache (so the next read sees the login). */
   invalidateAuth: () => void
+  /**
+   * Multi-account store: a login appends (or refreshes) an account instead of
+   * overwriting the single plugin session. Omission keeps the legacy
+   * single-session behaviour for callers that have no store.
+   */
+  accounts?: {
+    add(input: { session: string; phone?: string; userId?: string }): Promise<
+      | { kind: 'ok'; account: { id: string; slot: number }; replaced: boolean }
+      | { kind: 'failure'; code: string; message: string }
+    >
+  }
+  /** Ask the host to reconcile provider routes after an account change. */
+  refreshRoutes?: () => Promise<void>
   now?: () => number
   fetchImpl?: typeof fetch
   logger?: { warn(message: string, error?: unknown): void }
@@ -134,6 +159,33 @@ export function createLoginService(deps: LoginDeps) {
         return { ok: false, code: result.code, message: `登录失败：${result.message}` }
       }
       pending = undefined
+
+      // Multi-account: the account store owns the session, and each account
+      // becomes its own provider route. The legacy single-session file is still
+      // written for slot 1 so a downgrade to the previous build keeps working.
+      if (deps.accounts !== undefined) {
+        const added = await deps.accounts.add({
+          session: result.session,
+          ...(result.phone === undefined ? {} : { phone: result.phone }),
+          ...(result.userId === undefined ? {} : { userId: result.userId }),
+        })
+        if (added.kind === 'failure') {
+          return { ok: false, code: added.code, message: added.message }
+        }
+        await deps.refreshRoutes?.()
+        deps.invalidateAuth()
+        return {
+          ok: true,
+          ...(result.phone === undefined ? {} : { maskedPhone: maskPhone(result.phone) }),
+          ...(result.userId === undefined ? {} : { maskedUserId: maskUserId(result.userId) }),
+          sourcePath: `accounts.json#slot-${added.account.slot}`,
+          fingerprint: added.account.id,
+          slot: added.account.slot,
+          route: routeForSlot(added.account.slot),
+          replaced: added.replaced,
+        }
+      }
+
       const written = await writePluginAuthSession({
         storageDir: deps.storageDir(),
         session: result.session,
@@ -159,6 +211,15 @@ export function createLoginService(deps: LoginDeps) {
      * never touched; if it holds a session, the card falls back to it.
      */
     async logout(): Promise<LogoutResult> {
+      if (deps.accounts !== undefined) {
+        // Multi-account: "sign out" without an id means "detach every stored
+        // account"; the card's per-account rows call `removeAccount` instead.
+        const result = await clearPluginAuthSession(deps.storageDir())
+        if (result.kind === 'failure') return { ok: false, code: result.code, message: result.message }
+        deps.invalidateAuth()
+        await deps.refreshRoutes?.()
+        return { ok: true, message: '已退出登录。若 Loomy 桌面端仍处于登录状态，会改用它的登录态。' }
+      }
       const result = await clearPluginAuthSession(deps.storageDir())
       if (result.kind === 'failure') return { ok: false, code: result.code, message: result.message }
       deps.invalidateAuth()

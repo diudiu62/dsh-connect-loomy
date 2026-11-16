@@ -21,11 +21,14 @@ import {
   fetchDiagnostics,
   describeError,
   fetchStatus,
+  fetchAccounts,
   fetchAuthState,
   isAbortError,
+  removeAccount,
   readEnabledModelIds,
   refreshCatalog,
   saveEnabledModels,
+  type LoomyAccounts,
   type LoomyAuthState,
   type LoomyCatalog,
   type LoomyCredits,
@@ -118,6 +121,8 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [redetecting, setRedetecting] = useState(false)
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [authState, setAuthState] = useState<LoomyAuthState | null>(null)
+  const [accounts, setAccounts] = useState<Loadable<LoomyAccounts>>({ kind: 'idle' })
+  const [removingId, setRemovingId] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const csrfRef = useRef<string | null>(null)
@@ -152,6 +157,40 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
       // the form simply renders its signed-out branch.
     }
   }, [])
+
+  const loadAccounts = useCallback(async (): Promise<void> => {
+    setAccounts({ kind: 'loading' })
+    try {
+      setAccounts(mapResult(await fetchAccounts({ signal: abortRef.current?.signal })))
+    } catch (error) {
+      if (isAbortError(error)) return
+      setAccounts({ kind: 'error', code: 'network', message: errorMessage(t, error) })
+    }
+  }, [t])
+
+  const removeAccountRow = useCallback(async (id: string): Promise<void> => {
+    const token = csrfRef.current
+    if (token === null) return
+    setRemovingId(id)
+    try {
+      const result = await removeAccount(token, id, { signal: abortRef.current?.signal })
+      if (result.kind === 'ok' && result.value.ok) {
+        await loadAccounts()
+        // The route set changed, so both the picker and the status counters did.
+        await loadStatus()
+        return
+      }
+      setNotice(null)
+      if (result.kind === 'unavailable') setSaveError(t('accounts.unavailable'))
+      else if (result.kind === 'ok') setSaveError(t('accounts.removeFailed'))
+      else setSaveError(result.message)
+    } catch (error) {
+      if (isAbortError(error)) return
+      setSaveError(errorMessage(t, error))
+    } finally {
+      setRemovingId(null)
+    }
+  }, [loadAccounts, loadStatus, t])
 
   const loadCredits = useCallback(async (): Promise<void> => {
     setCredits({ kind: 'loading' })
@@ -398,7 +437,12 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
               void loadStatus()
               void loadCredits()
               void loadAuthState()
+              void loadAccounts()
             }}
+            accounts={accounts}
+            removingId={removingId}
+            onRemoveAccount={(id) => void removeAccountRow(id)}
+            onRefreshAccounts={() => void loadAccounts()}
           />
         ) : null}
 

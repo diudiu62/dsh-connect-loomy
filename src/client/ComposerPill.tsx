@@ -30,7 +30,11 @@ import { ensureStyles } from './styles.js'
 import type { LoomyT } from './components/types.js'
 
 /** The provider route this pill reports on. */
-const LOOMY_PROVIDER = 'loomy'
+/** Every route this plugin owns: `loomy`, `loomy-2`, … */
+function isLoomyRoute(provider: string | undefined): boolean {
+  if (provider === undefined) return false
+  return provider === 'loomy' || /^loomy-\d+$/u.test(provider)
+}
 
 /** Minimal shape of the host's `modelSelection` projection snapshot. */
 interface ModelSelectionSnapshot {
@@ -65,7 +69,7 @@ export function selectedProviderOf(projection: ModelSelectionSnapshot | undefine
 export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) {
   const projection = useProjection?.('modelSelection')
   const provider = selectedProviderOf(projection)
-  const owns = provider === LOOMY_PROVIDER
+  const owns = isLoomyRoute(provider)
 
   const [credits, setCredits] = useState<LoomyCredits | null>(null)
   const [busy, setBusy] = useState(false)
@@ -155,7 +159,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
       onClick={refresh}
       title={title}
       aria-label={label}
-      data-provider={LOOMY_PROVIDER}
+      data-provider={provider}
     >
       {label}
     </button>

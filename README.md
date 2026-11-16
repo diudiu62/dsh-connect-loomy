@@ -62,7 +62,7 @@ ls -ld ~/.dsh/profiles/web/node_modules/dsh-connect-loomy   # 以 l 开头 = 软
 客户端挂载时会打一行标记，用来确认当前跑的是哪个版本：
 
 ```
-[dsh-connect-loomy] client half loaded (settings-section+pill-near-model-v3+login-v4): settings.section + composer readout
+[dsh-connect-loomy] client half loaded (settings-section+pill-near-model-v3+login-v4+multi-account-v5): settings.section + composer readout
 ```
 
 ## 命令行

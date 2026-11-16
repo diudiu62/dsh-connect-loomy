@@ -10,10 +10,11 @@
  * @module dsh-connect-loomy/client/components/AccountTab
  */
 
-import type { LoomyAuthState, LoomyCredits, LoomyStatus } from '../api.js'
+import type { LoomyAccounts, LoomyAuthState, LoomyCredits, LoomyStatus } from '../api.js'
 import { formatCount, formatDateTime } from '../format.js'
 import { Badge, CardButton, FactRow, Notice, Section } from './common.js'
 import { LoginForm } from './LoginForm.js'
+import { AccountsList } from './AccountsList.js'
 import { loadableMessage, type Loadable, type LoomyT } from './types.js'
 
 /** Props supplied by the card shell. */
@@ -32,6 +33,12 @@ export interface AccountTabProps {
   onAuthChanged: () => void
   /** Abort signal for the login calls. */
   signal?: AbortSignal
+  /** Every account the plugin routes to (one row per provider route). */
+  accounts: Loadable<LoomyAccounts>
+  /** Row id currently being removed. */
+  removingId: string | null
+  onRemoveAccount: (id: string) => void
+  onRefreshAccounts: () => void
 }
 
 /** Render the account tab. */
@@ -46,6 +53,10 @@ export function AccountTab({
   authState,
   onAuthChanged,
   signal,
+  accounts,
+  removingId,
+  onRemoveAccount,
+  onRefreshAccounts,
 }: AccountTabProps) {
   return (
     <div className="loomy-panel">
@@ -91,6 +102,17 @@ export function AccountTab({
           authState={authState}
           onChanged={onAuthChanged}
           {...(signal === undefined ? {} : { signal })}
+        />
+      </Section>
+
+      <Section title={t('accounts.title')}>
+        <AccountsList
+          t={t}
+          accounts={accounts}
+          csrfToken={csrfToken}
+          onRemove={onRemoveAccount}
+          onRefresh={onRefreshAccounts}
+          removingId={removingId}
         />
       </Section>
 
