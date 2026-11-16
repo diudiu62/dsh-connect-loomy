@@ -59,11 +59,13 @@ export function normalizeLedgerRow(raw: unknown): CreditRecordView | undefined {
   const balanceAfter = asNumber(raw['balanceAfter'])
   if (pointsActual === undefined || balanceAfter === undefined) return undefined
   const direction = raw['direction'] === 'credit' ? 'credit' : 'debit'
+  const model = asString(raw['modelName'])
   return {
     description: asString(raw['description']) ?? '',
     direction,
     pointsActual,
     createdAt: toEpochMs(raw['createdAt']),
+    ...(model === undefined || model.length === 0 ? {} : { model }),
     balanceAfter,
   }
 }

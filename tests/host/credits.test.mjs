@@ -204,3 +204,30 @@ test('createCreditsCache: 60s TTL, single-flight, and a failure is never cached 
   await cache.read()
   assert.equal(calls, 4)
 })
+
+test('a ledger row keeps its time and the model that caused the deduction', () => {
+  // Shape verified against the live upstream: createdAt is epoch *seconds* and
+  // the model arrives as `modelName`.
+  const row = normalizeLedgerRow({
+    description: '模型调用扣分',
+    direction: 'debit',
+    pointsActual: 6,
+    createdAt: 1794810151,
+    balanceAfter: 35500,
+    modelName: 'deepseek-v4-flash-1017',
+  })
+  assert.ok(row)
+  assert.equal(row.model, 'deepseek-v4-flash-1017')
+  assert.equal(row.createdAt, 1_794_810_151_000, 'seconds are widened to milliseconds')
+  assert.equal(new Date(row.createdAt).getUTCFullYear(), new Date(1_794_810_151_000).getUTCFullYear())
+
+  // A credit (no model) must not invent one.
+  const credit = normalizeLedgerRow({
+    description: '邀请好友奖励',
+    direction: 'credit',
+    pointsActual: 5000,
+    createdAt: 1794574692,
+    balanceAfter: 40500,
+  })
+  assert.equal(credit.model, undefined)
+})

@@ -318,7 +318,9 @@ function CreditsBody({ t, credits }: { t: LoomyT; credits: Loadable<LoomyCredits
         <div className="loomy-records">
           {value.records.slice(0, 5).map((record, index) => (
             <div className="loomy-record" key={`${record.createdAt}-${index}`}>
+              <span className="loomy-record-time">{formatDateTime(record.createdAt)}</span>
               <span className="loomy-value">{record.description.length > 0 ? record.description : t('common.none')}</span>
+              {record.model === undefined ? null : <span className="loomy-record-model">{record.model}</span>}
               <span className={record.direction === 'credit' ? 'loomy-record-positive' : 'loomy-record-negative'}>
                 {record.direction === 'credit' ? '+' : '-'}
                 {formatCount(record.pointsActual)}

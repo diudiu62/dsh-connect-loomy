@@ -267,6 +267,12 @@ export interface CreditRecordView {
   pointsActual: number
   /** Epoch milliseconds (upstream uses seconds). */
   createdAt: number
+  /**
+   * Which model produced this deduction. The upstream sends it as
+   * `modelName`; without it a row reads "模型调用扣分" and says nothing about
+   * what was actually called.
+   */
+  model?: string
   balanceAfter: number
   /**
    * Which account this row was fetched through.

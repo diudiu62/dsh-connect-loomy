@@ -391,12 +391,35 @@ export const CARD_CSS = `
 .loomy-credit-value { font-size: 16px; font-weight: 600; }
 .loomy-records { display: flex; flex-direction: column; gap: 2px; }
 .loomy-record {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content max-content;
-  gap: 12px;
+  /* Five columns of very different widths (time, what, which model, how much,
+     which account): flex keeps each at its natural size and lets the
+     description absorb the slack. */
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   padding: 4px 0;
   border-bottom: 1px dashed var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.1));
 }
+.loomy-record-time {
+  flex: 0 0 auto;
+  min-width: 8.6em;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+.loomy-record-model {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loomy-record > .loomy-value { flex: 1 1 auto; min-width: 0; }
+.loomy-record > .loomy-record-positive,
+.loomy-record > .loomy-record-negative { flex: 0 0 auto; }
 .loomy-record:last-child { border-bottom: 0; }
 .loomy-record-positive { color: var(--dsw-alias-state-success-primary, #15803d); }
 .loomy-record-negative { color: var(--dsw-alias-state-error-primary, #b91c1c); }

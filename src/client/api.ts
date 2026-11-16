@@ -271,6 +271,8 @@ export interface LoomyDiagnostics {
 
 /** One points ledger row. */
 export interface LoomyCreditsRecord {
+  /** Model that produced this deduction (upstream `modelName`). */
+  model?: string
   /** Which account this row came from (multi-account ledger). */
   source?: { route: string; account?: string }
   description: string
