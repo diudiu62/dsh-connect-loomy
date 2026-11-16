@@ -233,7 +233,7 @@ export const CARD_CSS = `
   gap: 4px;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 104px;
+  max-width: 132px;
   height: 22px;
   padding: 0 6px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.12));

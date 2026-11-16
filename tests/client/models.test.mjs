@@ -83,7 +83,7 @@ test('a toggle is a draft: it survives a tab switch and only Save posts it', asy
 
     // Switching sections keeps the draft alive.
     await click(tab(container, '账号'))
-    assert.ok(container.textContent.includes('只读积分概览'))
+    assert.ok(container.textContent.includes('积分概览'))
     await click(tab(container, '模型'))
     assert.equal(modelCheckboxes(container)[2].checked, true, 'draft survived the tab switch')
     assert.ok(container.textContent.includes('有未保存的修改'))

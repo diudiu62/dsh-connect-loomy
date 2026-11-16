@@ -140,7 +140,7 @@ test('the same card speaks English when the locale face switches', async () => {
     assert.ok(text.includes('Models'))
     assert.ok(text.includes('Diagnostics'))
     assert.ok(text.includes('Signed in'))
-    assert.ok(text.includes('Read-only credits overview'))
+    assert.ok(text.includes('Credits'))
     assert.ok(!text.includes('本机登录态'))
 
     // The login form is deliberately collapsed behind "Add account"; open it to
@@ -178,7 +178,7 @@ test('the composer readout registers the real component with an inject face', as
   assert.equal(typeof injected.t, 'function')
   // The badge names the account first, then the figure: with several accounts a
   // bare number says nothing about whose points it is.
-  assert.equal(injected.t('composer.pill', { account: '18912342700', amount: '1' }), '18912342700 · 1')
+  assert.equal(injected.t('composer.pill', { account: '18912342700', amount: '1' }), '18912342700 · 1 积分')
 })
 
 test('the composer readout only appears for the loomy provider', async () => {
@@ -405,9 +405,9 @@ test('the badge stays short: Loomy plus the figure, sum when rotating', async ()
   }
 
   // One account is paying, so its own balance is the honest number.
-  assert.equal(await render(false), 'Loomy · 40,500')
+  assert.equal(await render(false), 'Loomy · 40,500 积分')
   // Any account may be charged next, so the badge shows what is left in total.
-  assert.equal(await render(true), 'Loomy · 42,000')
+  assert.equal(await render(true), 'Loomy · 42,000 积分')
 })
 
 test('switching account in the drawer moves the badge figure', async () => {
@@ -460,7 +460,7 @@ test('switching account in the drawer moves the badge figure', async () => {
     async ({ container }) => {
       await new Promise((resolve) => setTimeout(resolve, 30))
       const badge = () => container.querySelector('.loomy-pill')?.textContent ?? ''
-      assert.equal(badge(), 'Loomy · 40,500', 'starts on the first account')
+      assert.equal(badge(), 'Loomy · 40,500 积分', 'starts on the first account')
 
       await click(container.querySelector('.loomy-pill'))
       const rows = [...container.querySelectorAll('.loomy-drawer-row')]
@@ -468,7 +468,7 @@ test('switching account in the drawer moves the badge figure', async () => {
       await click(rows[1])
       await new Promise((resolve) => setTimeout(resolve, 60))
 
-      assert.equal(badge(), 'Loomy · 9,000', 'the second account owns a different balance')
+      assert.equal(badge(), 'Loomy · 9,000 积分', 'the second account owns a different balance')
     },
     { useProjection: () => ({ next: { provider: 'loomy' } }) },
   )

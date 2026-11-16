@@ -37,7 +37,7 @@ test('signed in: phone, login time, credential path and credits render', async (
     assert.ok(text.includes('已找到'), 'credential conclusion is explicit')
     assert.ok(text.includes('已登录'))
 
-    // Read-only credits overview: three balances and the ledger preview.
+    // 积分概览: three balances and the ledger preview.
     assert.ok(text.includes('35,500'))
     assert.ok(text.includes('40,500'))
     assert.ok(text.includes('5,000'))
