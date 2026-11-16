@@ -20,6 +20,8 @@ export type Loadable<T> =
   | { kind: 'loading' }
   | { kind: 'ready'; value: T }
   | { kind: 'unavailable' }
+  /** Host predates this client build (405): render "restart DSH". */
+  | { kind: 'stale'; message: string }
   | { kind: 'failed'; code: string; message: string }
   | { kind: 'error'; code: string; message: string }
 
@@ -30,6 +32,8 @@ export function mapResult<T>(result: RouteResult<T>): Loadable<T> {
       return { kind: 'ready', value: result.value }
     case 'unavailable':
       return { kind: 'unavailable' }
+    case 'stale':
+      return { kind: 'stale', message: result.message }
     case 'failed':
       return { kind: 'failed', code: result.code, message: result.message }
     case 'error':
@@ -47,6 +51,8 @@ export function loadableMessage(state: Loadable<unknown>, t: LoomyT): string {
   switch (state.kind) {
     case 'unavailable':
       return t('errors.unavailable')
+    case 'stale':
+      return state.message
     case 'failed':
     case 'error':
       return state.message.length > 0 ? state.message : t('common.unknownError')

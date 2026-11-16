@@ -234,14 +234,14 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     setTransferNotice(null)
     setTransferError(null)
     try {
-      let bundle: unknown
+      let parsed: unknown
       try {
-        bundle = JSON.parse(text)
+        parsed = JSON.parse(text)
       } catch {
-        setTransferError(t('accounts.transferFailed'))
+        setTransferError(t('accounts.importBadJson'))
         return
       }
-      const result = await importAccounts(token, bundle, { signal: abortRef.current?.signal })
+      const result = await importAccounts(token, parsed, { signal: abortRef.current?.signal })
       if (result.kind !== 'ok') {
         setTransferError(result.kind === 'unavailable' ? t('accounts.unavailable') : result.message)
         return

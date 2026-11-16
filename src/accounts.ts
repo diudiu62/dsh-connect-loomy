@@ -411,7 +411,10 @@ export function createAccountsStore(options: {
     async importBundle(bundle) {
       const parsed = parseBundle(bundle)
       if (parsed === undefined) {
-        throw new Error('导入内容不是本插件导出的账号包（缺少 kind/version/accounts）')
+        throw new Error(
+          '导入内容无法识别：需要本插件导出的账号包、或 Loomy 桌面端的 auth-session.json，' +
+            '或含 session 字段的数组。',
+        )
       }
       let added = 0
       let refreshed = 0
@@ -456,29 +459,73 @@ export function createAccountsStore(options: {
 export function parseBundle(
   value: unknown,
 ): Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string }> | undefined {
-  if (!isRecord(value)) return undefined
-  if (value['kind'] !== 'dsh-connect-loomy/accounts') return undefined
-  if (value['version'] !== 1) return undefined
-  const raw = value['accounts']
-  if (!Array.isArray(raw)) return undefined
-  const entries: Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string }> = []
-  for (const item of raw) {
-    if (!isRecord(item)) continue
-    const session = item['session']
-    if (typeof session !== 'string' || session.length < 16 || /\s/u.test(session)) continue
-    const slot = typeof item['slot'] === 'number' && Number.isInteger(item['slot']) && item['slot'] >= 1 ? item['slot'] : 1
-    const phone = typeof item['phone'] === 'string' ? item['phone'] : undefined
-    const userId = typeof item['userId'] === 'string' ? item['userId'] : undefined
-    const label = typeof item['label'] === 'string' ? item['label'] : undefined
-    entries.push({
+  /** One entry: our bundle's camelCase plus the desktop file's lowercase keys. */
+  const one = (item: unknown, defaultSlot: number): {
+    slot: number
+    session: string
+    phone?: string
+    userId?: string
+    label?: string
+  } | undefined => {
+    if (!isRecord(item)) return undefined
+    const rawSession = item['session']
+    if (typeof rawSession !== 'string') return undefined
+    // The desktop client's file and our bundle both carry a 32-char opaque
+    // session; anything with whitespace or absurdly short is not one.
+    if (rawSession.length < 16 || /\s/u.test(rawSession)) return undefined
+    const rawSlot = item['slot']
+    const slot =
+      typeof rawSlot === 'number' && Number.isInteger(rawSlot) && rawSlot >= 1 ? rawSlot : defaultSlot
+    // `userid` is the desktop spelling, `userId` ours; `phone` is shared.
+    const phone = typeof item['phone'] === 'string' && item['phone'].length > 0 ? item['phone'] : undefined
+    const rawUser = item['userId'] ?? item['userid']
+    const userId = typeof rawUser === 'string' && rawUser.length > 0 ? rawUser : undefined
+    const label = typeof item['label'] === 'string' && item['label'].length > 0 ? item['label'] : undefined
+    return {
       slot,
-      session,
+      session: rawSession,
       ...(phone === undefined ? {} : { phone }),
       ...(userId === undefined ? {} : { userId }),
       ...(label === undefined ? {} : { label }),
-    })
+    }
   }
-  return entries
+
+  // 1) Our own export bundle.
+  if (isRecord(value) && value['kind'] === 'dsh-connect-loomy/accounts') {
+    if (value['version'] !== 1) return undefined
+    const raw = value['accounts']
+    if (!Array.isArray(raw)) return undefined
+    const entries = raw
+      .map((item, index) => one(item, index + 1))
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+    return entries.length > 0 ? entries : undefined
+  }
+
+  // 2) A bare array of session documents.
+  if (Array.isArray(value)) {
+    const entries = value
+      .map((item, index) => one(item, index + 1))
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+    return entries.length > 0 ? entries : undefined
+  }
+
+  // 3) The Loomy desktop client's own `auth-session.json`
+  //    (`{session, userid, phone, updatedAt}`) — this is the file a user
+  //    naturally copies between machines, so importing it must just work
+  //    instead of demanding our wrapper around the same three fields.
+  if (isRecord(value)) {
+    const single = one(value, 1)
+    if (single !== undefined) return [single]
+    // 4) Tolerate a `{accounts: [...]}` wrapper without the `kind` marker.
+    const raw = value['accounts']
+    if (Array.isArray(raw)) {
+      const entries = raw
+        .map((item, index) => one(item, index + 1))
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+      return entries.length > 0 ? entries : undefined
+    }
+  }
+  return undefined
 }
 
 /** Public, session-free view of one account for the settings card. */

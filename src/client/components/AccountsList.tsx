@@ -61,6 +61,8 @@ export function AccountsList({
         <p className="loomy-muted">{t('common.loading')}</p>
       ) : accounts.kind === 'unavailable' ? (
         <p className="loomy-muted">{t('accounts.unavailable')}</p>
+      ) : accounts.kind === 'stale' ? (
+        <Notice tone="error">{accounts.message}</Notice>
       ) : accounts.kind === 'failed' || accounts.kind === 'error' ? (
         <Notice tone="error">{t('accounts.failed', { message: loadableMessage(accounts, t) })}</Notice>
       ) : accounts.value.accounts.length === 0 ? (

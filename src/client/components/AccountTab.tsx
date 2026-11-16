@@ -155,6 +155,9 @@ function SignInBody({ t, status }: { t: LoomyT; status: Loadable<LoomyStatus>; o
   if (status.kind === 'unavailable') {
     return <Notice tone="error">{t('card.hostUnavailable')}</Notice>
   }
+  if (status.kind === 'stale') {
+    return <Notice tone="error">{status.message}</Notice>
+  }
   if (status.kind === 'failed' || status.kind === 'error') {
     return <Notice tone="error">{t('card.statusError', { message: loadableMessage(status, t) })}</Notice>
   }
@@ -201,6 +204,9 @@ function CreditsBody({ t, credits }: { t: LoomyT; credits: Loadable<LoomyCredits
   }
   if (credits.kind === 'unavailable') {
     return <p className="loomy-muted">{t('account.credits.unavailable')}</p>
+  }
+  if (credits.kind === 'stale') {
+    return <Notice tone="error">{credits.message}</Notice>
   }
   if (credits.kind === 'failed' || credits.kind === 'error') {
     return (

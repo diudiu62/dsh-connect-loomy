@@ -565,7 +565,13 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
           return
         }
         try {
-          const result = await deps.accounts.importBundle(body['bundle'])
+          // Two accepted shapes: our own wrapper (`{bundle: …}`) and the raw
+          // document the user pasted (a desktop `auth-session.json`, an array,
+          // or our exported bundle). Pasting a file must not require knowing
+          // which envelope this plugin happens to use internally.
+          const hasWrapper = isRecord(body['bundle'])
+          const document: unknown = hasWrapper ? body['bundle'] : body
+          const result = await deps.accounts.importBundle(document)
           await deps.refreshRoutes()
           deps.auth.invalidate()
           const payload: AccountImportView = {

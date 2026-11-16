@@ -128,6 +128,9 @@ function CatalogBody({
   if (catalog.kind === 'unavailable') {
     return <Notice tone="error">{t('models.unavailable')}</Notice>
   }
+  if (catalog.kind === 'stale') {
+    return <Notice tone="error">{catalog.message}</Notice>
+  }
   if (catalog.kind === 'failed' || catalog.kind === 'error') {
     return <Notice tone="error">{t('models.refreshFailed', { message: loadableMessage(catalog, t) })}</Notice>
   }

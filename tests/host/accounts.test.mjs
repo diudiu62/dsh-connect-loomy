@@ -267,3 +267,49 @@ test('import refuses foreign JSON and never overwrites an existing account', asy
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('import accepts the desktop client auth-session.json verbatim', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-imp-desktop-'))
+  try {
+    const store = createAccountsStore({ storageDir: () => dir, now: () => 5000 })
+    // Exactly the file the desktop client writes, as a user would paste it.
+    const desktop = {
+      session: '0a1deffc15054457bf04a77007f5662c',
+      userid: '261116121019062767',
+      phone: '16292320818',
+    }
+    const result = await store.importBundle(desktop)
+    assert.equal(result.kind, 'ok')
+    assert.equal(result.added, 1)
+
+    const stored = (await store.list({ force: true }))[0]
+    assert.equal(stored.session, desktop.session)
+    assert.equal(stored.userId, desktop.userid, 'the lowercase userid is mapped')
+    assert.equal(stored.phone, desktop.phone)
+    assert.equal(stored.slot, 1)
+
+    const routes = await store.routes({ force: true })
+    assert.equal(routes[0].route, 'loomy')
+    assert.equal(routes[0].displayName.includes('162****0818'), true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('import accepts a bare array of sessions and our own bundle equally', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-imp-shapes-'))
+  try {
+    const store = createAccountsStore({ storageDir: () => dir, now: () => 5000 })
+    const arr = [{ session: 'a'.repeat(32), phone: '13800000001' }, { session: 'b'.repeat(32) }]
+    const result = await store.importBundle(arr)
+    assert.equal(result.added, 2)
+    const list = await store.list({ force: true })
+    assert.deepEqual(list.map((a) => a.slot), [1, 2])
+    // Two identical sessions collapse onto one account, not two.
+    const dup = await store.importBundle([{ session: 'a'.repeat(32) }])
+    assert.equal(dup.refreshed, 1)
+    assert.equal((await store.list({ force: true })).length, 2)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

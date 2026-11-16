@@ -73,6 +73,7 @@ export type LoomyLocaleKey =
   | 'accounts.importNotice'
   | 'accounts.transferFailed'
   | 'accounts.exportEmpty'
+  | 'accounts.importBadJson'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -245,6 +246,7 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.importNotice': 'Imported: added {added}, refreshed {refreshed}, skipped {skipped}.',
   'accounts.transferFailed': 'Transfer failed.',
   'accounts.exportEmpty': 'No accounts to export yet.',
+  'accounts.importBadJson': 'That is not valid JSON — paste the whole exported file, including the outer braces.',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
@@ -419,6 +421,7 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.importNotice': '导入完成：新增 {added}、刷新 {refreshed}、跳过 {skipped}。',
   'accounts.transferFailed': '传输失败。',
   'accounts.exportEmpty': '还没有可导出的账号。',
+  'accounts.importBadJson': '内容不是合法 JSON——请把导出的完整文件粘进来（包括最外层的花括号）。',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',

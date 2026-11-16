@@ -250,7 +250,15 @@ export interface LoomyFailure {
 /** Transport result, preserving "missing route" vs "route said no". */
 export type RouteResult<T> =
   | { kind: 'ok'; value: T }
+  /** The host has no such route at all (404/503). */
   | { kind: 'unavailable' }
+  /**
+   * The host answered `405 Method Not Allowed` with an empty body: the route
+   * exists but not for this verb, which is what a **pre-upgrade host** looks
+   * like once the client bundle ships new POST endpoints. Rendered as
+   * "restart DSH", never as a bare HTTP code.
+   */
+  | { kind: 'stale'; message: string }
   | { kind: 'failed'; code: string; message: string }
   | { kind: 'error'; code: string; message: string; status?: number }
 
@@ -300,11 +308,28 @@ async function requestRoute<T>(
   // that is still starting can answer 503; both mean "this host has no such
   // route", which is a capability fact, not an error to render in red.
   if (response.status === 404 || response.status === 503) return { kind: 'unavailable' }
+  // 405 means "this path is known, but not with this method". Against our own
+  // routes that can only be a host whose route table predates this client
+  // build, so it must be actionable rather than a raw status code.
+  if (response.status === 405) {
+    return {
+      kind: 'stale',
+      message:
+        '该接口在当前运行的 DSH 进程里还不存在（宿主仍是旧版本）。请重启 DSH 后再试——客户端代码已更新，但宿主的路由表只在启动时读取。',
+    }
+  }
 
   let body: unknown
   try {
     body = await response.json()
   } catch {
+    if (response.status === 405) {
+      return {
+        kind: 'stale',
+        message:
+          '该接口在当前运行的 DSH 进程里还不存在（宿主仍是旧版本）。请重启 DSH 后再试——客户端代码已更新，但宿主的路由表只在启动时读取。',
+      }
+    }
     return {
       kind: 'error',
       code: 'bad_response',
@@ -453,10 +478,12 @@ export function exportAccounts(
 /** Merge a bundle produced on another machine. */
 export function importAccounts(
   csrfToken: string,
-  bundle: unknown,
+  document: unknown,
   options: RouteOptions = {},
 ): Promise<RouteResult<LoomyAccountImport>> {
-  return postJson<LoomyAccountImport>(ROUTES.accountImport, csrfToken, { bundle }, options)
+  // Sent unwrapped: the host accepts our bundle, a desktop auth-session.json,
+  // or an array of such documents, so a paste needs no envelope knowledge.
+  return postJson<LoomyAccountImport>(ROUTES.accountImport, csrfToken, document, options)
 }
 
 /** Refresh the catalog (persisted and effective immediately; draft is untouched). */

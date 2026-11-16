@@ -97,6 +97,9 @@ function DiagnosticsBody({
   if (diagnostics.kind === 'unavailable') {
     return <Notice tone="error">{t('diagnostics.unavailable')}</Notice>
   }
+  if (diagnostics.kind === 'stale') {
+    return <Notice tone="error">{diagnostics.message}</Notice>
+  }
   if (diagnostics.kind === 'failed' || diagnostics.kind === 'error') {
     return <Notice tone="error">{loadableMessage(diagnostics, t)}</Notice>
   }
