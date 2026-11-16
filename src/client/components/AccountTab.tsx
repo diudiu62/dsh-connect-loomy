@@ -39,6 +39,12 @@ export interface AccountTabProps {
   removingId: string | null
   onRemoveAccount: (id: string) => void
   onRefreshAccounts: () => void
+  onExportAccounts: () => void
+  onImportAccounts: (text: string) => void
+  exporting: boolean
+  importing: boolean
+  transferNotice: string | null
+  transferError: string | null
 }
 
 /** Render the account tab. */
@@ -57,6 +63,12 @@ export function AccountTab({
   removingId,
   onRemoveAccount,
   onRefreshAccounts,
+  onExportAccounts,
+  onImportAccounts,
+  exporting,
+  importing,
+  transferNotice,
+  transferError,
 }: AccountTabProps) {
   return (
     <div className="loomy-panel">
@@ -113,6 +125,12 @@ export function AccountTab({
           onRemove={onRemoveAccount}
           onRefresh={onRefreshAccounts}
           removingId={removingId}
+          onExport={onExportAccounts}
+          onImport={onImportAccounts}
+          exporting={exporting}
+          importing={importing}
+          transferNotice={transferNotice}
+          transferError={transferError}
         />
       </Section>
 

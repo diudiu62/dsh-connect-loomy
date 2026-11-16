@@ -133,6 +133,7 @@ export {
   accountsView,
   createAccountsStore,
   parseAccounts,
+  parseBundle,
   routeDisplayName,
   routeForSlot,
   slotForRoute,

@@ -13,6 +13,7 @@
  * @module dsh-connect-loomy/client/components/AccountsList
  */
 
+import { useState } from 'react'
 import type { LoomyAccountRow, LoomyAccounts } from '../api.js'
 import { formatDateTime } from '../format.js'
 import { Badge, CardButton, Notice } from './common.js'
@@ -29,10 +30,31 @@ export interface AccountsListProps {
   onRefresh: () => void
   /** Id of the row currently being removed, to disable just that button. */
   removingId: string | null
+  onExport: () => void
+  onImport: (text: string) => void
+  exporting: boolean
+  importing: boolean
+  /** Result text of the last export/import, shown verbatim. */
+  transferNotice: string | null
+  transferError: string | null
 }
 
 /** Render the account rows. */
-export function AccountsList({ t, accounts, csrfToken, onRemove, onRefresh, removingId }: AccountsListProps) {
+export function AccountsList({
+  t,
+  accounts,
+  csrfToken,
+  onRemove,
+  onRefresh,
+  removingId,
+  onExport,
+  onImport,
+  exporting,
+  importing,
+  transferNotice,
+  transferError,
+}: AccountsListProps) {
+  const [importText, setImportText] = useState('')
   return (
     <div className="loomy-accounts">
       {accounts.kind === 'idle' || accounts.kind === 'loading' ? (
@@ -62,7 +84,30 @@ export function AccountsList({ t, accounts, csrfToken, onRemove, onRefresh, remo
       )}
       <div className="loomy-actions">
         <CardButton onClick={onRefresh}>{t('common.refresh')}</CardButton>
+        <CardButton onClick={onExport} disabled={exporting || importing || csrfToken === null}>
+          {exporting ? t('accounts.exporting') : t('accounts.export')}
+        </CardButton>
       </div>
+      <Notice tone="info">{t('accounts.exportHint')}</Notice>
+      <div className="loomy-login">
+        <textarea
+          className="loomy-input loomy-textarea"
+          placeholder={t('accounts.importPlaceholder')}
+          value={importText}
+          rows={4}
+          onChange={(event) => setImportText(event.target.value)}
+        />
+        <div className="loomy-actions">
+          <CardButton
+            onClick={() => onImport(importText)}
+            disabled={importing || exporting || csrfToken === null || importText.trim().length === 0}
+          >
+            {importing ? t('accounts.importing') : t('accounts.import')}
+          </CardButton>
+        </div>
+      </div>
+      {transferNotice === null ? null : <Notice tone="ok">{transferNotice}</Notice>}
+      {transferError === null ? null : <Notice tone="error">{transferError}</Notice>}
     </div>
   )
 }

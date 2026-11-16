@@ -33,6 +33,8 @@ import type {
   AuthLoginView,
   AuthLogoutView,
   AuthSendCodeView,
+  AccountExportView,
+  AccountImportView,
   AccountsView,
   AuthStateView,
   CredentialCandidateView,
@@ -47,6 +49,13 @@ import type {
 import { ROUTES } from './shared/types.js'
 import { checkLoopback } from './shared/loopback.js'
 import { isRecord, safeErrorMessage } from './shared/text.js'
+
+/**
+ * The upstream mints a session with `expire: 14*24*3600`, i.e. the credential
+ * a user exports stops working ~14 days after it was issued, not after it was
+ * copied. Surfaced so the card can say so instead of implying "forever".
+ */
+export const SESSION_TTL_DAYS = 14
 
 /** Largest request body the two POSTs accept. */
 const MAX_BODY_BYTES = 64 * 1024
@@ -511,6 +520,69 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
         }
         await deps.refreshRoutes()
         corsSafeJson(res, 200, { ok: true })
+      },
+    },
+    {
+      path: ROUTES.accountExport,
+      method: 'POST',
+      mutating: true,
+      run: async (_req, res) => {
+        // POST + CSRF on purpose: a GET would let a same-machine page trigger
+        // a secret export through an <img>/navigation without our token.
+        try {
+          const exported = await deps.accounts.exportBundle()
+          if (exported.bundle.accounts.length === 0) {
+            const payload: AccountExportView = {
+              ok: false,
+              error: { code: 'no_accounts', message: '没有可导出的账号，请先登录。' },
+            }
+            corsSafeJson(res, 200, payload)
+            return
+          }
+          const payload: AccountExportView = {
+            ok: true,
+            bundle: exported.bundle,
+            sessionTtlDays: SESSION_TTL_DAYS,
+          }
+          corsSafeJson(res, 200, payload)
+        } catch (error) {
+          const payload: AccountExportView = {
+            ok: false,
+            error: { code: 'export_failed', message: safeErrorMessage(error) },
+          }
+          corsSafeJson(res, 200, payload)
+        }
+      },
+    },
+    {
+      path: ROUTES.accountImport,
+      method: 'POST',
+      mutating: true,
+      run: async (req, res) => {
+        const body = await readJsonObject(req)
+        if (body === undefined) {
+          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
+          return
+        }
+        try {
+          const result = await deps.accounts.importBundle(body['bundle'])
+          await deps.refreshRoutes()
+          deps.auth.invalidate()
+          const payload: AccountImportView = {
+            ok: true,
+            added: result.added,
+            refreshed: result.refreshed,
+            skipped: result.skipped,
+            reassigned: result.reassigned,
+          }
+          corsSafeJson(res, 200, payload)
+        } catch (error) {
+          const payload: AccountImportView = {
+            ok: false,
+            error: { code: 'import_failed', message: safeErrorMessage(error) },
+          }
+          corsSafeJson(res, 200, payload)
+        }
       },
     },
     {

@@ -69,6 +69,16 @@ export const CARD_CSS = `
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 22%, transparent);
 }
 .loomy-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.loomy-textarea {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
 
 /* Composer credit readout (conversation.input.right), sitting just before the
    model picker. Deliberately tiny and shrinkable: the model name must keep its

@@ -14,6 +14,7 @@ English | [中文](README.md)
 
 - **Provider route `loomy`** — the model catalog comes from the upstream `GET /api/v1/models`; only `protocol === 'openai_chat' && type === 'chat'` entries register (image models and `auto` are excluded — `auto` silently falls back to a paid model upstream). Names carry the upstream multiplier; context and output limits come from the catalog.
 - **Multi-account** — every signed-in account becomes its own provider route (`loomy`, `loomy-2`, `loomy-3`, …): pick that route in the model picker to spend that account, so two conversations can use two accounts in parallel. Slot numbers are assigned once and never renumbered, so removing an account cannot silently rebind another one's selections to a different person's quota
+- **Account export / import** — the account tab exports every account as one JSON bundle; paste it on another machine and sign in there without an SMS code. The bundle holds the session tokens themselves (equivalent to a password); the upstream issues them with a **14-day** lifetime, so a copied bundle lasts until the original session expires, and signing out on either side revokes it
 - **In-plugin sign-in** (account tab) — log in with an SMS code straight from the settings card; the signing keys are decrypted at runtime from the local Loomy.app bundle (never stored, never logged), account sessions live in `accounts.json` (0600), and the desktop client's sign-in is used automatically while no plugin account exists
 - **Settings section** (account / models / diagnostics) — masked phone and sign-in time, per-model enable with draft-then-save semantics, and a read-only diagnostics table that quotes the upstream error verbatim for bug reports.
 - **Draft-then-save model selection** — refreshing the catalog lands names and multipliers immediately but never overwrites unsaved picks; saving hot-swaps the route's model set (emits `llm/models-updated`), no restart needed.
@@ -58,7 +59,7 @@ ls -ld ~/.dsh/profiles/web/node_modules/dsh-connect-loomy   # leading l = symlin
 The host reads the client bundle (`lib/client.js`) **at boot**. After changing client code: `pnpm build` → restart DSH → refresh the browser. The client prints one mount line so you can tell which build is running:
 
 ```
-[dsh-connect-loomy] client half loaded (settings-section+pill-near-model-v3+login-v4+multi-account-v5): settings.section + composer readout
+[dsh-connect-loomy] client half loaded (settings-section+pill-near-model-v3+login-v4+multi-account-v5+transfer-v6): settings.section + composer readout
 ```
 
 ## CLI

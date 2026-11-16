@@ -21,8 +21,10 @@ import {
   fetchDiagnostics,
   describeError,
   fetchStatus,
+  exportAccounts,
   fetchAccounts,
   fetchAuthState,
+  importAccounts,
   isAbortError,
   removeAccount,
   readEnabledModelIds,
@@ -123,6 +125,10 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [authState, setAuthState] = useState<LoomyAuthState | null>(null)
   const [accounts, setAccounts] = useState<Loadable<LoomyAccounts>>({ kind: 'idle' })
   const [removingId, setRemovingId] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [transferNotice, setTransferNotice] = useState<string | null>(null)
+  const [transferError, setTransferError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const csrfRef = useRef<string | null>(null)
@@ -189,6 +195,75 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
       setSaveError(errorMessage(t, error))
     } finally {
       setRemovingId(null)
+    }
+  }, [loadAccounts, loadStatus, t])
+
+  const exportAccountsNow = useCallback(async (): Promise<void> => {
+    const token = csrfRef.current
+    if (token === null) return
+    setExporting(true)
+    setTransferNotice(null)
+    setTransferError(null)
+    try {
+      const result = await exportAccounts(token, { signal: abortRef.current?.signal })
+      if (result.kind !== 'ok') {
+        setTransferError(result.kind === 'unavailable' ? t('accounts.unavailable') : result.message)
+        return
+      }
+      if (!result.value.ok || result.value.bundle === undefined) {
+        setTransferError(result.value.error?.message ?? t('accounts.exportEmpty'))
+        return
+      }
+      // The bundle is the credential; it goes to the clipboard only because the
+      // user pressed a button that says exactly that.
+      const text = JSON.stringify(result.value.bundle, undefined, 2)
+      const copied = await copyToClipboard(text)
+      setTransferNotice(copied ? t('accounts.exportNotice') : text)
+    } catch (error) {
+      if (isAbortError(error)) return
+      setTransferError(errorMessage(t, error))
+    } finally {
+      setExporting(false)
+    }
+  }, [t])
+
+  const importAccountsNow = useCallback(async (text: string): Promise<void> => {
+    const token = csrfRef.current
+    if (token === null) return
+    setImporting(true)
+    setTransferNotice(null)
+    setTransferError(null)
+    try {
+      let bundle: unknown
+      try {
+        bundle = JSON.parse(text)
+      } catch {
+        setTransferError(t('accounts.transferFailed'))
+        return
+      }
+      const result = await importAccounts(token, bundle, { signal: abortRef.current?.signal })
+      if (result.kind !== 'ok') {
+        setTransferError(result.kind === 'unavailable' ? t('accounts.unavailable') : result.message)
+        return
+      }
+      if (!result.value.ok) {
+        setTransferError(result.value.error?.message ?? t('accounts.transferFailed'))
+        return
+      }
+      setTransferNotice(
+        t('accounts.importNotice', {
+          added: String(result.value.added ?? 0),
+          refreshed: String(result.value.refreshed ?? 0),
+          skipped: String(result.value.skipped ?? 0),
+        }),
+      )
+      await loadAccounts()
+      await loadStatus()
+    } catch (error) {
+      if (isAbortError(error)) return
+      setTransferError(errorMessage(t, error))
+    } finally {
+      setImporting(false)
     }
   }, [loadAccounts, loadStatus, t])
 
@@ -443,6 +518,12 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             removingId={removingId}
             onRemoveAccount={(id) => void removeAccountRow(id)}
             onRefreshAccounts={() => void loadAccounts()}
+            onExportAccounts={() => void exportAccountsNow()}
+            onImportAccounts={(text) => void importAccountsNow(text)}
+            exporting={exporting}
+            importing={importing}
+            transferNotice={transferNotice}
+            transferError={transferError}
           />
         ) : null}
 

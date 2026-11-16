@@ -172,6 +172,39 @@ export interface AccountsStore {
   rename(id: string, label: string): Promise<{ kind: 'ok' } | { kind: 'failure'; code: string; message: string }>
   /** Drop the in-memory cache so the next read hits disk. */
   invalidate(): void
+  /** Produce a portable bundle carrying the sessions (secrets!). */
+  exportBundle(): Promise<{ bundle: AccountsBundle; paths: string[] }>
+  /** Merge a bundle produced elsewhere; never renumbers existing slots. */
+  importBundle(bundle: unknown): Promise<ImportResult>
+}
+
+/**
+ * The portable form. This file is the credential: whoever holds it can spend
+ * the accounts' points until the sessions expire (the upstream mints them with
+ * a 14-day `expire`) or are revoked by `logout`.
+ */
+export interface AccountsBundle {
+  kind: 'dsh-connect-loomy/accounts'
+  version: 1
+  exportedAt: number
+  accounts: Array<{
+    slot: number
+    session: string
+    phone?: string
+    userId?: string
+    label?: string
+    addedAt?: number
+  }>
+}
+
+/** One import's outcome. */
+export interface ImportResult {
+  kind: 'ok'
+  added: number
+  refreshed: number
+  skipped: number
+  /** Slots the bundle asked for that were already taken by another account. */
+  reassigned: number
 }
 
 /** Route display name for one account. */
@@ -355,12 +388,97 @@ export function createAccountsStore(options: {
       }
     },
 
+    async exportBundle() {
+      const accounts = await load(true)
+      return {
+        bundle: {
+          kind: 'dsh-connect-loomy/accounts',
+          version: 1,
+          exportedAt: now(),
+          accounts: accounts.map((account) => ({
+            slot: account.slot,
+            session: account.session,
+            ...(account.phone === undefined ? {} : { phone: account.phone }),
+            ...(account.userId === undefined ? {} : { userId: account.userId }),
+            ...(account.label === undefined ? {} : { label: account.label }),
+            addedAt: account.addedAt,
+          })),
+        },
+        paths: [accountsFilePath(options.storageDir())],
+      }
+    },
+
+    async importBundle(bundle) {
+      const parsed = parseBundle(bundle)
+      if (parsed === undefined) {
+        throw new Error('导入内容不是本插件导出的账号包（缺少 kind/version/accounts）')
+      }
+      let added = 0
+      let refreshed = 0
+      let skipped = 0
+      let reassigned = 0
+      for (const entry of parsed) {
+        const result = await store.add({
+          session: entry.session,
+          ...(entry.phone === undefined ? {} : { phone: entry.phone }),
+          ...(entry.userId === undefined ? {} : { userId: entry.userId }),
+          ...(entry.label === undefined ? {} : { label: entry.label }),
+        })
+        if (result.kind === 'failure') {
+          skipped += 1
+          continue
+        }
+        if (result.replaced) refreshed += 1
+        else added += 1
+        // `add` allocates the smallest free slot, so a clash with an existing
+        // account is resolved by relocation rather than by overwriting it.
+        if (!result.replaced && result.account.slot !== entry.slot) reassigned += 1
+      }
+      cached = undefined
+      return { kind: 'ok', added, refreshed, skipped, reassigned }
+    },
+
     invalidate() {
       cached = undefined
     },
   }
 
   return store
+}
+
+/**
+ * Validate an imported bundle.
+ *
+ * Only the shape this plugin writes is accepted: a foreign JSON file must not
+ * be able to smuggle an arbitrary `session` into the credential store without
+ * the user seeing what they imported.
+ */
+export function parseBundle(
+  value: unknown,
+): Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string }> | undefined {
+  if (!isRecord(value)) return undefined
+  if (value['kind'] !== 'dsh-connect-loomy/accounts') return undefined
+  if (value['version'] !== 1) return undefined
+  const raw = value['accounts']
+  if (!Array.isArray(raw)) return undefined
+  const entries: Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string }> = []
+  for (const item of raw) {
+    if (!isRecord(item)) continue
+    const session = item['session']
+    if (typeof session !== 'string' || session.length < 16 || /\s/u.test(session)) continue
+    const slot = typeof item['slot'] === 'number' && Number.isInteger(item['slot']) && item['slot'] >= 1 ? item['slot'] : 1
+    const phone = typeof item['phone'] === 'string' ? item['phone'] : undefined
+    const userId = typeof item['userId'] === 'string' ? item['userId'] : undefined
+    const label = typeof item['label'] === 'string' ? item['label'] : undefined
+    entries.push({
+      slot,
+      session,
+      ...(phone === undefined ? {} : { phone }),
+      ...(userId === undefined ? {} : { userId }),
+      ...(label === undefined ? {} : { label }),
+    })
+  }
+  return entries
 }
 
 /** Public, session-free view of one account for the settings card. */

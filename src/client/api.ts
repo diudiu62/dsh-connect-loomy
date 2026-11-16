@@ -49,7 +49,35 @@ export const ROUTES = {
   accounts: `${ROUTE_PREFIX}/accounts`,
   accountRemove: `${ROUTE_PREFIX}/accounts/remove`,
   accountRename: `${ROUTE_PREFIX}/accounts/rename`,
+  accountExport: `${ROUTE_PREFIX}/accounts/export`,
+  accountImport: `${ROUTE_PREFIX}/accounts/import`,
 } as const
+
+/** A portable account bundle. **Contains sessions — treat as a password.** */
+export interface LoomyAccountsBundle {
+  kind: 'dsh-connect-loomy/accounts'
+  version: 1
+  exportedAt: number
+  accounts: Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string; addedAt?: number }>
+}
+
+/** `POST /accounts/export` */
+export interface LoomyAccountExport {
+  ok: boolean
+  bundle?: LoomyAccountsBundle
+  sessionTtlDays?: number
+  error?: { code: string; message: string }
+}
+
+/** `POST /accounts/import` */
+export interface LoomyAccountImport {
+  ok: boolean
+  added?: number
+  refreshed?: number
+  skipped?: number
+  reassigned?: number
+  error?: { code: string; message: string }
+}
 
 /** One account row (never carries a session). */
 export interface LoomyAccountRow {
@@ -412,6 +440,23 @@ export function renameAccount(
   options: RouteOptions = {},
 ): Promise<RouteResult<{ ok: boolean }>> {
   return postJson<{ ok: boolean }>(ROUTES.accountRename, csrfToken, { id, label }, options)
+}
+
+/** Export every account as a portable bundle (secrets included). */
+export function exportAccounts(
+  csrfToken: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyAccountExport>> {
+  return postJson<LoomyAccountExport>(ROUTES.accountExport, csrfToken, {}, options)
+}
+
+/** Merge a bundle produced on another machine. */
+export function importAccounts(
+  csrfToken: string,
+  bundle: unknown,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyAccountImport>> {
+  return postJson<LoomyAccountImport>(ROUTES.accountImport, csrfToken, { bundle }, options)
 }
 
 /** Refresh the catalog (persisted and effective immediately; draft is untouched). */

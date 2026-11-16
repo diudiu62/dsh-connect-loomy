@@ -26,7 +26,33 @@ export const ROUTES = {
   accounts: `${ROUTE_PREFIX}/accounts`,
   accountRemove: `${ROUTE_PREFIX}/accounts/remove`,
   accountRename: `${ROUTE_PREFIX}/accounts/rename`,
+  accountExport: `${ROUTE_PREFIX}/accounts/export`,
+  accountImport: `${ROUTE_PREFIX}/accounts/import`,
 } as const
+
+/** `POST /accounts/export` — a portable bundle. **Contains sessions.** */
+export interface AccountExportView {
+  ok: boolean
+  bundle?: {
+    kind: 'dsh-connect-loomy/accounts'
+    version: 1
+    exportedAt: number
+    accounts: Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string; addedAt?: number }>
+  }
+  /** Upstream session lifetime, for the card's warning. */
+  sessionTtlDays?: number
+  error?: { code: string; message: string }
+}
+
+/** `POST /accounts/import` */
+export interface AccountImportView {
+  ok: boolean
+  added?: number
+  refreshed?: number
+  skipped?: number
+  reassigned?: number
+  error?: { code: string; message: string }
+}
 
 /** One account row in the settings card (never carries a session). */
 export interface AccountRowView {

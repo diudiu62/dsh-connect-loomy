@@ -63,6 +63,16 @@ export type LoomyLocaleKey =
   | 'accounts.desktopNote'
   | 'accounts.unknownPhone'
   | 'accounts.removeFailed'
+  | 'accounts.export'
+  | 'accounts.exporting'
+  | 'accounts.exportHint'
+  | 'accounts.import'
+  | 'accounts.importing'
+  | 'accounts.importPlaceholder'
+  | 'accounts.exportNotice'
+  | 'accounts.importNotice'
+  | 'accounts.transferFailed'
+  | 'accounts.exportEmpty'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -225,6 +235,16 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.desktopNote': 'Owned by the Loomy desktop client — sign out there to remove it.',
   'accounts.unknownPhone': 'Unknown account',
   'accounts.removeFailed': 'Could not remove the account.',
+  'accounts.export': 'Export accounts',
+  'accounts.exporting': 'Exporting…',
+  'accounts.exportHint': 'The exported file contains the session tokens — it is the credential, not a cache. Anyone holding it can spend these accounts until the session expires (issued with a 14-day lifetime) or until you sign out. Keep it off shared machines.',
+  'accounts.import': 'Import accounts',
+  'accounts.importing': 'Importing…',
+  'accounts.importPlaceholder': 'Paste an exported accounts bundle here',
+  'accounts.exportNotice': 'Exported. Paste the bundle on the other machine to sign in there without a code.',
+  'accounts.importNotice': 'Imported: added {added}, refreshed {refreshed}, skipped {skipped}.',
+  'accounts.transferFailed': 'Transfer failed.',
+  'accounts.exportEmpty': 'No accounts to export yet.',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
@@ -389,6 +409,16 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.desktopNote': '该账号属于 Loomy 桌面端——请在桌面端退出登录来移除。',
   'accounts.unknownPhone': '未知账号',
   'accounts.removeFailed': '移除账号失败。',
+  'accounts.export': '导出账号',
+  'accounts.exporting': '导出中…',
+  'accounts.exportHint': '导出的文件里就是登录凭证（session），不是缓存——拿到它的人在你退出登录前（会话按 14 天签发）可以一直花这些账号的积分。请勿放在共享机器上。',
+  'accounts.import': '导入账号',
+  'accounts.importing': '导入中…',
+  'accounts.importPlaceholder': '把导出的账号包粘贴到这里',
+  'accounts.exportNotice': '已导出。把内容粘贴到另一台机器即可免验证码登录。',
+  'accounts.importNotice': '导入完成：新增 {added}、刷新 {refreshed}、跳过 {skipped}。',
+  'accounts.transferFailed': '传输失败。',
+  'accounts.exportEmpty': '还没有可导出的账号。',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',

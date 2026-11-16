@@ -206,3 +206,64 @@ test('the provider installs one profile per route and re-collects on change', as
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('export produces a portable bundle; import merges it without clobbering slots', async () => {
+  const source = mkdtempSync(join(tmpdir(), 'loomy-exp-'))
+  const target = mkdtempSync(join(tmpdir(), 'loomy-imp-'))
+  try {
+    const from = createAccountsStore({ storageDir: () => source, now: () => 1000 })
+    await from.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
+    await from.add({ session: SESSION_B, phone: '13800000002', userId: 'u2' })
+    const exported = await from.exportBundle()
+
+    assert.equal(exported.bundle.kind, 'dsh-connect-loomy/accounts')
+    assert.equal(exported.bundle.version, 1)
+    assert.equal(exported.bundle.accounts.length, 2)
+    assert.equal(exported.bundle.accounts[0].session, SESSION_A, 'the session is what makes it portable')
+
+    // A fresh machine imports it and gets usable accounts, no SMS involved.
+    const into = createAccountsStore({ storageDir: () => target, now: () => 2000 })
+    const result = await into.importBundle(JSON.parse(JSON.stringify(exported.bundle)))
+    assert.equal(result.kind, 'ok')
+    assert.equal(result.added, 2)
+    assert.equal(result.reassigned, 0)
+    const routes = await into.routes({ force: true })
+    assert.deepEqual(routes.map((r) => r.route), ['loomy', 'loomy-2'])
+
+    // Importing again is idempotent: same sessions refresh, nothing duplicates.
+    const again = await into.importBundle(exported.bundle)
+    assert.equal(again.added, 0)
+    assert.equal(again.refreshed, 2)
+    assert.equal((await into.list({ force: true })).length, 2)
+  } finally {
+    rmSync(source, { recursive: true, force: true })
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('import refuses foreign JSON and never overwrites an existing account', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-imp-guard-'))
+  try {
+    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
+    await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
+
+    await assert.rejects(() => store.importBundle({ arbitrary: 'json' }), /账号包/u)
+    await assert.rejects(() => store.importBundle({ kind: 'other', version: 1, accounts: [] }), /账号包/u)
+
+    // A bundle whose slots clash with existing accounts relocates, never replaces.
+    const clash = {
+      kind: 'dsh-connect-loomy/accounts',
+      version: 1,
+      exportedAt: 1,
+      accounts: [{ slot: 1, session: SESSION_B, phone: '13800000002', userId: 'u2' }],
+    }
+    const result = await store.importBundle(clash)
+    assert.equal(result.added, 1)
+    assert.equal(result.reassigned, 1, 'slot 1 was taken, so the import took a free slot')
+    const list = await store.list({ force: true })
+    assert.equal(list.length, 2)
+    assert.equal(list.find((a) => a.userId === 'u1').session, SESSION_A, 'the existing account is untouched')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
