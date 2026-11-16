@@ -6,6 +6,14 @@
 - 平台接口（模型目录 / 积分 / 身份）走 `token:` 头，对话走 `Authorization: Bearer`——两套头互不通用；上游失败一律 HTTP 200 + envelope `code`，插件不按 HTTP 状态码判错。
 - session 只存在于宿主进程内存；浏览器永远拿不到，设置、日志、缓存文件里也不落明文。
 
+## 截图
+
+| 账号 | 输入框账号抽屉 | 积分概览 |
+|---|---|---|
+| ![账号](docs/assets/dsh-connect-loomy-accounts.png) | ![账号抽屉](docs/assets/dsh-connect-loomy-drawer.png) | ![积分概览](docs/assets/dsh-connect-loomy-credits.png) |
+
+截图由 `pnpm screenshots` 从真实组件渲染生成，数据为虚构样例。
+
 ## 功能
 
 - **provider 路由 `loomy`**：模型目录来自上游 `GET /api/v1/models`，只注册 `protocol === 'openai_chat' && type === 'chat'` 的模型（图片模型虽带 `capabilities`，但 `type` 为 `image`、`output_modalities` 为 `["image"]`，因此按 `type` 与输出模态过滤；`auto` 会被上游静默回落到默认模型，绝不注册）。模型展示名带上游倍率，上下文与最大输出取自上游目录。

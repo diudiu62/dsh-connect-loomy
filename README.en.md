@@ -10,6 +10,14 @@ English | [中文](README.md)
 
 > The plugin reads one JSON file written by the Loomy desktop app at sign-in and never launches the app itself: sign in once, keep Loomy closed afterwards. It provides no accounts, shares no credentials, and bypasses no billing — every call spends your own Loomy credits at the rate the upstream publishes.
 
+## Screenshots
+
+| Accounts | Composer account drawer | Credits |
+|---|---|---|
+| ![Accounts](docs/assets/dsh-connect-loomy-accounts.png) | ![Drawer](docs/assets/dsh-connect-loomy-drawer.png) | ![Credits](docs/assets/dsh-connect-loomy-credits.png) |
+
+The images are rendered from the real components by `pnpm screenshots`; the data in them is invented.
+
 ## What it does
 
 - **Provider route `loomy`** — the model catalog comes from the upstream `GET /api/v1/models`; only `protocol === 'openai_chat' && type === 'chat'` entries register (image models and `auto` are excluded — `auto` silently falls back to a paid model upstream). Names carry the upstream multiplier; context and output limits come from the catalog.
