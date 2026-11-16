@@ -9,6 +9,7 @@
 ## 功能
 
 - **provider 路由 `loomy`**：模型目录来自上游 `GET /api/v1/models`，只注册 `protocol === 'openai_chat' && type === 'chat'` 的模型（图片模型虽带 `capabilities`，但 `type` 为 `image`、`output_modalities` 为 `["image"]`，因此按 `type` 与输出模态过滤；`auto` 会被上游静默回落到默认模型，绝不注册）。模型展示名带上游倍率，上下文与最大输出取自上游目录。
+- **图片输入（视觉）**：上游目录里 `capabilities.vision === true` 的模型按 `input: ['text','image']` 注册，图片以 `image_url` + `data:<mime>;base64,…` 内联发送（上游只接受这种形式，见 `docs/loomy-upstream.md` §6）。图片字节经宿主附件服务 `ctx.attachments`（`@deepseek-ai/dsh-attachment-local`，DSH 默认 profile 已挂载）落盘并归一化后读取；同时在文本里给出附件句柄（文件名、请求预览尺寸），若宿主 `fs` 服务可用还会附上只读可读路径。profile 没有该服务时，请求在发出前即报错并指明如何补装，不会静默丢图。
 - **设置 → Loomy 卡片**：账号栏（脱敏手机号、登录时间、凭据路径结论、重新检测）、模型栏（刷新目录 → 逐模型勾选 → 保存/放弃；倍率、上下文、最大输出、图片、推理档位）、诊断栏（只读事实表 + 上游错误原文，可整段复制进问题反馈）。
 - **勾选是草稿，保存才生效**：目录与倍率随刷新即刻落盘生效，但不覆盖未保存的勾选；保存后热更新路由模型集合（发 `llm/models-updated`），无需重启。
 - **只读积分**：余额三桶（`balance` / `dailyBalance` / `availableBalance`）+ 流水，宿主侧 60s TTL + 单飞，失败如实报错、绝不伪造 0。
@@ -61,7 +62,7 @@ ls -ld ~/.dsh/profiles/web/node_modules/dsh-connect-loomy   # 以 l 开头 = 软
 客户端挂载时会打一行标记，用来确认当前跑的是哪个版本：
 
 ```
-[dsh-connect-loomy] client half loaded (settings-section+pill-v1): settings.section + composer readout
+[dsh-connect-loomy] client half loaded (settings-section+pill-near-model-v3+login-v4): settings.section + composer readout
 ```
 
 ## 命令行

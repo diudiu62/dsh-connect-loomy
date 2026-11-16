@@ -24,10 +24,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { AuthStore } from './auth.js'
+import type { LoginService } from './login.js'
 import { accountViewOf, credentialViewOf, nextStepsFor } from './auth.js'
 import { catalogUrls, type CatalogStore } from './catalog.js'
 import { fetchIdentity, type CreditsCache } from './credits.js'
 import type {
+  AuthLoginView,
+  AuthLogoutView,
+  AuthSendCodeView,
+  AuthStateView,
   CredentialCandidateView,
   DiagnosticsProbe,
   DiagnosticsView,
@@ -49,6 +54,7 @@ export interface RouteDeps {
   auth: AuthStore
   catalog: CatalogStore
   credits: CreditsCache
+  login: LoginService
   /** Process-level token minted once per plugin instance. */
   csrfToken: string
   baseURL: () => string
@@ -349,6 +355,97 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
           return
         }
         const payload: SaveView = { ok: true, enabled: result.enabled }
+        corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      path: ROUTES.authState,
+      method: 'GET',
+      mutating: false,
+      run: async (_req, res) => {
+        const snapshot = await deps.auth.read()
+        const payload: AuthStateView = {
+          ok: true,
+          pluginLoggedIn: snapshot.sourceOrigin === 'plugin',
+          effectiveSource:
+            snapshot.found === false
+              ? 'none'
+              : snapshot.sourceOrigin === 'plugin'
+                ? 'plugin'
+                : snapshot.sourceOrigin === 'env'
+                  ? 'env'
+                  : 'desktop',
+          ...(snapshot.found ? { ...(snapshot.maskedPhone === undefined ? {} : { maskedPhone: snapshot.maskedPhone }) } : {}),
+          ...(snapshot.found && snapshot.maskedUserId !== undefined ? { maskedUserId: snapshot.maskedUserId } : {}),
+          ...(snapshot.found && snapshot.loginAt !== undefined ? { loginAt: snapshot.loginAt } : {}),
+        }
+        corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      path: ROUTES.authSendCode,
+      method: 'POST',
+      mutating: true,
+      run: async (req, res) => {
+        const body = await readJsonObject(req)
+        if (body === undefined) {
+          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
+          return
+        }
+        const phone = body['phone']
+        if (typeof phone !== 'string') {
+          failure(res, 400, 'bad_request', 'phone 必须是字符串')
+          return
+        }
+        const result = await deps.login.sendCode(phone)
+        const payload: AuthSendCodeView = result.ok
+          ? { ok: true, maskedPhone: result.maskedPhone, resendAfterMs: result.resendAfterMs, expiresMs: result.expiresMs }
+          : { ok: false }
+        if (!result.ok) {
+          corsSafeJson(res, 200, { ...payload, error: { code: result.code, message: result.message } })
+          return
+        }
+        corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      path: ROUTES.authLogin,
+      method: 'POST',
+      mutating: true,
+      run: async (req, res) => {
+        const body = await readJsonObject(req)
+        if (body === undefined) {
+          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
+          return
+        }
+        const phone = body['phone']
+        const code = body['code']
+        if (typeof phone !== 'string' || typeof code !== 'string') {
+          failure(res, 400, 'bad_request', 'phone 与 code 必须是字符串')
+          return
+        }
+        const result = await deps.login.login(phone, code)
+        if (!result.ok) {
+          corsSafeJson(res, 200, { ok: false, error: { code: result.code, message: result.message } })
+          return
+        }
+        const payload: AuthLoginView = {
+          ok: true,
+          ...(result.maskedPhone === undefined ? {} : { maskedPhone: result.maskedPhone }),
+          ...(result.maskedUserId === undefined ? {} : { maskedUserId: result.maskedUserId }),
+        }
+        corsSafeJson(res, 200, payload)
+      },
+    },
+    {
+      path: ROUTES.authLogout,
+      method: 'POST',
+      mutating: true,
+      run: async (_req, res) => {
+        const result = await deps.login.logout()
+        const payload: AuthLogoutView = result.ok
+          ? { ok: true, message: result.message }
+          : { ok: false, message: result.message }
         corsSafeJson(res, 200, payload)
       },
     },

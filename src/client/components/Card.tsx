@@ -21,10 +21,12 @@ import {
   fetchDiagnostics,
   describeError,
   fetchStatus,
+  fetchAuthState,
   isAbortError,
   readEnabledModelIds,
   refreshCatalog,
   saveEnabledModels,
+  type LoomyAuthState,
   type LoomyCatalog,
   type LoomyCredits,
   type LoomyDiagnostics,
@@ -115,6 +117,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [notice, setNotice] = useState<string | null>(null)
   const [redetecting, setRedetecting] = useState(false)
   const [copyState, setCopyState] = useState<CopyState>('idle')
+  const [authState, setAuthState] = useState<LoomyAuthState | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const csrfRef = useRef<string | null>(null)
@@ -138,6 +141,17 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
       setStatus({ kind: 'error', code: 'network', message: errorMessage(t, error) })
     }
   }, [t])
+
+  const loadAuthState = useCallback(async (): Promise<void> => {
+    try {
+      const result = await fetchAuthState({ signal: abortRef.current?.signal })
+      if (result.kind === 'ok') setAuthState(result.value)
+    } catch (error) {
+      if (isAbortError(error)) return
+      // The login block is auxiliary; a failure here keeps the card usable and
+      // the form simply renders its signed-out branch.
+    }
+  }, [])
 
   const loadCredits = useCallback(async (): Promise<void> => {
     setCredits({ kind: 'loading' })
@@ -378,6 +392,13 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             redetecting={redetecting}
             onRedetect={() => void redetect()}
             onRetryCredits={() => void loadCredits()}
+            csrfToken={csrfRef.current}
+            authState={authState}
+            onAuthChanged={() => {
+              void loadStatus()
+              void loadCredits()
+              void loadAuthState()
+            }}
           />
         ) : null}
 

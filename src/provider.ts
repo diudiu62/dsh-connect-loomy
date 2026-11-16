@@ -22,17 +22,29 @@
  *   attachments as `data:<mime>;base64,...` for both user messages and tool
  *   results (`@earendil-works/pi-ai/dist/api/openai-completions.js:937` and
  *   `:1086`), which is the only image form the gateway accepts.
+ * - **Vision requires the durable attachment service.** `PiAiAdapter` only
+ *   accepts image blocks when it can read them back from `ctx.attachments`:
+ *   without `resolveAttachments` every image request fails before I/O with
+ *   `pi-ai image input requires the durable attachment service`
+ *   (`dsh-llm-pi-ai/lib/index.js:2003`). The profile that ships this plugin
+ *   always mounts `dsh-attachment-local`, so the seam is resolved lazily per
+ *   request and a missing service is reported as an actionable error rather
+ *   than the generic capability failure.
  *
  * @module dsh-connect-loomy/provider
  */
 
 import {
   LlmError,
+  resolveImageAttachmentAccess,
   resolveRetryPolicy,
   type GenerateOptions,
+  type ImageAttachmentAccess,
   type PreparedAdapterCall,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type {} from '@deepseek-ai/dsh-fs'
 import {
   PiAiAdapter,
   type PiAiAdapterOptions,
@@ -207,8 +219,36 @@ export interface ProviderDeps {
     session: string,
     options?: { force?: boolean },
   ) => Promise<{ ok: boolean; definite: boolean; message?: string }>
+  /**
+   * Lazily resolve the host's durable attachment service (`ctx.attachments`).
+   *
+   * Called at most once per inference request that actually carries an image,
+   * so the service may be mounted after this plugin without a restart. When the
+   * host has no attachment provider, image content is rejected with an
+   * actionable `UNSUPPORTED_CONTENT` error instead of the adapter's generic
+   * "requires the durable attachment service" failure.
+   */
+  resolveAttachments?: () => AttachmentStore | undefined
+  /**
+   * Bridge one durable image reference into the current tool execution world
+   * (`ctx.fs.processPathFromHostPath`), so the model receives a readable path
+   * beside the inline `data:` URL. Omission is legal: the handle text then says
+   * no local path is available.
+   */
+  resolveImageAccess?: (attachments: AttachmentStore, ref: ImageAttachmentRef) => ImageAttachmentAccess | undefined
   logger?: { warn(message: string, error?: unknown): void }
 }
+
+/**
+ * Why image input cannot be served on a host without an attachment provider.
+ *
+ * The message names the missing capability and the fix, because the adapter's
+ * own text ("pi-ai image input requires the durable attachment service") reads
+ * like a plugin bug while the real cause is a profile without the
+ * `dsh-attachment-local` bundle.
+ */
+export const MISSING_ATTACHMENT_SERVICE_MESSAGE =
+  '当前 DSH profile 没有提供附件存储服务（ctx.attachments），无法把图片交给 Loomy 模型。请在该 profile 的 bundle 列表中启用 @deepseek-ai/dsh-attachment-local 后重启 DSH，或改用不带图片的对话。'
 
 /** Whether a harness chunk carries user-visible output (empty deltas do not). */
 function chunkHasContent(chunk: StreamChunk): boolean {
@@ -273,22 +313,43 @@ class LoomyAdapter extends PiAiAdapter {
   private async *guard(upstream: AsyncIterable<StreamChunk>): AsyncGenerator<StreamChunk, void, undefined> {
     let outputTokens = 0
     let contentSeen = false
-    for await (const chunk of upstream) {
-      if (chunkHasContent(chunk)) contentSeen = true
-      if (chunk.type === 'usage') outputTokens = chunk.usage.outputTokens
+    try {
+      for await (const chunk of upstream) {
+        if (chunkHasContent(chunk)) contentSeen = true
+        if (chunk.type === 'usage') outputTokens = chunk.usage.outputTokens
 
-      if (
-        chunk.type === 'finish' &&
-        chunk.reason.kind === 'error' &&
-        chunk.reason.failure.code === 'TRANSPORT' &&
-        !contentSeen &&
-        outputTokens === 0
-      ) {
-        const upgraded = await this.upgradeAmbiguousTransport()
-        if (upgraded !== undefined) throw upgraded
+        if (
+          chunk.type === 'finish' &&
+          chunk.reason.kind === 'error' &&
+          chunk.reason.failure.code === 'TRANSPORT' &&
+          !contentSeen &&
+          outputTokens === 0
+        ) {
+          const upgraded = await this.upgradeAmbiguousTransport()
+          if (upgraded !== undefined) throw upgraded
+        }
+        yield chunk
       }
-      yield chunk
+    } catch (error) {
+      throw this.explainAttachmentFailure(error)
     }
+  }
+
+  /**
+   * Replace the adapter's generic image-capability failure with the reason the
+   * host could not serve it.
+   *
+   * `PiAiAdapter` raises `UNSUPPORTED_CONTENT` / "pi-ai image input requires the
+   * durable attachment service" whenever `resolveAttachments()` answered
+   * `undefined` (`dsh-llm-pi-ai/lib/index.js:2003`), which reads like a plugin
+   * defect although the profile simply mounts no attachment provider. The
+   * capability failure for a genuinely text-only model is left untouched.
+   */
+  private explainAttachmentFailure(error: unknown): unknown {
+    if (!(error instanceof LlmError) || error.code !== 'UNSUPPORTED_CONTENT') return error
+    if (!error.message.includes('durable attachment service')) return error
+    if (this.deps.resolveAttachments?.() !== undefined) return error
+    return new LlmError(MISSING_ATTACHMENT_SERVICE_MESSAGE, 'UNSUPPORTED_CONTENT', { cause: error })
   }
 
   /** One forced probe; returns the executable error only on a definite failure. */
@@ -400,6 +461,19 @@ export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
     },
     auth: INERT_AUTH,
     prepareHeaders: (request, headers) => prepareLoomyHeaders(request, headers, deps.loomyVersion()),
+    // Without these two hooks every image request fails before I/O: the adapter
+    // refuses image content unless it can read the durable attachment back
+    // (`dsh-llm-pi-ai/lib/index.js:2003`). They are optional in the host types
+    // because not every plugin routes images, but this route declares
+    // `input: ['text', 'image']` from upstream capabilities, so both must be
+    // present and must resolve lazily (the service may mount later).
+    resolveAttachments: () => deps.resolveAttachments?.(),
+    ...(deps.resolveImageAccess === undefined
+      ? {}
+      : {
+          resolveImageAccess: (attachments: AttachmentStore, ref: ImageAttachmentRef) =>
+            deps.resolveImageAccess?.(attachments, ref),
+        }),
   }, deps)
 
   return { adapter, provider, profiles }

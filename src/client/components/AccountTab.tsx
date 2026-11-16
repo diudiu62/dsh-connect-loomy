@@ -10,9 +10,10 @@
  * @module dsh-connect-loomy/client/components/AccountTab
  */
 
-import type { LoomyCredits, LoomyStatus } from '../api.js'
+import type { LoomyAuthState, LoomyCredits, LoomyStatus } from '../api.js'
 import { formatCount, formatDateTime } from '../format.js'
 import { Badge, CardButton, FactRow, Notice, Section } from './common.js'
+import { LoginForm } from './LoginForm.js'
 import { loadableMessage, type Loadable, type LoomyT } from './types.js'
 
 /** Props supplied by the card shell. */
@@ -23,10 +24,29 @@ export interface AccountTabProps {
   redetecting: boolean
   onRedetect: () => void
   onRetryCredits: () => void
+  /** Process CSRF token; the login form's two writes need it. */
+  csrfToken: string | null
+  /** Plugin-side sign-in state (drives the login form's branch). */
+  authState: LoomyAuthState | null
+  /** Re-read /status after a login or logout. */
+  onAuthChanged: () => void
+  /** Abort signal for the login calls. */
+  signal?: AbortSignal
 }
 
 /** Render the account tab. */
-export function AccountTab({ t, status, credits, redetecting, onRedetect, onRetryCredits }: AccountTabProps) {
+export function AccountTab({
+  t,
+  status,
+  credits,
+  redetecting,
+  onRedetect,
+  onRetryCredits,
+  csrfToken,
+  authState,
+  onAuthChanged,
+  signal,
+}: AccountTabProps) {
   return (
     <div className="loomy-panel">
       <Section
@@ -47,6 +67,31 @@ export function AccountTab({ t, status, credits, redetecting, onRedetect, onRetr
         }
       >
         <SignInBody t={t} status={status} onRedetect={onRedetect} />
+      </Section>
+
+      <Section
+        title={t('login.title')}
+        actions={
+          authState === null ? null : (
+            <Badge tone={authState.pluginLoggedIn ? 'ok' : 'neutral'}>
+              {authState.effectiveSource === 'plugin'
+                ? t('login.sourcePlugin')
+                : authState.effectiveSource === 'desktop'
+                  ? t('login.sourceDesktop')
+                  : authState.effectiveSource === 'env'
+                    ? t('login.sourceEnv')
+                    : t('login.sourceNone')}
+            </Badge>
+          )
+        }
+      >
+        <LoginForm
+          t={t}
+          csrfToken={csrfToken}
+          authState={authState}
+          onChanged={onAuthChanged}
+          {...(signal === undefined ? {} : { signal })}
+        />
       </Section>
 
       <Section

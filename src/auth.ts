@@ -37,6 +37,12 @@ export interface AuthSnapshot {
   found: boolean
   /** The path that parsed, or the primary candidate when nothing did. */
   sourcePath: string
+  /**
+   * Where `sourcePath` came from: `plugin` (the settings card's own login),
+   * `default` (the desktop client), or `env` (a pinned override). The card uses
+   * it to say which sign-in is in effect.
+   */
+  sourceOrigin?: 'env' | 'default' | 'plugin'
   /** Every candidate inspected, in precedence order (doctor / diagnostics). */
   candidates: CredentialCandidateView[]
   /** Machine reason for a failed read. */
@@ -163,6 +169,7 @@ export async function readAuthSession(
     return {
       found: true,
       sourcePath: candidate.path,
+      sourceOrigin: candidate.origin,
       candidates: views,
       session: document.session,
       fingerprint: sessionFingerprint(document.session),

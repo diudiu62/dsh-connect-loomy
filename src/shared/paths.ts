@@ -45,8 +45,8 @@ export function stateFilePath(dshHome: string = resolveDshHome()): string {
 /** One credential candidate plus whether it came from an explicit override. */
 export interface AuthCandidate {
   path: string
-  /** `env` when `LOOMY_AUTH_SESSION_FILE` supplied it. */
-  origin: 'env' | 'default'
+  /** `env` when `LOOMY_AUTH_SESSION_FILE` supplied it; `plugin` for the plugin's own store. */
+  origin: 'env' | 'default' | 'plugin'
 }
 
 /**
@@ -62,6 +62,12 @@ export interface AuthCandidate {
  * CI and the CLI set it precisely to guarantee that no real desktop credential
  * can be handed to a temporary `LOOMY_BASE_URL`; silently falling back would
  * defeat that guarantee.
+ *
+ * The plugin's **own** sign-in store (`<storages>/dsh-connect-loomy/auth-session.json`,
+ * written by the settings card's SMS login) is spliced in ahead of the desktop
+ * paths by `authSessionCandidatesWithPlugin` in `plugin-auth.ts`, not here: this
+ * function stays exactly "what the desktop client may have written", which is
+ * what its `origin` tag promises.
  */
 export function authSessionCandidates(
   platform: NodeJS.Platform = process.platform,

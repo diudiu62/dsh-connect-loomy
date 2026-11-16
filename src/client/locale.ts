@@ -26,6 +26,28 @@ export type LoomyLocaleKey =
   | 'composer.pillBare'
   | 'composer.pillPending'
   | 'composer.pillTitle'
+  | 'login.title'
+  | 'login.intro'
+  | 'login.phonePlaceholder'
+  | 'login.codePlaceholder'
+  | 'login.sendCode'
+  | 'login.sending'
+  | 'login.resend'
+  | 'login.resendIn'
+  | 'login.login'
+  | 'login.loggingIn'
+  | 'login.logout'
+  | 'login.loggingOut'
+  | 'login.codeSent'
+  | 'login.sendFailed'
+  | 'login.failed'
+  | 'login.logoutFailed'
+  | 'login.success'
+  | 'login.pluginActive'
+  | 'login.sourcePlugin'
+  | 'login.sourceDesktop'
+  | 'login.sourceEnv'
+  | 'login.sourceNone'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -151,6 +173,28 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** English copy. */
 export const en: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
+  'login.title': 'Sign in to Loomy',
+  'login.intro': 'Sign in from this plugin with an SMS code. The plugin session takes precedence; signing out falls back to the desktop client session.',
+  'login.phonePlaceholder': 'Phone number',
+  'login.codePlaceholder': 'Verification code',
+  'login.sendCode': 'Send code',
+  'login.sending': 'Sending…',
+  'login.resend': 'Resend',
+  'login.resendIn': 'Resend in {seconds}s',
+  'login.login': 'Sign in',
+  'login.loggingIn': 'Signing in…',
+  'login.logout': 'Sign out (plugin)',
+  'login.loggingOut': 'Signing out…',
+  'login.codeSent': 'Code sent to {phone}. Valid for 5 minutes.',
+  'login.sendFailed': 'Could not send the code.',
+  'login.failed': 'Sign-in failed.',
+  'login.logoutFailed': 'Sign-out failed.',
+  'login.success': 'Signed in — models and credits now use the new session.',
+  'login.pluginActive': 'Using the account signed in through this plugin.',
+  'login.sourcePlugin': 'Source: plugin',
+  'login.sourceDesktop': 'Source: desktop client',
+  'login.sourceEnv': 'Source: env override',
+  'login.sourceNone': 'Signed out',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
@@ -278,6 +322,28 @@ export const en: Record<LoomyLocaleKey, string> = {
 /** Simplified Chinese copy. */
 export const zh: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
+  'login.title': '登录 Loomy 账号',
+  'login.intro': '在本插件内用手机验证码登录；插件自己的登录态优先生效，退出后自动回落到 Loomy 桌面端的登录。',
+  'login.phonePlaceholder': '手机号',
+  'login.codePlaceholder': '验证码',
+  'login.sendCode': '发送验证码',
+  'login.sending': '发送中…',
+  'login.resend': '重新发送',
+  'login.resendIn': '{seconds} 秒后可重发',
+  'login.login': '登录',
+  'login.loggingIn': '登录中…',
+  'login.logout': '退出插件登录',
+  'login.loggingOut': '退出中…',
+  'login.codeSent': '验证码已发送到 {phone}，5 分钟内有效。',
+  'login.sendFailed': '验证码发送失败。',
+  'login.failed': '登录失败。',
+  'login.logoutFailed': '退出失败。',
+  'login.success': '登录成功，模型与积分已切换到新会话。',
+  'login.pluginActive': '当前使用插件内登录的账号。',
+  'login.sourcePlugin': '来源：插件登录',
+  'login.sourceDesktop': '来源：桌面端',
+  'login.sourceEnv': '来源：环境变量指定',
+  'login.sourceNone': '未登录',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',

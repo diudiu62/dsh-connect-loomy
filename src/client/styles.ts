@@ -25,6 +25,27 @@ export const CARD_CSS = `
 .loomy-header { display: flex; flex-direction: column; gap: 4px; }
 .loomy-title { font-size: 15px; font-weight: 600; }
 .loomy-subtitle { color: var(--dsw-alias-label-tertiary, #6b7280); }
+/* SMS login form (account tab). Inputs mirror the host's settings fields. */
+.loomy-login { display: flex; flex-direction: column; gap: 10px; }
+.loomy-login-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.loomy-input {
+  flex: 1 1 140px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.14));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, transparent);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 13px;
+}
+.loomy-input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary, #2563eb);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #2563eb) 22%, transparent);
+}
+.loomy-input:disabled { opacity: 0.55; cursor: not-allowed; }
+
 /* Composer credit readout (conversation.input.right), sitting just before the
    model picker. Deliberately tiny and shrinkable: the model name must keep its
    room, so the badge gives way (ellipsis) rather than pushing it out. */

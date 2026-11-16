@@ -27,6 +27,7 @@ const scripts = [
   'verify-entry-artifacts.mjs',
   'verify-auth-override.mjs',
   'verify-e2e-fake-upstream.mjs',
+  'verify-vision-attachments.mjs',
   'verify-contract-v2.mjs',
   'verify-credential-hygiene.mjs',
 ]

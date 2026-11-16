@@ -41,7 +41,7 @@ export const inject = ['locale']
 export const SETTINGS_TAB_ID = 'loomy'
 
 /** Bumped when the client half's shape changes; printed at mount. */
-export const CLIENT_BUILD_MARKER = 'settings-section+pill-near-model-v3'
+export const CLIENT_BUILD_MARKER = 'settings-section+pill-near-model-v3+login-v4'
 
 /** Slot-entry identity of the composer credit readout. */
 export const COMPOSER_PILL_ID = 'dsh-connect-loomy-composer-pill'

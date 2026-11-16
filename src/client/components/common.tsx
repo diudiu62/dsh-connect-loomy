@@ -63,7 +63,7 @@ export function Section({
 }
 
 /** A boxed informational or error message. */
-export function Notice({ tone = 'info', children }: { tone?: 'info' | 'error'; children: ReactNode }) {
+export function Notice({ tone = 'info', children }: { tone?: 'info' | 'ok' | 'error'; children: ReactNode }) {
   const classes = ['loomy-notice']
   if (tone === 'error') classes.push('loomy-notice-error')
   return <div className={classes.join(' ')}>{children}</div>

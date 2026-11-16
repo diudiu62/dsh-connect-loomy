@@ -23,7 +23,9 @@
 
 import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
+import { resolveImageAttachmentAccess, type AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-attachment'
+import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { createAuthStore } from './auth.js'
@@ -31,7 +33,9 @@ import { createCatalogStore } from './catalog.js'
 import { createCreditsCache } from './credits.js'
 import { createProviderRuntime } from './provider.js'
 import { registerLoomyRoutes } from './routes.js'
-import { authSessionCandidates, stateFilePath } from './shared/paths.js'
+import { stateFilePath } from './shared/paths.js'
+import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
+import { createLoginService } from './login.js'
 import { createSessionPrecheck } from './auth.js'
 import { createStateStore } from './shared/state.js'
 import { PROVIDER_ID } from './shared/types.js'
@@ -108,6 +112,27 @@ export { createStateStore, emptyState, parseState, serializeState, STATE_VERSION
 export { authSessionCandidates, resolveDshHome, stateFilePath } from './shared/paths.js'
 export { PROVIDER_ID, ROUTE_PREFIX, ROUTES } from './shared/types.js'
 export { requestPlatform } from './shared/upstream.js'
+export {
+  configFromEnv,
+  decryptLoomyEnv,
+  loomyAppEnvCandidates,
+  resolveXfyunConfig,
+  resetXfyunConfigCache,
+  sendSmsCode,
+  verifySmsCode,
+  xfyunHeaders,
+  xfyunStringToSign,
+  PHONE_PATTERN,
+} from './shared/xfyun.js'
+export {
+  authSessionCandidatesWithPlugin,
+  clearPluginAuthSession,
+  defaultPluginStorageDir,
+  pluginAuthPath,
+  readPluginAuthSession,
+  writePluginAuthSession,
+} from './plugin-auth.js'
+export { createLoginService, SEND_CODE_COOLDOWN_MS, SMS_EXPIRES_MS } from './login.js'
 
 /**
  * Mount the plugin.
@@ -128,8 +153,13 @@ export function apply(ctx: Context, config: LoomyConfig): void {
   const baseURL = (): string => live(config.baseURL)
   const loomyVersion = (): string => live(config.loomyVersion)
   const state = createStateStore(stateFilePath())
+  // Credential precedence (decision: plugin-first): `LOOMY_AUTH_SESSION_FILE`
+  // when pinned (exclusive, unchanged) → the plugin's own login written by the
+  // settings card → the desktop client's file. `auth.invalidate()` after a
+  // login/logout is what makes the switch immediate.
+  const pluginStorageDir = defaultPluginStorageDir()
   const auth = createAuthStore({
-    candidates: authSessionCandidates(),
+    candidates: authSessionCandidatesWithPlugin(pluginStorageDir),
     ttlMs: () => live(config.sessionTtlMs),
   })
   const catalog = createCatalogStore({
@@ -156,6 +186,11 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     ttlMs: () => live(config.precheckTtlMs),
     logger: ctx.logger,
   })
+  const login = createLoginService({
+    storageDir: () => pluginStorageDir,
+    invalidateAuth: () => auth.invalidate(),
+    logger: ctx.logger,
+  })
   const runtime = createProviderRuntime({
     catalog,
     baseURL,
@@ -163,6 +198,17 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     readSession: () => auth.read(),
     precheck,
     logger: ctx.logger,
+    // Image input is served through the host's durable attachment service.
+    // `dsh-attachment-local` is mounted by every shipped profile, but the read
+    // stays lazy and optional: a profile without it must still boot, and only
+    // an actual image request reports the missing capability.
+    resolveAttachments: () => ctx.get('attachments'),
+    resolveImageAccess: (attachments, ref) =>
+      resolveImageAttachmentAccess(
+        attachments,
+        (hostPath) => ctx.get('fs')?.processPathFromHostPath(hostPath),
+        ref,
+      ),
   })
 
   const isEnabled = (): boolean => live(config.enabled) === true
@@ -241,6 +287,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     auth,
     catalog,
     credits,
+    login,
     csrfToken: randomBytes(24).toString('base64url'),
     baseURL,
     logger: ctx.logger,

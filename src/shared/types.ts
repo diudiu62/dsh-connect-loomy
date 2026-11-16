@@ -19,7 +19,45 @@ export const ROUTES = {
   credits: `${ROUTE_PREFIX}/credits`,
   refresh: `${ROUTE_PREFIX}/refresh`,
   save: `${ROUTE_PREFIX}/save`,
+  authState: `${ROUTE_PREFIX}/auth/state`,
+  authSendCode: `${ROUTE_PREFIX}/auth/send-code`,
+  authLogin: `${ROUTE_PREFIX}/auth/login`,
+  authLogout: `${ROUTE_PREFIX}/auth/logout`,
 } as const
+
+/** `GET /auth/state` — whether the plugin holds its own login. */
+export interface AuthStateView {
+  ok: boolean
+  /** The plugin's own store has a session (settings card logged in). */
+  pluginLoggedIn: boolean
+  /** Where the *effective* session came from, for the card's copy. */
+  effectiveSource: 'plugin' | 'desktop' | 'env' | 'none'
+  maskedPhone?: string
+  maskedUserId?: string
+  loginAt?: number
+}
+
+/** `POST /auth/send-code` — one SMS sent. */
+export interface AuthSendCodeView {
+  ok: boolean
+  maskedPhone?: string
+  /** Re-send cooldown and code lifetime, for the card's countdown. */
+  resendAfterMs?: number
+  expiresMs?: number
+}
+
+/** `POST /auth/login` — code verified, session stored. */
+export interface AuthLoginView {
+  ok: boolean
+  maskedPhone?: string
+  maskedUserId?: string
+}
+
+/** `POST /auth/logout` — plugin-side session removed. */
+export interface AuthLogoutView {
+  ok: boolean
+  message: string
+}
 
 /** Harness provider route key. Also the pi-ai provider id (single-route design). */
 export const PROVIDER_ID = 'loomy'

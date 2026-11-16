@@ -13,6 +13,7 @@ English | [中文](README.md)
 ## What it does
 
 - **Provider route `loomy`** — the model catalog comes from the upstream `GET /api/v1/models`; only `protocol === 'openai_chat' && type === 'chat'` entries register (image models and `auto` are excluded — `auto` silently falls back to a paid model upstream). Names carry the upstream multiplier; context and output limits come from the catalog.
+- **In-plugin sign-in** (account tab) — log in with an SMS code straight from the settings card; the signing keys are decrypted at runtime from the local Loomy.app bundle (never stored, never logged), the plugin's own session (0600) takes precedence over the desktop file, and signing out falls back to it
 - **Settings section** (account / models / diagnostics) — masked phone and sign-in time, per-model enable with draft-then-save semantics, and a read-only diagnostics table that quotes the upstream error verbatim for bug reports.
 - **Draft-then-save model selection** — refreshing the catalog lands names and multipliers immediately but never overwrites unsaved picks; saving hot-swaps the route's model set (emits `llm/models-updated`), no restart needed.
 - **Read-only credits** — `balance`, `dailyBalance`, `availableBalance` plus the ledger, cached 60s host-side with single-flight; failures surface the upstream message and never fake a zero.
@@ -56,7 +57,7 @@ ls -ld ~/.dsh/profiles/web/node_modules/dsh-connect-loomy   # leading l = symlin
 The host reads the client bundle (`lib/client.js`) **at boot**. After changing client code: `pnpm build` → restart DSH → refresh the browser. The client prints one mount line so you can tell which build is running:
 
 ```
-[dsh-connect-loomy] client half loaded (settings-section+pill-left-v3): settings.section + composer readout
+[dsh-connect-loomy] client half loaded (settings-section+pill-near-model-v3+login-v4): settings.section + composer readout
 ```
 
 ## CLI
@@ -102,7 +103,7 @@ Key documents: [plugin contract](docs/dsh-plugin-contract.md) (with line-number 
 
 ## Known limitations
 
-- Single account: follows the desktop client's current sign-in; no account pool or auto-failover. Loomy has no daily check-in endpoint, so none is implemented.
+- Single account: the plugin's own SMS login or, failing that, the desktop client's current sign-in; no account pool or auto-failover. Loomy has no daily check-in endpoint, so none is implemented.
 - A real `web` profile mount and the browser card were not exercised during verification (isolated `DSH_HOME` runs covered installation; see docs/verification-report.md §9/§10).
 - Non-stream JSON replies are not accepted by pi-ai's streaming channel; DSH always sends `stream: true`, so a JSON body classifies as retryable `TRANSPORT` (it neither hangs nor masquerades as success).
 - Composer readout sits in `conversation.input.right` and is capped at 104px: the host swaps the model's text for an icon past its 560px container breakpoint, so the badge yields (ellipsis) rather than pushing the name out.

@@ -739,3 +739,216 @@ test('F3: a truncation with content keeps TRANSPORT and costs no extra probe', a
   }
   assert.deepEqual(prechecks, [false], 'no forced /user/identity probe for a content-bearing truncation')
 })
+
+/**
+ * Vision path: the plugin must supply the durable attachment seam.
+ *
+ * `PiAiAdapter` refuses any image block when `resolveAttachments()` answers
+ * `undefined` ("pi-ai image input requires the durable attachment service",
+ * `dsh-llm-pi-ai/lib/index.js:2003`). Before these hooks existed every image
+ * request from a vision-capable Loomy model died there, so the contract under
+ * test is: with a provider mounted the image reaches the wire as an inline
+ * `data:` URL, and without one the failure explains how to fix the profile.
+ */
+
+/** The 1x1 transparent PNG used by the vision fixtures. */
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+
+/** A durable image reference shaped like `dsh-attachment-local`'s. */
+const IMAGE_REF = {
+  // Real durable ids are `sha256:<64 lowercase hex>` (`dsh-attachment-local`
+  // ID_PATTERN); the fixture keeps that exact shape so a stricter store would
+  // still accept it.
+  attachmentId: `sha256:${'0123456789abcdef'.repeat(4)}`,
+  mediaType: 'image/png',
+  bytes: Buffer.from(PNG_BASE64, 'base64').byteLength,
+  width: 1,
+  height: 1,
+  name: 'pixel.png',
+}
+
+/** Minimal stand-in for `ctx.attachments` covering the request read path. */
+function fakeAttachments() {
+  const reads = []
+  return {
+    reads,
+    imageLimits: { maxImagesPerMessage: 10, maxMessageImageBytes: 20 * 1024 * 1024, mediaTypes: ['image/png'] },
+    imageHostPath: () =>
+      `/host/attachments/objects/01/${String(IMAGE_REF.attachmentId).slice(7)}`,
+    async readImageRequest(ref, target) {
+      reads.push({ ref, target })
+      return {
+        variantId: 'variant-1',
+        attachment: ref,
+        data: Buffer.from(PNG_BASE64, 'base64'),
+        mediaType: ref.mediaType,
+        bytes: ref.bytes,
+        width: 1,
+        height: 1,
+        depth: 'uchar',
+        space: 'srgb',
+        hasAlpha: true,
+      }
+    },
+  }
+}
+
+/** One user message carrying a single durable image reference. */
+function imageMessage() {
+  return [{ role: 'user', content: [{ type: 'image', attachment: IMAGE_REF }] }]
+}
+
+/** Capture the SSE answer and return the recorded fetch calls. */
+function stubStreamingFetch(calls) {
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init })
+    const frame = {
+      id: 'chatcmpl-vision',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: CATALOG_MODEL.id,
+      choices: [{ index: 0, delta: { content: 'seen' }, finish_reason: 'stop' }],
+    }
+    return new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }
+  return () => {
+    globalThis.fetch = original
+  }
+}
+
+test('a vision request sends the durable image as an inline data: URL', async (t) => {
+  const dir = tempDir(t)
+  const auth = createAuthStore({ candidates: [candidate(writeAuthFile(dir))] })
+  const attachments = fakeAttachments()
+  const runtime = createProviderRuntime({
+    catalog: { enabledModels: () => [CATALOG_MODEL], kickStaleRefresh() {} },
+    baseURL: () => BASE,
+    loomyVersion: () => '0.9.39',
+    readSession: () => auth.read(),
+    precheck: async () => ({ ok: true, definite: false }),
+    resolveAttachments: () => attachments,
+    resolveImageAccess: () => ({ readonlyPath: '/world/pixel.png' }),
+    logger: { warn() {} },
+  })
+
+  const calls = []
+  const restore = stubStreamingFetch(calls)
+  try {
+    const chunks = []
+    for await (const chunk of runtime.adapter.stream({
+      provider: 'loomy',
+      model: CATALOG_MODEL.id,
+      messages: imageMessage(),
+    })) {
+      chunks.push(chunk)
+    }
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+  } finally {
+    restore()
+  }
+
+  // The attachment was read back through the seam, under the route's budget.
+  assert.equal(attachments.reads.length, 1)
+  assert.equal(attachments.reads[0].ref.attachmentId, IMAGE_REF.attachmentId)
+  assert.equal(attachments.reads[0].target.maxBytes, 1024 * 1024)
+
+  // The gateway accepts exactly one image form: image_url with a data: URL.
+  assert.equal(calls.length, 1)
+  const body = JSON.parse(calls[0].init.body)
+  const parts = body.messages.at(-1).content
+  const image = parts.find((part) => part.type === 'image_url')
+  assert.ok(image !== undefined, 'the image block survived conversion')
+  assert.equal(image.image_url.url, `data:image/png;base64,${PNG_BASE64}`)
+
+  // The handle text names the attachment and the readable execution-world copy.
+  const handle = parts.find((part) => part.type === 'text')
+  assert.match(handle.text, /pixel\.png/u)
+  assert.match(handle.text, /1x1px/u)
+  assert.match(handle.text, /\/world\/pixel\.png/u)
+})
+
+test('the image handle text omits the path when no filesystem bridge is mounted', async (t) => {
+  const dir = tempDir(t)
+  const auth = createAuthStore({ candidates: [candidate(writeAuthFile(dir))] })
+  const attachments = fakeAttachments()
+  const runtime = createProviderRuntime({
+    catalog: { enabledModels: () => [CATALOG_MODEL], kickStaleRefresh() {} },
+    baseURL: () => BASE,
+    loomyVersion: () => '0.9.39',
+    readSession: () => auth.read(),
+    precheck: async () => ({ ok: true, definite: false }),
+    resolveAttachments: () => attachments,
+    logger: { warn() {} },
+  })
+
+  const calls = []
+  const restore = stubStreamingFetch(calls)
+  try {
+    for await (const _chunk of runtime.adapter.stream({
+      provider: 'loomy',
+      model: CATALOG_MODEL.id,
+      messages: imageMessage(),
+    })) {
+      void _chunk
+    }
+  } finally {
+    restore()
+  }
+
+  // The image itself still reaches the wire; only the path hint degrades.
+  const parts = JSON.parse(calls[0].init.body).messages.at(-1).content
+  assert.ok(parts.some((part) => part.type === 'image_url'))
+  const handle = parts.find((part) => part.type === 'text')
+  assert.match(handle.text, /may be resized or re-encoded/u)
+  assert.doesNotMatch(handle.text, /read-only/u)
+})
+
+test('a host without an attachment provider explains the missing capability', async (t) => {
+  const dir = tempDir(t)
+  const auth = createAuthStore({ candidates: [candidate(writeAuthFile(dir))] })
+  const runtime = createProviderRuntime({
+    catalog: { enabledModels: () => [CATALOG_MODEL], kickStaleRefresh() {} },
+    baseURL: () => BASE,
+    loomyVersion: () => '0.9.39',
+    readSession: () => auth.read(),
+    precheck: async () => ({ ok: true, definite: false }),
+    // No resolveAttachments: exactly what a profile without
+    // `dsh-attachment-local` looks like.
+    logger: { warn() {} },
+  })
+
+  const calls = []
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init })
+    throw new Error('no request may be dispatched without an attachment provider')
+  }
+  try {
+    await assert.rejects(
+      async () => {
+        for await (const _chunk of runtime.adapter.stream({
+          provider: 'loomy',
+          model: CATALOG_MODEL.id,
+          messages: imageMessage(),
+        })) {
+          void _chunk
+        }
+      },
+      (error) => {
+        assert.equal(error.code, 'UNSUPPORTED_CONTENT')
+        assert.match(error.message, /ctx\.attachments/u)
+        assert.match(error.message, /dsh-attachment-local/u)
+        assert.match(error.message, /重启 DSH/u)
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = original
+  }
+  assert.equal(calls.length, 0, 'the capability check fails before any I/O')
+})

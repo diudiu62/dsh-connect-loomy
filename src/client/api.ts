@@ -42,7 +42,46 @@ export const ROUTES = {
   credits: `${ROUTE_PREFIX}/credits`,
   refresh: `${ROUTE_PREFIX}/refresh`,
   save: `${ROUTE_PREFIX}/save`,
+  authState: `${ROUTE_PREFIX}/auth/state`,
+  authSendCode: `${ROUTE_PREFIX}/auth/send-code`,
+  authLogin: `${ROUTE_PREFIX}/auth/login`,
+  authLogout: `${ROUTE_PREFIX}/auth/logout`,
 } as const
+
+/** `GET /auth/state` response. */
+export interface LoomyAuthState {
+  ok: boolean
+  pluginLoggedIn: boolean
+  effectiveSource: 'plugin' | 'desktop' | 'env' | 'none'
+  maskedPhone?: string
+  maskedUserId?: string
+  loginAt?: number
+  error?: { code: string; message: string }
+}
+
+/** `POST /auth/send-code` response. */
+export interface LoomyAuthSendCode {
+  ok: boolean
+  maskedPhone?: string
+  resendAfterMs?: number
+  expiresMs?: number
+  error?: { code: string; message: string }
+}
+
+/** `POST /auth/login` response. */
+export interface LoomyAuthLogin {
+  ok: boolean
+  maskedPhone?: string
+  maskedUserId?: string
+  error?: { code: string; message: string }
+}
+
+/** `POST /auth/logout` response. */
+export interface LoomyAuthLogout {
+  ok: boolean
+  message: string
+  error?: { code: string; message: string }
+}
 
 /** One upstream error, as recorded by the host (message is verbatim upstream text). */
 export interface LoomyUpstreamError {
@@ -297,6 +336,35 @@ export function fetchDiagnostics(options: RouteOptions = {}): Promise<RouteResul
 /** Read the read-only points overview. */
 export function fetchCredits(options: RouteOptions = {}): Promise<RouteResult<LoomyCredits>> {
   return getJson<LoomyCredits>(ROUTES.credits, options)
+}
+
+/** Read the plugin's own sign-in state and which source is effective. */
+export function fetchAuthState(options: RouteOptions = {}): Promise<RouteResult<LoomyAuthState>> {
+  return getJson<LoomyAuthState>(ROUTES.authState, options)
+}
+
+/** Send one login SMS. The 60s cooldown is enforced by the host. */
+export function authSendCode(
+  csrfToken: string,
+  phone: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyAuthSendCode>> {
+  return postJson<LoomyAuthSendCode>(ROUTES.authSendCode, csrfToken, { phone }, options)
+}
+
+/** Verify the code; on success the plugin stores its own session. */
+export function authLogin(
+  csrfToken: string,
+  phone: string,
+  code: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyAuthLogin>> {
+  return postJson<LoomyAuthLogin>(ROUTES.authLogin, csrfToken, { phone, code }, options)
+}
+
+/** Remove the plugin-side session (desktop client untouched). */
+export function authLogout(csrfToken: string, options: RouteOptions = {}): Promise<RouteResult<LoomyAuthLogout>> {
+  return postJson<LoomyAuthLogout>(ROUTES.authLogout, csrfToken, {}, options)
 }
 
 /** Refresh the catalog (persisted and effective immediately; draft is untouched). */
