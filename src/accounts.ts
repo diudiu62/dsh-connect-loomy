@@ -389,22 +389,40 @@ export function createAccountsStore(options: {
     },
 
     async exportBundle() {
-      const accounts = await load(true)
+      // Export what the plugin can actually route to, not just what it stores.
+      //
+      // The desktop client's session is a legitimate credential the user may
+      // want to carry to another machine — and it is often the *only* one they
+      // have (they signed in through Loomy.app, never through the card). Not
+      // exporting it produced "no accounts to export" for a user who was
+      // visibly signed in, which is the bug this mirrors `routes()` to avoid.
+      const stored = await load(true)
+      const accounts =
+        stored.length > 0
+          ? stored.map((account) => ({
+              slot: account.slot,
+              session: account.session,
+              ...(account.phone === undefined ? {} : { phone: account.phone }),
+              ...(account.userId === undefined ? {} : { userId: account.userId }),
+              ...(account.label === undefined ? {} : { label: account.label }),
+              addedAt: account.addedAt,
+            }))
+          : await (async () => {
+              const desktop = await options.readDesktop?.()
+              if (desktop?.found !== true || desktop.session === undefined) return []
+              return [{ slot: 1, session: desktop.session }]
+            })()
       return {
         bundle: {
           kind: 'dsh-connect-loomy/accounts',
           version: 1,
           exportedAt: now(),
-          accounts: accounts.map((account) => ({
-            slot: account.slot,
-            session: account.session,
-            ...(account.phone === undefined ? {} : { phone: account.phone }),
-            ...(account.userId === undefined ? {} : { userId: account.userId }),
-            ...(account.label === undefined ? {} : { label: account.label }),
-            addedAt: account.addedAt,
-          })),
+          accounts,
         },
-        paths: [accountsFilePath(options.storageDir())],
+        paths:
+          stored.length > 0
+            ? [accountsFilePath(options.storageDir())]
+            : [options.storageDir() + ' (desktop client session)'],
       }
     },
 

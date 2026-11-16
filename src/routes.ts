@@ -534,7 +534,11 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
           if (exported.bundle.accounts.length === 0) {
             const payload: AccountExportView = {
               ok: false,
-              error: { code: 'no_accounts', message: '没有可导出的账号，请先登录。' },
+              error: {
+                code: 'no_accounts',
+                message:
+                  '没有可导出的凭证：插件里没有登录的账号，也没找到 Loomy 桌面端的登录态。请先在账户页登录，或打开 Loomy 客户端登录后点「重新检测」。',
+              },
             }
             corsSafeJson(res, 200, payload)
             return

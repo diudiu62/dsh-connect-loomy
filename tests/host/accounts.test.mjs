@@ -313,3 +313,25 @@ test('import accepts a bare array of sessions and our own bundle equally', async
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('export falls back to the desktop session when nothing is stored', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-exp-desktop-'))
+  try {
+    // The reported case: signed in through Loomy.app, nothing in accounts.json.
+    const store = createAccountsStore({
+      storageDir: () => dir,
+      now: () => 9000,
+      readDesktop: async () => ({ found: true, session: SESSION_A, maskedPhone: '181****0898' }),
+    })
+    const exported = await store.exportBundle()
+    assert.equal(exported.bundle.accounts.length, 1, 'a visible sign-in must be exportable')
+    assert.equal(exported.bundle.accounts[0].session, SESSION_A)
+    assert.equal(exported.bundle.accounts[0].slot, 1)
+
+    // With nothing anywhere, the bundle is empty so the card can say so.
+    const empty = createAccountsStore({ storageDir: () => dir, now: () => 9000, readDesktop: async () => ({ found: false }) })
+    assert.equal((await empty.exportBundle()).bundle.accounts.length, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
