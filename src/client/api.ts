@@ -163,12 +163,14 @@ export interface LoomyUpstreamError {
 
 /** Signed-in account facts. The phone number is already masked host-side. */
 export interface LoomyAccount {
-  /** Masked phone number, e.g. `138****1234`. Never a full number. */
+  /** The signed-in phone number (local data, shown in full). */
   phone: string
   /** Epoch milliseconds of the sign-in. */
   loginAt: number
-  /** Host-side opaque user id (not rendered; kept for diagnostics completeness). */
+  /** Host-side opaque user id. */
   userId: string
+  /** Provider route this account is reachable as. */
+  route?: string
 }
 
 /** `GET /status` payload (contract v2). */
@@ -232,7 +234,7 @@ export interface LoomyDiagnostics {
     modelsUrl: string
     pointsUrl: string
   }
-  account: { phone: string; userId: string } | null
+  account: { phone: string; userId: string; route?: string } | null
   catalog: { total: number; enabled: number }
   lastError?: LoomyUpstreamError
 }

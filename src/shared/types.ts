@@ -172,6 +172,8 @@ export interface UpstreamErrorView {
 
 /** Signed-in account facts. The phone number and user id are already masked. */
 export interface AccountView {
+  /** Provider route this account is reachable as (`loomy`, `loomy-2`, …). */
+  route?: string;
   /** Masked phone number, e.g. `138****1234`. Never a full number. */
   phone: string
   /** Epoch milliseconds of the credential's last change. */
@@ -268,7 +270,7 @@ export interface DiagnosticsView {
   ok: true
   probes: DiagnosticsProbe[]
   upstream: { baseUrl: string; modelsUrl: string; pointsUrl: string }
-  account: { phone: string; userId: string } | null
+  account: { phone: string; userId: string; route?: string } | null
   catalog: { total: number; enabled: number }
   lastError?: UpstreamErrorView
 }

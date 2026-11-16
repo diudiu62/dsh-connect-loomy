@@ -187,6 +187,27 @@ export async function buildStatus(deps: RouteDeps): Promise<StatusView> {
   }
 }
 
+/**
+ * The provider route an effective session is reachable as.
+ *
+ * A stored account has a slot (→ `loomy`, `loomy-2`, …); the desktop fallback
+ * always rides slot 1. Reported so the card can say which route to pick instead
+ * of leaving the user to guess.
+ */
+async function routeOfSession(
+  deps: RouteDeps,
+  fingerprint: string | undefined,
+): Promise<string | undefined> {
+  if (fingerprint === undefined) return undefined
+  try {
+    const stored = await deps.accounts.list({ force: false })
+    const match = stored.find((account) => account.id === fingerprint)
+    return match === undefined ? 'loomy' : match.slot === 1 ? 'loomy' : `loomy-${match.slot}`
+  } catch {
+    return 'loomy'
+  }
+}
+
 /** Build the `GET /diagnostics` payload; every upstream message stays verbatim. */
 export async function buildDiagnostics(deps: RouteDeps): Promise<DiagnosticsView> {
   // "Re-check" must observe a just-finished desktop login, so bypass the 5s
@@ -242,7 +263,14 @@ export async function buildDiagnostics(deps: RouteDeps): Promise<DiagnosticsView
     ok: true,
     probes,
     upstream: urls,
-    account: account === null ? null : { phone: account.phone, userId: account.userId },
+    account:
+      account === null
+        ? null
+        : {
+            phone: account.phone,
+            userId: account.userId,
+            route: await routeOfSession(deps, snapshot.fingerprint),
+          },
     catalog: { total: models.length, enabled: enabledIds.length },
     ...(lastError === undefined ? {} : { lastError }),
   }

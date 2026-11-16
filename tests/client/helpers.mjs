@@ -341,7 +341,7 @@ export function defaultRoutes(overrides = {}) {
 export const STATUS = {
   ok: true,
   csrfToken: 'csrf-test-token',
-  account: { phone: '13812345678', loginAt: 1794574693000, userId: 'userid-secret-42' },
+  account: { phone: '13812345678', loginAt: 1794574693000, userId: 'userid-secret-42', route: 'loomy' },
   credential: {
     sourcePath: '/Users/test/Library/Application Support/loomy/auth-session.json',
     found: true,

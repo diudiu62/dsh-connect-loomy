@@ -99,7 +99,8 @@ test('signed out: host next steps are rendered as executable actions', async () 
     // on the account badge rather than on the whole badge set.
     const badges = [...container.querySelectorAll('.loomy-badge')].map((badge) => badge.textContent)
     assert.equal(badges[0], '未登录')
-    assert.ok(badges.includes('来源：桌面端'))
+    // The source badge is rendered only when someone *is* signed in; signed out
+    // there is no source to name.
   })
 })
 

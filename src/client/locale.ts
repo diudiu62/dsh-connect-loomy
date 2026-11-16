@@ -78,6 +78,20 @@ export type LoomyLocaleKey =
   | 'accounts.switchHint'
   | 'accounts.unavailableBadge'
   | 'accounts.unavailableWhy'
+  | 'accounts.titleCount'
+  | 'accounts.addedAtShort'
+  | 'accounts.poolNote'
+  | 'accounts.slotOnly'
+  | 'add.title'
+  | 'add.login'
+  | 'add.transfer'
+  | 'add.export'
+  | 'add.import'
+  | 'add.transferHint'
+  | 'add.pastePlaceholder'
+  | 'account.routeOf'
+  | 'account.signedInAt'
+  | 'account.userIdShort'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -204,7 +218,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const en: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
   'login.title': 'Sign in to Loomy',
-  'login.intro': 'Sign in from this plugin with an SMS code. The plugin session takes precedence; signing out falls back to the desktop client session.',
+  'login.intro': 'One SMS code per account. Accounts signed in here take precedence over the desktop client.',
   'login.phonePlaceholder': 'Phone number',
   'login.codePlaceholder': 'Verification code',
   'login.sendCode': 'Send code',
@@ -255,13 +269,26 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.switchHint': 'Switching accounts happens in the model picker: each route below is one account, so picking a model under that route spends that account. The choice is per conversation.',
   'accounts.unavailableBadge': 'skipped by pool',
   'accounts.unavailableWhy': 'The rotation pool is skipping this account for now: {message}',
+  'accounts.titleCount': 'Accounts ({count})',
+  'accounts.addedAtShort': 'Added {time}',
+  'accounts.poolNote': 'The Loomy pool route rotates between the healthy accounts above.',
+  'accounts.slotOnly': 'Account {slot}',
+  'add.title': 'Add account',
+  'add.login': 'Sign in with a code',
+  'add.transfer': 'Import / export',
+  'add.export': 'Export all',
+  'add.import': 'Import',
+  'add.transferHint': 'Paste a file exported here, or a Loomy desktop auth-session.json. The file contains the sessions themselves — treat it like a password.',
+  'add.pastePlaceholder': 'Paste the JSON here',
+  'account.routeOf': 'route {route}',
+  'account.signedInAt': 'Signed in {time}',
+  'account.userIdShort': 'User {userId}',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
   'composer.pillTitle': 'Loomy credits — available {available} (monthly {balance} + today {daily}). Click to refresh.',
   'card.title': 'Loomy (iFlytek office assistant)',
-  'card.subtitle':
-    'Reuses the Loomy desktop app already signed in on this machine and adds its chat models to the DeepSeek Harness model picker.',
+  'card.subtitle': 'Loomy chat models in the DSH model picker.',
   'card.hostUnavailable':
     'The host does not expose the Loomy settings routes (404/503). Make sure the dsh-connect-loomy host half is enabled, then restart DSH.',
   'card.statusError': 'Failed to read Loomy status: {message}',
@@ -383,7 +410,7 @@ export const en: Record<LoomyLocaleKey, string> = {
 export const zh: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
   'login.title': '登录 Loomy 账号',
-  'login.intro': '在本插件内用手机验证码登录；插件自己的登录态优先生效，退出后自动回落到 Loomy 桌面端的登录。',
+  'login.intro': '每个账号一次验证码。这里登录的账号优先于桌面端登录态。',
   'login.phonePlaceholder': '手机号',
   'login.codePlaceholder': '验证码',
   'login.sendCode': '发送验证码',
@@ -434,13 +461,26 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.switchHint': '切换账号在模型选择器里完成：下面每条路由就是一个账号，选中该路由下的模型就会用这个账号的额度。选择是按会话生效的。',
   'accounts.unavailableBadge': '池已跳过',
   'accounts.unavailableWhy': '自动轮换暂时跳过这个账号：{message}',
+  'accounts.titleCount': '账号（{count}）',
+  'accounts.addedAtShort': '添加于 {time}',
+  'accounts.poolNote': '「Loomy 池」路由会在上面健康的账号之间轮换。',
+  'accounts.slotOnly': '账号 {slot}',
+  'add.title': '添加账号',
+  'add.login': '验证码登录',
+  'add.transfer': '导入 / 导出',
+  'add.export': '全部导出',
+  'add.import': '导入',
+  'add.transferHint': '粘贴本插件导出的文件，或 Loomy 桌面端的 auth-session.json。文件里就是登录凭证本身，请当作密码保管。',
+  'add.pastePlaceholder': '把 JSON 粘贴到这里',
+  'account.routeOf': '路由 {route}',
+  'account.signedInAt': '登录于 {time}',
+  'account.userIdShort': '用户 {userId}',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',
   'composer.pillTitle': 'Loomy 积分：可用 {available}（包月剩余 {balance} + 今日额度 {daily}）。点击可刷新。',
   'card.title': 'Loomy（讯飞办公助手）',
-  'card.subtitle':
-    '复用本机已登录的 Loomy 桌面端登录态，把它的聊天模型接入 DeepSeek Harness 模型选择器。',
+  'card.subtitle': '把 Loomy 的聊天模型接入 DSH 模型选择器。',
   'card.hostUnavailable':
     '宿主没有提供 Loomy 设置路由（404/503）。请确认 dsh-connect-loomy 宿主侧已启用，然后重启 DSH。',
   'card.statusError': '读取 Loomy 状态失败：{message}',

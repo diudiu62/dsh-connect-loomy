@@ -265,7 +265,7 @@ test('buildDiagnostics probes all three upstream endpoints with host-computed da
     modelsUrl: `${BASE}/models`,
     pointsUrl: `${BASE}/points/records`,
   })
-  assert.deepEqual(diagnostics.account, { phone: RAW_PHONE, userId: '123456789012345678' })
+  assert.deepEqual(diagnostics.account, { phone: RAW_PHONE, userId: '123456789012345678', route: 'loomy' })
   assert.deepEqual(diagnostics.catalog, { total: 4, enabled: 4 })
   assert.deepEqual(
     diagnostics.probes.map((probe) => [probe.path, probe.ok]),

@@ -25,6 +25,25 @@ export const CARD_CSS = `
 .loomy-header { display: flex; flex-direction: column; gap: 4px; }
 .loomy-title { font-size: 15px; font-weight: 600; }
 .loomy-subtitle { color: var(--dsw-alias-label-tertiary, #6b7280); }
+/* Account tab: one line per fact, so the page reads top-down. */
+.loomy-current-account { font-size: 14px; font-weight: 600; }
+.loomy-row-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+.loomy-add { display: flex; flex-direction: column; gap: 10px; }
+.loomy-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.12));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08));
+}
+
 /* Account rows (multi-account): one row per provider route. */
 .loomy-accounts { display: flex; flex-direction: column; gap: 10px; }
 .loomy-account-rows { display: flex; flex-direction: column; gap: 8px; }

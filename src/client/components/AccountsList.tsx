@@ -1,19 +1,12 @@
 /**
- * The account list inside the account tab.
+ * The account list — one row per provider route, plus pool health.
  *
- * Multi-account model: **one Loomy sign-in = one provider route**. This list is
- * therefore also the legend for the model picker — the route shown here is the
- * exact provider id a conversation binds to, which is why it is displayed
- * verbatim rather than invented wording.
- *
- * Rows are read-only about secrets: the host's view never carries a session, so
- * nothing here could leak one. The desktop row (slot 1, no stored account) has
- * no remove action because the plugin does not own that sign-in.
+ * Pure list: adding, exporting and importing live in {@link AddAccountPanel},
+ * so this file only answers "which accounts exist and are they usable".
  *
  * @module dsh-connect-loomy/client/components/AccountsList
  */
 
-import { useState } from 'react'
 import type { LoomyAccountRow, LoomyAccounts } from '../api.js'
 import { formatDateTime } from '../format.js'
 import { Badge, CardButton, Notice } from './common.js'
@@ -22,164 +15,63 @@ import { type Loadable, loadableMessage, type LoomyT } from './types.js'
 export interface AccountsListProps {
   t: LoomyT
   accounts: Loadable<LoomyAccounts>
-  /** Removing an account needs the CSRF token. */
   csrfToken: string | null
-  /** Called with the row id after a successful removal. */
-  onRemove: (id: string) => void
-  /** Re-read the list. */
-  onRefresh: () => void
-  /** Id of the row currently being removed, to disable just that button. */
   removingId: string | null
-  onExport: () => void
-  onImport: (text: string) => void
-  exporting: boolean
-  importing: boolean
-  /** Result text of the last export/import, shown verbatim. */
-  transferNotice: string | null
-  transferError: string | null
-}
-
-/** Render the account rows. */
-export function AccountsList({
-  t,
-  accounts,
-  csrfToken,
-  onRemove,
-  onRefresh,
-  removingId,
-  onExport,
-  onImport,
-  exporting,
-  importing,
-  transferNotice,
-  transferError,
-}: AccountsListProps) {
-  const [importText, setImportText] = useState('')
-  return (
-    <div className="loomy-accounts">
-      {accounts.kind === 'idle' || accounts.kind === 'loading' ? (
-        <p className="loomy-muted">{t('common.loading')}</p>
-      ) : accounts.kind === 'unavailable' ? (
-        <p className="loomy-muted">{t('accounts.unavailable')}</p>
-      ) : accounts.kind === 'stale' ? (
-        <Notice tone="error">{accounts.message}</Notice>
-      ) : accounts.kind === 'failed' || accounts.kind === 'error' ? (
-        <Notice tone="error">{t('accounts.failed', { message: loadableMessage(accounts, t) })}</Notice>
-      ) : accounts.value.accounts.length === 0 ? (
-        <Notice tone="info">{t('accounts.empty')}</Notice>
-      ) : (
-        <>
-          <p className="loomy-muted">{t('accounts.intro')}</p>
-          <div className="loomy-account-rows">
-            {accounts.value.accounts.map((row) => (
-              <AccountRow
-                key={row.id}
-                t={t}
-                row={row}
-                csrfToken={csrfToken}
-                removing={removingId === row.id}
-                onRemove={onRemove}
-              />
-            ))}
-          </div>
-        </>
-      )}
-      <div className="loomy-actions">
-        <CardButton onClick={onRefresh}>{t('common.refresh')}</CardButton>
-        <CardButton onClick={onExport} disabled={exporting || importing || csrfToken === null}>
-          {exporting ? t('accounts.exporting') : t('accounts.export')}
-        </CardButton>
-      </div>
-      <Notice tone="info">{t('accounts.exportHint')}</Notice>
-      <div className="loomy-login">
-        <textarea
-          className="loomy-input loomy-textarea"
-          placeholder={t('accounts.importPlaceholder')}
-          value={importText}
-          rows={4}
-          onChange={(event) => setImportText(event.target.value)}
-        />
-        <div className="loomy-actions">
-          <CardButton
-            onClick={() => onImport(importText)}
-            disabled={importing || exporting || csrfToken === null || importText.trim().length === 0}
-          >
-            {importing ? t('accounts.importing') : t('accounts.import')}
-          </CardButton>
-        </div>
-      </div>
-      {accounts.kind === 'ready' && (accounts.value.routes ?? []).length > 0 ? (
-        <div>
-          <div className="loomy-section-title">{t('accounts.registeredRoutes')}</div>
-          <p className="loomy-muted">{t('accounts.switchHint')}</p>
-          <div className="loomy-account-meta">
-            {(accounts.value.routes ?? []).map((entry) => (
-              <code className="loomy-code" key={entry.route}>
-                {entry.route} → {entry.displayName}
-              </code>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {transferNotice === null ? null : <Notice tone="ok">{transferNotice}</Notice>}
-      {transferError === null ? null : <Notice tone="error">{transferError}</Notice>}
-    </div>
-  )
-}
-
-function AccountRow({
-  t,
-  row,
-  csrfToken,
-  removing,
-  onRemove,
-}: {
-  t: LoomyT
-  row: LoomyAccountRow
-  csrfToken: string | null
-  removing: boolean
   onRemove: (id: string) => void
-}) {
-  const identity = row.label?.trim() || row.phone || t('accounts.unknownPhone')
+}
+
+/** Render every account as a compact row. */
+export function AccountsList({ t, accounts, csrfToken, removingId, onRemove }: AccountsListProps) {
+  if (accounts.kind === 'idle' || accounts.kind === 'loading') {
+    return <p className="loomy-muted">{t('common.loading')}</p>
+  }
+  if (accounts.kind === 'stale') return <Notice tone="error">{accounts.message}</Notice>
+  if (accounts.kind === 'unavailable') return <p className="loomy-muted">{t('accounts.unavailable')}</p>
+  if (accounts.kind === 'failed' || accounts.kind === 'error') {
+    return <Notice tone="error">{t('accounts.failed', { message: loadableMessage(accounts, t) })}</Notice>
+  }
+  if (accounts.value.accounts.length === 0) {
+    return <p className="loomy-muted">{t('accounts.empty')}</p>
+  }
+
+  const poolActive = (accounts.value.routes ?? []).some((route) => route.route === 'loomy-pool')
+
   return (
-    <div className="loomy-account-row">
-      <div className="loomy-account-main">
-        <span className="loomy-account-identity">{identity}</span>
-        <Badge tone={row.origin === 'desktop' ? 'neutral' : 'ok'}>
-          {row.origin === 'desktop' ? t('accounts.originDesktop') : t('accounts.originPlugin')}
-        </Badge>
-        {row.unavailable === true ? (
-          <Badge tone="danger">{t('accounts.unavailableBadge')}</Badge>
-        ) : null}
-      </div>
-      <div className="loomy-account-meta">
-        <span className="loomy-label">{t('accounts.route')}</span>
-        <code className="loomy-code">{row.route}</code>
-        {row.userId === undefined ? null : (
-          <>
-            <span className="loomy-label">{t('accounts.userId')}</span>
-            <span className="loomy-value">{row.userId}</span>
-          </>
-        )}
-        {row.addedAt === undefined ? null : (
-          <>
-            <span className="loomy-label">{t('accounts.addedAt')}</span>
-            <span className="loomy-value">{formatDateTime(row.addedAt)}</span>
-          </>
-        )}
-      </div>
-      {row.unavailable === true && row.unavailableMessage !== undefined ? (
-        <p className="loomy-muted">{t('accounts.unavailableWhy', { message: row.unavailableMessage })}</p>
-      ) : null}
-      {row.origin === 'plugin' ? (
-        <div className="loomy-actions">
-          <CardButton onClick={() => onRemove(row.id)} disabled={removing || csrfToken === null}>
-            {removing ? t('accounts.removing') : t('accounts.remove')}
-          </CardButton>
+    <div className="loomy-account-rows">
+      {accounts.value.accounts.map((row) => (
+        <div className="loomy-account-row" key={row.id}>
+          <div className="loomy-account-main">
+            <span className="loomy-account-identity">{identityOf(row, t)}</span>
+            <code className="loomy-code">{row.route}</code>
+            {row.unavailable === true ? <Badge tone="danger">{t('accounts.unavailableBadge')}</Badge> : null}
+            {row.origin === 'desktop' ? <Badge tone="neutral">{t('accounts.originDesktop')}</Badge> : null}
+          </div>
+          {row.origin === 'plugin' ? (
+            <CardButton
+              variant="ghost"
+              onClick={() => onRemove(row.id)}
+              disabled={removingId === row.id || csrfToken === null}
+            >
+              {removingId === row.id ? t('accounts.removing') : t('accounts.remove')}
+            </CardButton>
+          ) : null}
+          {row.unavailable === true && row.unavailableMessage !== undefined ? (
+            <p className="loomy-row-note">{row.unavailableMessage}</p>
+          ) : null}
+          {row.addedAt === undefined ? null : (
+            <p className="loomy-row-note">{t('accounts.addedAtShort', { time: formatDateTime(row.addedAt) })}</p>
+          )}
         </div>
-      ) : (
-        <p className="loomy-muted">{t('accounts.desktopNote')}</p>
-      )}
+      ))}
+      {poolActive ? <p className="loomy-row-note">{t('accounts.poolNote')}</p> : null}
     </div>
   )
+}
+
+/** What to call this account: its label, else the phone, else its slot. */
+function identityOf(row: LoomyAccountRow, t: LoomyT): string {
+  const label = row.label?.trim()
+  if (label !== undefined && label.length > 0) return label
+  if (row.phone !== undefined && row.phone.length > 0) return row.phone
+  return t('accounts.slotOnly', { slot: String(row.slot) })
 }

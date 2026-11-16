@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  button,
+  click,
   defaultRoutes,
   installFetch,
   loadClient,
@@ -138,9 +140,15 @@ test('the same card speaks English when the locale face switches', async () => {
     assert.ok(text.includes('Models'))
     assert.ok(text.includes('Diagnostics'))
     assert.ok(text.includes('Signed in'))
-    assert.ok(text.includes('Phone number'))
     assert.ok(text.includes('Read-only credits overview'))
     assert.ok(!text.includes('本机登录态'))
+
+    // The login form is deliberately collapsed behind "Add account"; open it to
+    // prove the English face reaches the form too.
+    await click(button(container, 'Sign in with a code'))
+    const phoneInput = container.querySelector('input[type="tel"]')
+    assert.ok(phoneInput, 'the login form opened')
+    assert.equal(phoneInput.getAttribute('placeholder'), 'Phone number', 'the form is in English too')
   })
 })
 
