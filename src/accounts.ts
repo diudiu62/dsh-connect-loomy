@@ -199,6 +199,13 @@ export interface AccountsStore {
   remove(id: string): Promise<{ kind: 'ok'; removed: boolean } | { kind: 'failure'; code: string; message: string }>
   /** Rename one account. */
   rename(id: string, label: string): Promise<{ kind: 'ok' } | { kind: 'failure'; code: string; message: string }>
+  /**
+   * The desktop client's own sign-in, when it is a credential the list should
+   * show. `undefined` when there is none or it duplicates a stored account.
+   */
+  desktopAccount?: () => Promise<
+    { id: string; session: string; phone?: string; userId?: string } | undefined
+  >
   /** Mark one account unusable (pool health), with the reason for the card. */
   markUnavailable(id: string, code: string, message: string): Promise<void>
   /** Clear the health mark after a successful call. */
@@ -357,6 +364,17 @@ export function createAccountsStore(options: {
         ]
       }
       return []
+    },
+
+    async desktopAccount() {
+      const desktop = await options.readDesktop?.()
+      if (desktop?.found !== true || desktop.session === undefined) return undefined
+      return {
+        id: accountIdOf(desktop.session),
+        session: desktop.session,
+        ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
+        ...(desktop.userId === undefined ? {} : { userId: desktop.userId }),
+      }
     },
 
     async accountForRoute(route) {
@@ -661,42 +679,60 @@ export interface StoredAccountView {
   unavailableMessage?: string
 }
 
-/** Build the card's account list (no sessions). */
+/**
+ * Build the card's account list (no sessions).
+ *
+ * One list, mixed sources: the accounts the plugin stores, **and** the desktop
+ * client's own sign-in when it is a credential we do not already hold. Showing
+ * them separately made the common case look like two different things ("your
+ * account" and "some desktop file"), and hid the desktop sign-in entirely once
+ * an account was imported — the user could no longer see it at all.
+ */
 export async function accountsView(
   store: AccountsStore,
   options: { force?: boolean } = {},
 ): Promise<StoredAccountView[]> {
   const accounts = await store.list(options)
-  if (accounts.length > 0) {
-    return accounts.map((account) => ({
-      id: account.id,
-      slot: account.slot,
-      route: routeForSlot(account.slot),
-      displayName: routeDisplayName(account),
-      origin: 'plugin' as const,
-      ...(account.label === undefined ? {} : { label: account.label }),
-      ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
-      ...(displayUserId(account.userId) === undefined ? {} : { userId: displayUserId(account.userId) }),
-      addedAt: account.addedAt,
-      ...(account.unavailableAt === undefined
-        ? {}
-        : {
-            unavailable: true,
-            unavailableAt: account.unavailableAt,
-            ...(account.unavailableCode === undefined ? {} : { unavailableCode: account.unavailableCode }),
-            ...(account.unavailableMessage === undefined
-              ? {}
-              : { unavailableMessage: account.unavailableMessage }),
-          }),
-    }))
-  }
-  const routes = await store.routes(options)
-  return routes.map((route) => ({
-    id: `desktop-${route.slot}`,
-    slot: route.slot,
-    route: route.route,
-    displayName: route.displayName,
-    origin: 'desktop' as const,
-    ...(route.phone === undefined ? {} : { phone: route.phone }),
+  const rows: StoredAccountView[] = accounts.map((account) => ({
+    id: account.id,
+    slot: account.slot,
+    route: routeForSlot(account.slot),
+    displayName: routeDisplayName(account),
+    origin: 'plugin' as const,
+    ...(account.label === undefined ? {} : { label: account.label }),
+    ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
+    ...(displayUserId(account.userId) === undefined ? {} : { userId: displayUserId(account.userId) }),
+    addedAt: account.addedAt,
+    ...(account.unavailableAt === undefined
+      ? {}
+      : {
+          unavailable: true,
+          unavailableAt: account.unavailableAt,
+          ...(account.unavailableCode === undefined ? {} : { unavailableCode: account.unavailableCode }),
+          ...(account.unavailableMessage === undefined
+            ? {}
+            : { unavailableMessage: account.unavailableMessage }),
+        }),
   }))
+
+  const desktop = await store.desktopAccount?.()
+  if (desktop !== undefined && !accounts.some((account) => account.session === desktop.session)) {
+    rows.push({
+      // Not a stored row: no id the store can act on, so removal is impossible
+      // by design (the plugin does not own that file).
+      id: `desktop-${desktop.id}`,
+      slot: 0,
+      // It has no route of its own while stored accounts exist; `route` is left
+      // out so the UI can render it as "not separately routed" instead of
+      // inventing a slot number that would collide.
+      route: accounts.length === 0 ? BASE_ROUTE : '',
+      displayName: displayPhone(desktop.phone) ?? 'Loomy（桌面端）',
+      origin: 'desktop' as const,
+      ...(displayPhone(desktop.phone) === undefined ? {} : { phone: displayPhone(desktop.phone) }),
+      ...(displayPhone(desktop.userId) === undefined ? {} : { userId: displayPhone(desktop.userId) }),
+    })
+  }
+  return rows
 }
+
+

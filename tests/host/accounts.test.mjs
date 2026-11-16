@@ -373,3 +373,35 @@ test('export includes the desktop session even when stored accounts exist', asyn
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('the list shows the desktop sign-in next to stored accounts', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-view-mixed-'))
+  try {
+    const desktopSession = 'd'.repeat(32)
+    const store = createAccountsStore({
+      storageDir: () => dir,
+      now: () => 1000,
+      readDesktop: async () => ({ found: true, session: desktopSession, phone: '18100000000' }),
+    })
+    await store.add({ session: SESSION_A, phone: '13800000001' })
+
+    const rows = await accountsView(store, { force: true })
+    assert.equal(rows.length, 2, 'both sources appear in one list')
+    assert.equal(rows[0].origin, 'plugin')
+    assert.equal(rows[0].route, 'loomy')
+    assert.equal(rows[1].origin, 'desktop')
+    assert.equal(
+      rows[1].route,
+      '',
+      'the desktop sign-in has no route of its own while stored accounts exist',
+    )
+
+    // Once adopted (stored), it stops being listed twice.
+    await store.add({ session: desktopSession, phone: '18100000000' })
+    const after = await accountsView(store, { force: true })
+    assert.equal(after.filter((row) => row.origin === 'desktop').length, 0)
+    assert.equal(after.length, 2, 'it is the same account, now routable')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

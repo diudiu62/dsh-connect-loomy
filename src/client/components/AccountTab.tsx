@@ -14,7 +14,7 @@
  * @module dsh-connect-loomy/client/components/AccountTab
  */
 
-import type { LoomyAccounts, LoomyAuthState, LoomyCredits, LoomyStatus } from '../api.js'
+import type { LoomyAccounts, LoomyAuthState, LoomyCredits, LoomyPoolState, LoomyStatus } from '../api.js'
 import { formatCount, formatDateTime } from '../format.js'
 import { AccountsList } from './AccountsList.js'
 import { AddAccountPanel } from './AddAccountPanel.js'
@@ -43,6 +43,13 @@ export interface AccountTabProps {
   importing: boolean
   transferNotice: string | null
   transferError: string | null
+  /** Rotation-pool preference. */
+  pool: LoomyPoolState | null
+  onTogglePool: (enabled: boolean) => void
+  poolSaving: boolean
+  /** Import the desktop sign-in as a stored account. */
+  onAdoptDesktop: () => void
+  adopting: boolean
 }
 
 /** Render the account tab. */
@@ -86,6 +93,15 @@ export function AccountTab(props: AccountTabProps) {
           csrfToken={props.csrfToken}
           removingId={props.removingId}
           onRemove={props.onRemoveAccount}
+          onAdoptDesktop={props.onAdoptDesktop}
+          adopting={props.adopting}
+        />
+        <PoolToggle
+          t={t}
+          pool={props.pool}
+          onToggle={props.onTogglePool}
+          saving={props.poolSaving}
+          csrfToken={props.csrfToken}
         />
       </Section>
 
@@ -115,6 +131,42 @@ export function AccountTab(props: AccountTabProps) {
       >
         <CreditsBody t={t} credits={credits} />
       </Section>
+    </div>
+  )
+}
+
+/** The rotation-pool switch: a preference, so it lives next to the list. */
+function PoolToggle({
+  t,
+  pool,
+  onToggle,
+  saving,
+  csrfToken,
+}: {
+  t: LoomyT
+  pool: LoomyPoolState | null
+  onToggle: (enabled: boolean) => void
+  saving: boolean
+  csrfToken: string | null
+}) {
+  if (pool === null) return null
+  const disabled = saving || csrfToken === null
+  return (
+    <div className="loomy-row loomy-pool-toggle">
+      <label className="loomy-row-identity">
+        <input
+          type="checkbox"
+          checked={pool.enabled}
+          disabled={disabled}
+          onChange={(event) => onToggle(event.target.checked)}
+        />{' '}
+        {t('pool.label')}
+      </label>
+      <span className="loomy-toolbar-spacer" />
+      <Badge tone={pool.active ? 'ok' : 'neutral'}>{pool.active ? t('pool.on') : t('pool.off')}</Badge>
+      {pool.enabled && pool.accountCount < 2 ? (
+        <p className="loomy-row-note">{t('pool.needsTwo')}</p>
+      ) : null}
     </div>
   )
 }
@@ -223,13 +275,18 @@ function CreditsBody({ t, credits }: { t: LoomyT; credits: Loadable<LoomyCredits
       </div>
       {value.records.length === 0 ? null : (
         <div className="loomy-records">
-          {value.records.slice(0, 3).map((record, index) => (
+          {value.records.slice(0, 5).map((record, index) => (
             <div className="loomy-record" key={`${record.createdAt}-${index}`}>
               <span className="loomy-value">{record.description.length > 0 ? record.description : t('common.none')}</span>
               <span className={record.direction === 'credit' ? 'loomy-record-positive' : 'loomy-record-negative'}>
                 {record.direction === 'credit' ? '+' : '-'}
                 {formatCount(record.pointsActual)}
               </span>
+              {record.source === undefined ? null : (
+                <span className="loomy-row-note">
+                  {t('credits.source', { account: record.source.account ?? record.source.route })}
+                </span>
+              )}
             </div>
           ))}
         </div>

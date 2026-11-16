@@ -33,6 +33,14 @@ export interface PersistedState {
   lastError?: UpstreamErrorView
   /** Epoch ms of the last saved selection (diagnostics only). */
   savedAt?: number
+  /**
+   * Whether the rotation pool route should be offered.
+   *
+   * A user preference, not a fact about the accounts: some people want the
+   * cheapest available account per call, others need to know exactly which
+   * account is paying. Stored here because it must survive a restart.
+   */
+  poolEnabled?: boolean
 }
 
 /** Empty state: no cache, no explicit selection. */
@@ -88,6 +96,7 @@ export function parseState(text: string): PersistedState {
   const state: PersistedState = { version: STATE_VERSION, selection, catalog, refreshedAt }
   if (isUpstreamError(parsed.lastError)) state.lastError = parsed.lastError
   if (typeof parsed.savedAt === 'number' && Number.isFinite(parsed.savedAt)) state.savedAt = parsed.savedAt
+  if (typeof parsed.poolEnabled === 'boolean') state.poolEnabled = parsed.poolEnabled
   return state
 }
 
@@ -110,6 +119,7 @@ export function serializeState(state: PersistedState): string {
   }
   if (state.lastError !== undefined) document['lastError'] = state.lastError
   if (state.savedAt !== undefined) document['savedAt'] = state.savedAt
+  if (state.poolEnabled !== undefined) document['poolEnabled'] = state.poolEnabled
   return `${JSON.stringify(document, null, 2)}\n`
 }
 

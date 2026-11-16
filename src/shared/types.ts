@@ -28,7 +28,21 @@ export const ROUTES = {
   accountRename: `${ROUTE_PREFIX}/accounts/rename`,
   accountExport: `${ROUTE_PREFIX}/accounts/export`,
   accountImport: `${ROUTE_PREFIX}/accounts/import`,
+  pool: `${ROUTE_PREFIX}/pool`,
 } as const
+
+/** `GET`/`POST /pool` — the rotation-pool preference. */
+export interface PoolView {
+  ok: boolean
+  /** Whether the pool route is offered at all. */
+  enabled: boolean
+  /** How many accounts the pool could rotate over right now. */
+  accountCount: number
+  /** The pool route is only *usable* with two or more accounts. */
+  active: boolean
+  message?: string
+  error?: { code: string; message: string }
+}
 
 /** `POST /accounts/export` — a portable bundle. **Contains sessions.** */
 export interface AccountExportView {
@@ -233,6 +247,14 @@ export interface CreditRecordView {
   /** Epoch milliseconds (upstream uses seconds). */
   createdAt: number
   balanceAfter: number
+  /**
+   * Which account this row was fetched through.
+   *
+   * The ledger is per account upstream, so once several accounts exist a bare
+   * list of amounts is ambiguous: the same description can appear twice with
+   * different balances. Naming the source makes the merged list readable.
+   */
+  source?: { route: string; account?: string }
 }
 
 /** Read-only points overview. */

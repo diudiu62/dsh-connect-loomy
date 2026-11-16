@@ -51,7 +51,18 @@ export const ROUTES = {
   accountRename: `${ROUTE_PREFIX}/accounts/rename`,
   accountExport: `${ROUTE_PREFIX}/accounts/export`,
   accountImport: `${ROUTE_PREFIX}/accounts/import`,
+  pool: `${ROUTE_PREFIX}/pool`,
 } as const
+
+/** `GET`/`POST /pool` */
+export interface LoomyPoolState {
+  ok: boolean
+  enabled: boolean
+  accountCount: number
+  active: boolean
+  message?: string
+  error?: { code: string; message: string }
+}
 
 /** A portable account bundle. **Contains sessions — treat as a password.** */
 export interface LoomyAccountsBundle {
@@ -241,6 +252,8 @@ export interface LoomyDiagnostics {
 
 /** One points ledger row. */
 export interface LoomyCreditsRecord {
+  /** Which account this row came from (multi-account ledger). */
+  source?: { route: string; account?: string }
   description: string
   direction: 'credit' | 'debit'
   pointsActual: number
@@ -482,6 +495,20 @@ export function renameAccount(
   options: RouteOptions = {},
 ): Promise<RouteResult<{ ok: boolean }>> {
   return postJson<{ ok: boolean }>(ROUTES.accountRename, csrfToken, { id, label }, options)
+}
+
+/** Read the rotation-pool preference. */
+export function fetchPool(options: RouteOptions = {}): Promise<RouteResult<LoomyPoolState>> {
+  return getJson<LoomyPoolState>(ROUTES.pool, options)
+}
+
+/** Turn the rotation pool on or off (persisted by the host). */
+export function savePool(
+  csrfToken: string,
+  enabled: boolean,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyPoolState>> {
+  return postJson<LoomyPoolState>(ROUTES.pool, csrfToken, { enabled }, options)
 }
 
 /** Export every account as a portable bundle (secrets included). */

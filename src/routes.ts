@@ -35,9 +35,11 @@ import type {
   AuthSendCodeView,
   AccountExportView,
   AccountImportView,
+  PoolView,
   AccountsView,
   AuthStateView,
   CredentialCandidateView,
+  CreditsView,
   DiagnosticsProbe,
   DiagnosticsView,
   FailureView,
@@ -69,6 +71,11 @@ export interface RouteDeps {
   creditsFor?: (route: string) => CreditsCache
   /** The multi-account store. */
   accounts: AccountsStore
+  /** Read/write the rotation-pool preference (persisted in the state file). */
+  poolPreference: {
+    read: () => Promise<boolean>
+    write: (enabled: boolean) => Promise<void>
+  }
   /** Routes the adapter currently owns (what the picker can offer). */
   routes: () => ReadonlyArray<{
     route: string
@@ -205,6 +212,80 @@ async function routeOfSession(
     return match === undefined ? 'loomy' : match.slot === 1 ? 'loomy' : `loomy-${match.slot}`
   } catch {
     return 'loomy'
+  }
+}
+
+/**
+ * The points overview, merged across every routed account.
+ *
+ * Balances come from the primary account (slot 1) because summing them would
+ * invent a number no single account can spend; the ledger, by contrast, is
+ * merged and each row is tagged with the account it came from — otherwise a
+ * multi-account user reads a list of amounts with no way to tell whose they are.
+ */
+async function buildCredits(deps: RouteDeps): Promise<
+  | { kind: 'ok'; credits: CreditsView }
+  | { kind: 'failure'; failure: UpstreamErrorView }
+> {
+  const primary = await deps.credits.read()
+  if (primary.kind === 'failure') return { kind: 'failure', failure: primary.failure }
+
+  // Defensive: the merge is an enhancement. A host built before multi-account
+  // (or a test double) may not wire these, and the overview must still answer
+  // with the primary account rather than 500.
+  const routes =
+    typeof deps.routes === 'function'
+      ? deps.routes().filter((entry) => entry.origin === 'plugin')
+      : []
+  if (deps.creditsFor === undefined || routes.length <= 1) {
+    return { kind: 'ok', credits: primary.credits }
+  }
+
+  const stored = await deps.accounts.list({ force: false })
+  const labelOf = (route: string): string | undefined => {
+    const slot = route === 'loomy' ? 1 : Number(/^loomy-(\d+)$/u.exec(route)?.[1] ?? '0')
+    const account = stored.find((entry) => entry.slot === slot)
+    return account === undefined ? undefined : (account.label ?? account.phone)
+  }
+
+  const perRoute = await Promise.all(
+    routes.map(async (entry) => {
+      const result =
+        entry.route === routes[0]?.route ? primary : await (deps.creditsFor as (route: string) => CreditsCache)(entry.route).read()
+      return { route: entry.route, result }
+    }),
+  )
+
+  const records = perRoute.flatMap(({ route, result }) => {
+    if (result.kind === 'failure') return []
+    const label = labelOf(route)
+    return result.credits.records.map((record) => ({
+      ...record,
+      source: { route, ...(label === undefined ? {} : { account: label }) },
+    }))
+  })
+  records.sort((left, right) => right.createdAt - left.createdAt)
+
+  return {
+    kind: 'ok',
+    credits: { ...primary.credits, records: records.slice(0, 20) },
+  }
+}
+
+/** Build the pool preference view (read and after a write). */
+async function buildPoolView(deps: RouteDeps): Promise<PoolView> {
+  const enabled = await deps.poolPreference.read()
+  const accounts = await deps.accounts.list({ force: false })
+  const accountCount = accounts.length
+  const active = enabled && accountCount >= 2
+  return {
+    ok: true,
+    enabled,
+    accountCount,
+    active,
+    ...(enabled && accountCount < 2
+      ? { message: '开启后需要至少两个账号才会出现在模型选择器里。' }
+      : {}),
   }
 }
 
@@ -352,14 +433,14 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
       method: 'GET',
       mutating: false,
       run: async (_req, res) => {
-        const result = await deps.credits.read()
-        if (result.kind === 'failure') {
+        const merged = await buildCredits(deps)
+        if (merged.kind === 'failure') {
           // Contract v2: HTTP 200 + ok:false so the card renders a truthful
           // upstream failure instead of treating it as a missing route.
-          corsSafeJson(res, 200, errorView(result.failure))
+          corsSafeJson(res, 200, errorView(merged.failure))
           return
         }
-        corsSafeJson(res, 200, { ok: true, ...result.credits })
+        corsSafeJson(res, 200, { ok: true, ...merged.credits })
       },
     },
     {
@@ -490,6 +571,14 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
       },
     },
     {
+      path: ROUTES.pool,
+      method: 'GET',
+      mutating: false,
+      run: async (_req, res) => {
+        corsSafeJson(res, 200, await buildPoolView(deps))
+      },
+    },
+    {
       path: ROUTES.accounts,
       method: 'GET',
       mutating: false,
@@ -561,6 +650,27 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
         }
         await deps.refreshRoutes()
         corsSafeJson(res, 200, { ok: true })
+      },
+    },
+    {
+      path: ROUTES.pool,
+      method: 'POST',
+      mutating: true,
+      run: async (req, res) => {
+        const body = await readJsonObject(req)
+        if (body === undefined) {
+          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
+          return
+        }
+        const enabled = body['enabled']
+        if (typeof enabled !== 'boolean') {
+          failure(res, 400, 'bad_request', 'enabled 必须是布尔值')
+          return
+        }
+        await deps.poolPreference.write(enabled)
+        // The route set changes with the preference, so reconcile immediately.
+        await deps.refreshRoutes()
+        corsSafeJson(res, 200, await buildPoolView(deps))
       },
     },
     {

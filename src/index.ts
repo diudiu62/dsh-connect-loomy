@@ -37,7 +37,7 @@ import { registerLoomyRoutes } from './routes.js'
 import { stateFilePath } from './shared/paths.js'
 import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
 import { createLoginService } from './login.js'
-import { createAccountPool } from './pool.js'
+import { createAccountPool, POOL_ROUTE } from './pool.js'
 import { accountIdOf, createAccountsStore, type AccountRoute } from './accounts.js'
 import { displayPhone, displayUserId } from './shared/text.js'
 import { createSessionPrecheck } from './auth.js'
@@ -324,7 +324,11 @@ export function apply(ctx: Context, config: LoomyConfig): void {
    * an inference call never waits for a disk read just to learn its route list.
    */
   const refreshRoutes = async (): Promise<readonly AccountRoute[]> => {
-    const routes = await accounts.routes({ force: true })
+    const poolEnabled = (await state.load()).poolEnabled === true
+    const candidates = await accounts.routes({ force: true })
+    // The pool route is a preference, not a fact about the accounts: register
+    // it only when the user asked for automatic rotation.
+    const routes = candidates.filter((entry) => entry.route !== POOL_ROUTE || poolEnabled)
     const next = routeSignatureOf(routes)
     if (next === routeSignature) return runtime.routes()
     routeSignature = next
@@ -423,6 +427,13 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     credits,
     creditsFor,
     accounts,
+    poolPreference: {
+      read: async () => (await state.load()).poolEnabled === true,
+      write: async (enabled: boolean) => {
+        const current = await state.load()
+        await state.save({ ...current, poolEnabled: enabled })
+      },
+    },
     routes: () => runtime.routes(),
     refreshRoutes: async () => {
       await refreshRoutes()

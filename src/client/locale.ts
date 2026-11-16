@@ -92,6 +92,19 @@ export type LoomyLocaleKey =
   | 'account.routeOf'
   | 'account.signedInAt'
   | 'account.userIdShort'
+  | 'accounts.notRouted'
+  | 'accounts.adopt'
+  | 'accounts.adoptHint'
+  | 'accounts.adopting'
+  | 'accounts.desktopSignIn'
+  | 'pool.title'
+  | 'pool.label'
+  | 'pool.on'
+  | 'pool.off'
+  | 'pool.needsTwo'
+  | 'pool.failed'
+  | 'credits.source'
+  | 'credits.allAccounts'
   | 'card.title'
   | 'card.subtitle'
   | 'card.hostUnavailable'
@@ -283,6 +296,19 @@ export const en: Record<LoomyLocaleKey, string> = {
   'account.routeOf': 'route {route}',
   'account.signedInAt': 'Signed in {time}',
   'account.userIdShort': 'User {userId}',
+  'accounts.notRouted': 'not routed',
+  'accounts.adopt': 'Add to list',
+  'accounts.adoptHint': 'Import the desktop sign-in as a stored account so it gets its own route.',
+  'accounts.adopting': 'Adding…',
+  'accounts.desktopSignIn': 'Desktop sign-in',
+  'pool.title': 'Account rotation',
+  'pool.label': 'Pick a healthy account at random for each call',
+  'pool.on': 'On',
+  'pool.off': 'Off',
+  'pool.needsTwo': 'Needs at least two accounts to show up in the model picker.',
+  'pool.failed': 'Could not change the rotation setting.',
+  'credits.source': 'from {account}',
+  'credits.allAccounts': 'Ledger merges every routed account.',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
@@ -475,6 +501,19 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'account.routeOf': '路由 {route}',
   'account.signedInAt': '登录于 {time}',
   'account.userIdShort': '用户 {userId}',
+  'accounts.notRouted': '未接入路由',
+  'accounts.adopt': '加入账号',
+  'accounts.adoptHint': '把桌面端登录态导入为存储账号，它才会获得独立路由。',
+  'accounts.adopting': '加入中…',
+  'accounts.desktopSignIn': '桌面端登录',
+  'pool.title': '账号轮换',
+  'pool.label': '每次调用随机选一个健康账号',
+  'pool.on': '开',
+  'pool.off': '关',
+  'pool.needsTwo': '需要至少两个账号，才会出现在模型选择器里。',
+  'pool.failed': '切换轮换设置失败。',
+  'credits.source': '来自 {account}',
+  'credits.allAccounts': '流水合并所有已接入账号。',
   'composer.pill': 'Loomy · {amount}',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',

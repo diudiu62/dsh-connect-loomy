@@ -23,6 +23,7 @@ import {
   fetchStatus,
   exportAccounts,
   fetchAccounts,
+  fetchPool,
   fetchAuthState,
   importAccounts,
   isAbortError,
@@ -30,8 +31,10 @@ import {
   readEnabledModelIds,
   refreshCatalog,
   saveEnabledModels,
+  savePool,
   type LoomyAccounts,
   type LoomyAuthState,
+  type LoomyPoolState,
   type LoomyCatalog,
   type LoomyCredits,
   type LoomyDiagnostics,
@@ -129,6 +132,9 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   const [importing, setImporting] = useState(false)
   const [transferNotice, setTransferNotice] = useState<string | null>(null)
   const [transferError, setTransferError] = useState<string | null>(null)
+  const [pool, setPool] = useState<LoomyPoolState | null>(null)
+  const [poolSaving, setPoolSaving] = useState(false)
+  const [adopting, setAdopting] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
   const csrfRef = useRef<string | null>(null)
@@ -267,6 +273,86 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     }
   }, [loadAccounts, loadStatus, t])
 
+  const loadPool = useCallback(async (): Promise<void> => {
+    try {
+      const result = await fetchPool({ signal: abortRef.current?.signal })
+      if (result.kind === 'ok') setPool(result.value)
+    } catch (error) {
+      if (isAbortError(error)) return
+      // The switch is auxiliary: a failed read leaves it hidden, the list works.
+    }
+  }, [])
+
+  const togglePool = useCallback(async (enabled: boolean): Promise<void> => {
+    const token = csrfRef.current
+    if (token === null) return
+    setPoolSaving(true)
+    try {
+      const result = await savePool(token, enabled, { signal: abortRef.current?.signal })
+      if (result.kind === 'ok' && result.value.ok) {
+        setPool(result.value)
+        // The route set just changed; the picker and status counters both move.
+        await loadStatus()
+        await loadAccounts()
+        return
+      }
+      setTransferError(
+        result.kind === 'unavailable'
+          ? t('accounts.unavailable')
+          : result.kind === 'ok'
+            ? (result.value.error?.message ?? t('pool.failed'))
+            : result.message,
+      )
+    } catch (error) {
+      if (isAbortError(error)) return
+      setTransferError(errorMessage(t, error))
+    } finally {
+      setPoolSaving(false)
+    }
+  }, [loadStatus, loadAccounts, t])
+
+  const adoptDesktop = useCallback(async (): Promise<void> => {
+    const token = csrfRef.current
+    if (token === null) return
+    setAdopting(true)
+    try {
+      // Adopting is an import: build the document from what the list shows.
+      if (accounts.kind !== 'ready') return
+      const desktop = accounts.value.accounts.find((row) => row.origin === 'desktop')
+      if (desktop === undefined) return
+      const exported = await exportAccounts(token, { signal: abortRef.current?.signal })
+      if (exported.kind !== 'ok' || !exported.value.ok || exported.value.bundle === undefined) {
+        setTransferError(t('accounts.transferFailed'))
+        return
+      }
+      const document = {
+        ...exported.value.bundle,
+        accounts: exported.value.bundle.accounts.filter(
+          (entry) => entry.origin === 'desktop' || entry.origin === undefined,
+        ),
+      }
+      const result = await importAccounts(token, document, { signal: abortRef.current?.signal })
+      if (result.kind !== 'ok' || !result.value.ok) {
+        setTransferError(
+        result.kind === 'unavailable'
+          ? t('accounts.unavailable')
+          : result.kind === 'ok'
+            ? (result.value.error?.message ?? t('pool.failed'))
+            : result.message,
+      )
+        return
+      }
+      await loadAccounts()
+      await loadStatus()
+      await loadPool()
+    } catch (error) {
+      if (isAbortError(error)) return
+      setTransferError(errorMessage(t, error))
+    } finally {
+      setAdopting(false)
+    }
+  }, [accounts, loadAccounts, loadStatus, loadPool, t])
+
   const loadCredits = useCallback(async (): Promise<void> => {
     setCredits({ kind: 'loading' })
     try {
@@ -337,7 +423,8 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     // without this call they would sit in `idle` and read as "loading" forever.
     void loadAuthState()
     void loadAccounts()
-  }, [loadStatus, loadCredits, loadAuthState, loadAccounts])
+    void loadPool()
+  }, [loadStatus, loadCredits, loadAuthState, loadAccounts, loadPool])
 
   // The catalog is only fetched once the user opens the models tab, and only
   // after `/status` supplied the CSRF token the POST needs.
@@ -361,11 +448,12 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
       await loadCredits()
       await loadAuthState()
       await loadAccounts()
+      await loadPool()
       if (diagnostics.kind !== 'idle') await loadDiagnostics()
     } finally {
       setRedetecting(false)
     }
-  }, [loadStatus, loadCredits, loadAuthState, loadAccounts, loadDiagnostics, diagnostics.kind])
+  }, [loadStatus, loadCredits, loadAuthState, loadAccounts, loadPool, loadDiagnostics, diagnostics.kind])
 
   const toggle = useCallback((id: string): void => {
     setDraft((previous) => (previous === null ? previous : toggleModel(previous, id)))
@@ -532,6 +620,11 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
             importing={importing}
             transferNotice={transferNotice}
             transferError={transferError}
+            pool={pool}
+            onTogglePool={(enabled) => void togglePool(enabled)}
+            poolSaving={poolSaving}
+            onAdoptDesktop={() => void adoptDesktop()}
+            adopting={adopting}
           />
         ) : null}
 
