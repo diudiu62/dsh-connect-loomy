@@ -194,6 +194,8 @@ export interface AccountsBundle {
     userId?: string
     label?: string
     addedAt?: number
+    /** Where it came from; informational, ignored on import. */
+    origin?: 'plugin' | 'desktop'
   }>
 }
 
@@ -389,29 +391,42 @@ export function createAccountsStore(options: {
     },
 
     async exportBundle() {
-      // Export what the plugin can actually route to, not just what it stores.
-      //
-      // The desktop client's session is a legitimate credential the user may
-      // want to carry to another machine — and it is often the *only* one they
-      // have (they signed in through Loomy.app, never through the card). Not
-      // exporting it produced "no accounts to export" for a user who was
-      // visibly signed in, which is the bug this mirrors `routes()` to avoid.
+      // Export **every credential this host can see**, not just what the store
+      // happens to hold: the desktop client's session is a real sign-in the
+      // user may want on another machine, and it is invisible to the store by
+      // design (the plugin never writes that file). Previously any stored
+      // account silently excluded it, so "export" did not mean "export what I
+      // am signed in as".
       const stored = await load(true)
-      const accounts =
-        stored.length > 0
-          ? stored.map((account) => ({
-              slot: account.slot,
-              session: account.session,
-              ...(account.phone === undefined ? {} : { phone: account.phone }),
-              ...(account.userId === undefined ? {} : { userId: account.userId }),
-              ...(account.label === undefined ? {} : { label: account.label }),
-              addedAt: account.addedAt,
-            }))
-          : await (async () => {
-              const desktop = await options.readDesktop?.()
-              if (desktop?.found !== true || desktop.session === undefined) return []
-              return [{ slot: 1, session: desktop.session }]
-            })()
+      const desktop = await options.readDesktop?.()
+      const sessions = new Set(stored.map((account) => account.session))
+
+      const accounts: Array<{
+        slot: number
+        session: string
+        phone?: string
+        userId?: string
+        label?: string
+        addedAt?: number
+        origin?: 'plugin' | 'desktop'
+      }> = stored.map((account) => ({
+        slot: account.slot,
+        session: account.session,
+        ...(account.phone === undefined ? {} : { phone: account.phone }),
+        ...(account.userId === undefined ? {} : { userId: account.userId }),
+        ...(account.label === undefined ? {} : { label: account.label }),
+        addedAt: account.addedAt,
+        origin: 'plugin' as const,
+      }))
+
+      // Append the desktop sign-in when it is a credential we do not already
+      // hold. Its slot is one past the highest stored slot so the bundle never
+      // collides with an existing row on import.
+      if (desktop?.found === true && desktop.session !== undefined && !sessions.has(desktop.session)) {
+        const nextSlot = stored.reduce((highest, account) => Math.max(highest, account.slot), 0) + 1
+        accounts.push({ slot: nextSlot, session: desktop.session, origin: 'desktop' as const })
+      }
+
       return {
         bundle: {
           kind: 'dsh-connect-loomy/accounts',
@@ -421,8 +436,8 @@ export function createAccountsStore(options: {
         },
         paths:
           stored.length > 0
-            ? [accountsFilePath(options.storageDir())]
-            : [options.storageDir() + ' (desktop client session)'],
+            ? [accountsFilePath(options.storageDir()), ...(desktop?.found === true ? ['desktop client session'] : [])]
+            : [accountsFilePath(options.storageDir())],
       }
     },
 

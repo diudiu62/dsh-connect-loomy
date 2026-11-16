@@ -37,7 +37,15 @@ export interface AccountExportView {
     kind: 'dsh-connect-loomy/accounts'
     version: 1
     exportedAt: number
-    accounts: Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string; addedAt?: number }>
+    accounts: Array<{
+      slot: number
+      session: string
+      phone?: string
+      userId?: string
+      label?: string
+      addedAt?: number
+      origin?: 'plugin' | 'desktop'
+    }>
   }
   /** Upstream session lifetime, for the card's warning. */
   sessionTtlDays?: number

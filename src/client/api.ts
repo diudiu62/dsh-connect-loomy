@@ -58,7 +58,15 @@ export interface LoomyAccountsBundle {
   kind: 'dsh-connect-loomy/accounts'
   version: 1
   exportedAt: number
-  accounts: Array<{ slot: number; session: string; phone?: string; userId?: string; label?: string; addedAt?: number }>
+  accounts: Array<{
+    slot: number
+    session: string
+    phone?: string
+    userId?: string
+    label?: string
+    addedAt?: number
+    origin?: 'plugin' | 'desktop'
+  }>
 }
 
 /** `POST /accounts/export` */

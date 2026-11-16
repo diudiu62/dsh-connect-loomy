@@ -335,3 +335,41 @@ test('export falls back to the desktop session when nothing is stored', async ()
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('export includes the desktop session even when stored accounts exist', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-exp-both-'))
+  try {
+    const desktopSession = 'd'.repeat(32)
+    const store = createAccountsStore({
+      storageDir: () => dir,
+      now: () => 7000,
+      readDesktop: async () => ({ found: true, session: desktopSession, maskedPhone: '181****0898' }),
+    })
+    await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
+
+    const exported = await store.exportBundle()
+    assert.equal(exported.bundle.accounts.length, 2, 'the desktop sign-in must not be dropped')
+    assert.equal(exported.bundle.accounts[0].session, SESSION_A)
+    assert.equal(exported.bundle.accounts[0].origin, 'plugin')
+    assert.equal(exported.bundle.accounts[1].session, desktopSession)
+    assert.equal(exported.bundle.accounts[1].origin, 'desktop')
+    // Its slot must not collide with a stored row, or import would overwrite it.
+    assert.equal(exported.bundle.accounts[1].slot, 2)
+
+    // A desktop session identical to a stored one is not exported twice.
+    const dupDir = mkdtempSync(join(tmpdir(), 'loomy-exp-dup-'))
+    try {
+      const dup = createAccountsStore({
+        storageDir: () => dupDir,
+        now: () => 7000,
+        readDesktop: async () => ({ found: true, session: SESSION_A }),
+      })
+      await dup.add({ session: SESSION_A, phone: '13800000001' })
+      assert.equal((await dup.exportBundle()).bundle.accounts.length, 1)
+    } finally {
+      rmSync(dupDir, { recursive: true, force: true })
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
