@@ -154,9 +154,8 @@ export function AccountDrawer({ t, csrfToken, creditsByAccount, onClose, onChang
           disabled={refreshing}
           onClick={() => void refresh()}
           title={t('drawer.refreshHint')}
-          aria-label={t('drawer.refresh')}
         >
-          {refreshing ? '⋯' : '⟳'}
+          {refreshing ? t('drawer.refreshing') : t('drawer.refresh')}
         </button>
         <button type="button" className="loomy-drawer-close" onClick={onClose} aria-label={t('drawer.close')}>
           ×

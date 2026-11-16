@@ -43,7 +43,7 @@ export const SETTINGS_TAB_ID = 'loomy'
 /** Bumped when the client half's shape changes; printed at mount. */
 export { normalizeImportDocument } from './api.js'
 
-export const CLIENT_BUILD_MARKER = 'settings-section+pill-near-model-v3+login-v4+multi-account-v5+pool-v14+ui-v29'
+export const CLIENT_BUILD_MARKER = 'settings-section+pill-near-model-v3+login-v4+multi-account-v5+pool-v14+ui-v30'
 
 /** Slot-entry identity of the composer credit readout. */
 export const COMPOSER_PILL_ID = 'dsh-connect-loomy-composer-pill'

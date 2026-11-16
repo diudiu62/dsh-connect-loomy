@@ -35,6 +35,7 @@ export type LoomyLocaleKey =
   | 'drawer.open'
   | 'drawer.refresh'
   | 'drawer.refreshHint'
+  | 'drawer.refreshing'
   | 'composer.pillBare'
   | 'composer.pillPending'
   | 'composer.pillTitle'
@@ -354,8 +355,9 @@ export const en: Record<LoomyLocaleKey, string> = {
   'drawer.switchFailed': 'Could not switch the account.',
   'drawer.desktopHint': 'Add it in Settings → Loomy to make it selectable.',
   'drawer.open': 'Choose account',
-  'drawer.refresh': 'Refresh points',
+  'drawer.refresh': 'Refresh',
   'drawer.refreshHint': 'Re-read the balances from Loomy (bypasses the cache).',
+  'drawer.refreshing': 'Reading…',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy credits are still loading. Click to refresh.',
   'composer.pillTitle': 'Loomy credits — available {available} (monthly {balance} + today {daily}). Click to refresh.',
@@ -582,8 +584,9 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'drawer.switchFailed': '切换账号失败。',
   'drawer.desktopHint': '到「设置 → Loomy」加入后才能选择。',
   'drawer.open': '选择账号',
-  'drawer.refresh': '刷新积分',
+  'drawer.refresh': '刷新',
   'drawer.refreshHint': '重新从 Loomy 读取余额（跳过缓存）。',
+  'drawer.refreshing': '读取中…',
   'composer.pillBare': 'Loomy',
   'composer.pillPending': 'Loomy 积分还在读取中，点击可重试。',
   'composer.pillTitle': 'Loomy 积分：可用 {available}（包月剩余 {balance} + 今日额度 {daily}）。点击可刷新。',

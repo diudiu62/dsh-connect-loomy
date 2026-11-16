@@ -49,16 +49,22 @@ export const CARD_CSS = `
 .loomy-drawer-head { display: flex; align-items: center; gap: 8px; }
 .loomy-drawer-refresh {
   margin-left: auto;
-  border: none;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.18));
+  border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary, #6b7280);
-  font-size: 14px;
-  line-height: 1;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
   cursor: pointer;
-  padding: 0 2px;
+  white-space: nowrap;
 }
-.loomy-drawer-refresh:disabled { opacity: 0.5; cursor: default; }
-.loomy-drawer-refresh:hover:not(:disabled) { color: var(--dsw-alias-label-primary, #1f2328); }
+.loomy-drawer-refresh:hover:not(:disabled) {
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.1));
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+.loomy-drawer-refresh:disabled { opacity: 0.55; cursor: default; }
 .loomy-drawer-close {
   border: none;
   background: transparent;
