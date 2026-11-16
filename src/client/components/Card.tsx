@@ -331,7 +331,13 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
   useEffect(() => {
     void loadStatus()
     void loadCredits()
-  }, [loadStatus, loadCredits])
+    // These two have their own preconditions (a status read for the CSRF token,
+    // an account list), so they are loaded here rather than lazily on a tab:
+    // the account panel renders both the login state and the account rows, and
+    // without this call they would sit in `idle` and read as "loading" forever.
+    void loadAuthState()
+    void loadAccounts()
+  }, [loadStatus, loadCredits, loadAuthState, loadAccounts])
 
   // The catalog is only fetched once the user opens the models tab, and only
   // after `/status` supplied the CSRF token the POST needs.
@@ -353,11 +359,13 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     try {
       await loadStatus()
       await loadCredits()
+      await loadAuthState()
+      await loadAccounts()
       if (diagnostics.kind !== 'idle') await loadDiagnostics()
     } finally {
       setRedetecting(false)
     }
-  }, [loadStatus, loadCredits, loadDiagnostics, diagnostics.kind])
+  }, [loadStatus, loadCredits, loadAuthState, loadAccounts, loadDiagnostics, diagnostics.kind])
 
   const toggle = useCallback((id: string): void => {
     setDraft((previous) => (previous === null ? previous : toggleModel(previous, id)))

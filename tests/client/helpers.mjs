@@ -302,6 +302,29 @@ export function defaultRoutes(overrides = {}) {
     '/plugins/dsh-connect-loomy/status': { body: STATUS },
     '/plugins/dsh-connect-loomy/credits': { body: CREDITS },
     '/plugins/dsh-connect-loomy/diagnostics': { body: DIAGNOSTICS },
+    '/plugins/dsh-connect-loomy/auth/state': {
+      body: {
+        ok: true,
+        pluginLoggedIn: false,
+        effectiveSource: 'desktop',
+        maskedPhone: '138****0000',
+      },
+    },
+    '/plugins/dsh-connect-loomy/accounts': {
+      body: {
+        ok: true,
+        accounts: [
+          {
+            id: 'desktop-1',
+            slot: 1,
+            route: 'loomy',
+            displayName: 'Loomy',
+            origin: 'desktop',
+            maskedPhone: '138****0000',
+          },
+        ],
+      },
+    },
     '/plugins/dsh-connect-loomy/refresh': { body: CATALOG },
     '/plugins/dsh-connect-loomy/save': (init) => {
       const request = JSON.parse(init.body)

@@ -96,8 +96,12 @@ test('signed out: host next steps are rendered as executable actions', async () 
     assert.ok(text.includes('下一步'))
     const steps = [...container.querySelectorAll('.loomy-steps li')].map((item) => item.textContent)
     assert.deepEqual(steps, ['打开 Loomy 桌面端并登录', '确认 Loomy 在后台运行', '点「重新检测」'])
+    // The sign-in badge comes from the account Section; the login section adds
+    // its own source badge (which is legitimate extra information), so assert
+    // on the account badge rather than on the whole badge set.
     const badges = [...container.querySelectorAll('.loomy-badge')].map((badge) => badge.textContent)
-    assert.deepEqual(badges, ['未登录'])
+    assert.equal(badges[0], '未登录')
+    assert.ok(badges.includes('来源：桌面端'))
   })
 })
 
@@ -209,7 +213,7 @@ test('status transport failure renders an error with a retry that re-reads', asy
   assert.equal(calls.filter((call) => call.url === STATUS_URL).length, 2)
 })
 
-test('credits payload is only read, never written: all calls are GET except refresh/save', async () => {
+test('mounting the card issues no writes at all', async () => {
   await setupDom()
   const { entry, t } = mountPlugin()
   const calls = installFetch(defaultRoutes())
@@ -218,9 +222,41 @@ test('credits payload is only read, never written: all calls are GET except refr
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
+  // Every read the card needs on mount (status, credits, auth state, accounts)
+  // must be a GET: rendering a panel must never mutate anything.
   const methods = calls.map((call) => call.init.method ?? 'GET')
-  assert.deepEqual(methods, ['GET', 'GET'])
+  assert.ok(
+    methods.every((method) => method === 'GET'),
+    `mount issued a non-GET call: ${JSON.stringify(methods)}`,
+  )
+  assert.ok(calls.some((call) => call.url === STATUS_URL))
   assert.ok(!calls.some((call) => call.url.endsWith('/refresh')))
   assert.ok(!calls.some((call) => call.url.endsWith('/save')))
+  assert.ok(!calls.some((call) => call.url.endsWith('/accounts/remove')))
+  assert.ok(!calls.some((call) => call.url.endsWith('/accounts/import')))
   assert.ok(CREDITS.records.length > 0)
+})
+
+test('mount loads the account list and the login state (never stuck on loading)', async () => {
+  await setupDom()
+  const { entry, t } = mountPlugin()
+  const calls = installFetch(defaultRoutes())
+
+  await renderCard(entry, t, async ({ container }) => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // Regression: both reads used to be declared but never fired, so the panel
+    // rendered "loading" forever while every route answered fine.
+    assert.ok(
+      calls.some((call) => call.url.endsWith('/accounts')),
+      'mounting the card must request /accounts',
+    )
+    assert.ok(
+      calls.some((call) => call.url.endsWith('/auth/state')),
+      'mounting the card must request /auth/state',
+    )
+    const text = container.textContent
+    assert.ok(!text.includes('账号\n加载中'), 'the account panel must not stay on loading')
+    // The fixture's desktop account proves the rows actually rendered.
+    assert.ok(text.includes('loomy'), 'the account route is rendered')
+  })
 })
