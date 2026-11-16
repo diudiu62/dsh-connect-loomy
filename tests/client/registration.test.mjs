@@ -385,7 +385,7 @@ test('the badge stays short: Loomy plus the figure, sum when rotating', async ()
             fetchedAt: 1,
             // The single route reports the active account's own points.
             perAccount: [
-              { route: 'loomy', account: '18912342700', balance: 35500, dailyBalance: 5000, availableBalance: 40500 },
+              { accountId: 'a1', route: 'loomy', account: '18912342700', balance: 35500, dailyBalance: 5000, availableBalance: 40500 },
             ],
             records: [],
           },
@@ -408,4 +408,68 @@ test('the badge stays short: Loomy plus the figure, sum when rotating', async ()
   assert.equal(await render(false), 'Loomy · 40,500')
   // Any account may be charged next, so the badge shows what is left in total.
   assert.equal(await render(true), 'Loomy · 42,000')
+})
+
+test('switching account in the drawer moves the badge figure', async () => {
+  await setupDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  let activeId = 'acc1'
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-loomy/credits': {
+        body: {
+          ok: true,
+          balance: 44200,
+          dailyBalance: 5300,
+          availableBalance: 49500,
+          fetchedAt: 1,
+          // Two accounts behind ONE route: the badge must follow the account,
+          // not the route id, or it would never move.
+          perAccount: [
+            { accountId: 'acc1', route: 'loomy', account: '18912342700', balance: 35500, dailyBalance: 5000, availableBalance: 40500 },
+            { accountId: 'acc2', route: 'loomy', account: '17166422065', balance: 8700, dailyBalance: 300, availableBalance: 9000 },
+          ],
+          records: [],
+        },
+      },
+      '/plugins/dsh-connect-loomy/accounts/active': (init) => {
+        if (init?.method === 'POST') activeId = JSON.parse(init.body).id
+        return new Response(JSON.stringify({ ok: true, activeId, rotating: false }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+      '/plugins/dsh-connect-loomy/pool': { body: { ok: true, enabled: false, accountCount: 2, active: false } },
+      '/plugins/dsh-connect-loomy/accounts': {
+        body: {
+          ok: true,
+          accounts: [
+            { id: 'acc1', slot: 1, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '18912342700' },
+            { id: 'acc2', slot: 2, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '17166422065' },
+          ],
+          routes: [{ route: 'loomy', displayName: 'Loomy', origin: 'plugin', slot: 1 }],
+        },
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      const badge = () => container.querySelector('.loomy-pill')?.textContent ?? ''
+      assert.equal(badge(), 'Loomy · 40,500', 'starts on the first account')
+
+      await click(container.querySelector('.loomy-pill'))
+      const rows = [...container.querySelectorAll('.loomy-drawer-row')]
+      assert.equal(rows.length, 2)
+      await click(rows[1])
+      await new Promise((resolve) => setTimeout(resolve, 60))
+
+      assert.equal(badge(), 'Loomy · 9,000', 'the second account owns a different balance')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
 })

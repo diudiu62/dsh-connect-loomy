@@ -87,12 +87,12 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   const [creditsByAccount, setCreditsByAccount] = useState<Map<string, { available: number; error?: string }>>(new Map())
   /** Rotation decides per call, so no single account's figure is "the" figure. */
   const [rotating, setRotating] = useState(false)
+  /** Which account the single route currently uses; the figure follows it. */
+  const [activeId, setActiveId] = useState<string | undefined>(undefined)
   const inFlight = useRef<AbortController | null>(null)
 
   const load = useCallback(
-    (signal: AbortSignal, route: string) => {
-      // The route id is internal; the picker names each group after the account,
-      // so the badge reads the same word the user just selected.
+    (signal: AbortSignal) => {
       fetchStatus({ signal })
         .then((result) => {
           if (result.kind === 'ok') setCsrfToken(result.value.csrfToken ?? null)
@@ -102,7 +102,9 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
         })
       fetchActiveAccount({ signal })
         .then((result) => {
-          if (result.kind === 'ok') setRotating(result.value.rotating === true)
+          if (result.kind !== 'ok') return
+          setRotating(result.value.rotating === true)
+          setActiveId(result.value.activeId)
         })
         .catch(() => {
           // Keep the per-account figure; it is never wrong, only narrower.
@@ -140,9 +142,9 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
     if (!owns || provider === undefined) return undefined
     ensureStyles()
     const controller = new AbortController()
-    load(controller.signal, provider)
+    load(controller.signal)
     return () => controller.abort()
-  }, [owns, provider, load])
+  }, [owns, load])
 
   const openDrawer = useCallback(() => {
     if (!owns) return
@@ -184,7 +186,10 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
   // putting a phone number here made the badge wider than the model picker.
   //   rotation on  → the sum, because any account may be charged next;
   //   rotation off → that account's own balance.
-  const own = credits?.perAccount?.find((entry) => entry.route === provider)
+  // Look the figure up by **account**, not by route: every account shares the
+  // single `loomy` route, so a route lookup always returned whichever account
+  // came first and the badge never moved when the user switched.
+  const own = credits?.perAccount?.find((entry) => entry.accountId === activeId)
   const amount = rotating ? credits?.availableBalance : (own?.availableBalance ?? credits?.availableBalance)
   const accountName = t?.('composer.pillBare') ?? 'Loomy'
 
@@ -226,9 +231,7 @@ export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) 
           csrfToken={csrfToken}
           creditsByAccount={creditsByAccount}
           onClose={() => setOpen(false)}
-          onChanged={() => {
-            if (provider !== undefined) load(new AbortController().signal, provider)
-          }}
+          onChanged={() => load(new AbortController().signal)}
         />
       ) : null}
     </span>
