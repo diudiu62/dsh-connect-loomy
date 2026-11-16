@@ -113,7 +113,7 @@ test('with no stored account, the desktop session becomes slot 1', async () => {
     const store = createAccountsStore({
       storageDir: () => dir,
       now: () => 1000,
-      readDesktop: async () => ({ found: true, session: SESSION_A, maskedPhone: '138****0001' }),
+      readDesktop: async () => ({ found: true, session: SESSION_A, phone: '138****0001' }),
     })
     const routes = await store.routes({ force: true })
     assert.equal(routes.length, 1)
@@ -132,12 +132,12 @@ test('with no stored account, the desktop session becomes slot 1', async () => {
   }
 })
 
-test('routeDisplayName distinguishes slots and never leaks a raw phone', () => {
+test('routeDisplayName distinguishes slots and shows the phone as stored', () => {
   const first = routeDisplayName({ slot: 1, phone: '13800000001' })
   const second = routeDisplayName({ slot: 2, phone: '13800000002' })
   assert.equal(first.startsWith('Loomy · '), true)
   assert.equal(second.startsWith('Loomy 2 · '), true)
-  assert.equal(first.includes('13800000001'), false, 'the full number must not appear')
+  assert.equal(first.includes('13800000001'), true, 'the number is shown: this is the user\'s own machine')
   assert.equal(routeDisplayName({ slot: 3, label: '工作号' }), 'Loomy 3 · 工作号')
   assert.equal(routeDisplayName({ slot: 4 }), 'Loomy 4 · 账号 4')
 })
@@ -290,7 +290,7 @@ test('import accepts the desktop client auth-session.json verbatim', async () =>
 
     const routes = await store.routes({ force: true })
     assert.equal(routes[0].route, 'loomy')
-    assert.equal(routes[0].displayName.includes('162****0818'), true)
+    assert.equal(routes[0].displayName.includes('16292320818'), true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -321,7 +321,7 @@ test('export falls back to the desktop session when nothing is stored', async ()
     const store = createAccountsStore({
       storageDir: () => dir,
       now: () => 9000,
-      readDesktop: async () => ({ found: true, session: SESSION_A, maskedPhone: '181****0898' }),
+      readDesktop: async () => ({ found: true, session: SESSION_A, phone: '181****0898' }),
     })
     const exported = await store.exportBundle()
     assert.equal(exported.bundle.accounts.length, 1, 'a visible sign-in must be exportable')
@@ -343,7 +343,7 @@ test('export includes the desktop session even when stored accounts exist', asyn
     const store = createAccountsStore({
       storageDir: () => dir,
       now: () => 7000,
-      readDesktop: async () => ({ found: true, session: desktopSession, maskedPhone: '181****0898' }),
+      readDesktop: async () => ({ found: true, session: desktopSession, phone: '181****0898' }),
     })
     await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
 

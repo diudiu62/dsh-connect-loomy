@@ -173,7 +173,7 @@ function SignInBody({ t, status }: { t: LoomyT; status: Loadable<LoomyStatus>; o
   return (
     <div className="loomy-panel">
       <FactRow label={t('account.phone')}>
-        {account === null ? t('common.none') : account.maskedPhone}
+        {account === null ? t('common.none') : account.phone}
       </FactRow>
       <FactRow label={t('account.loginAt')}>
         {account === null ? t('common.none') : formatDateTime(account.loginAt)}

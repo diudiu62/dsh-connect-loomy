@@ -71,8 +71,8 @@ test('readAuthSession parses the real document shape and masks the account', asy
   assert.equal(snapshot.found, true)
   assert.equal(snapshot.sourcePath, path)
   assert.equal(snapshot.session, SESSION, 'the raw session is available in memory')
-  assert.equal(snapshot.maskedPhone, '138****5678')
-  assert.equal(snapshot.maskedUserId, '1234**********5678')
+  assert.equal(snapshot.phone, '138****5678')
+  assert.equal(snapshot.userId, '1234**********5678')
   assert.equal(snapshot.loginAt, 1_794_574_693_000)
   assert.equal(snapshot.candidates[0].state, 'ok')
   // A non-reversible fingerprint scopes caches; it must not be the token.
@@ -82,7 +82,7 @@ test('readAuthSession parses the real document shape and masks the account', asy
 
   const account = accountViewOf(snapshot)
   assert.deepEqual(account, {
-    maskedPhone: '138****5678',
+    phone: '138****5678',
     loginAt: 1_794_574_693_000,
     userId: '1234**********5678',
   })
@@ -167,7 +167,7 @@ test('candidates are inspected in order and the first valid one wins', async (t)
 
   assert.equal(snapshot.found, true)
   assert.equal(snapshot.sourcePath, valid)
-  assert.equal(snapshot.maskedPhone, '139****1111')
+  assert.equal(snapshot.phone, '139****1111')
   assert.deepEqual(
     snapshot.candidates.map((entry) => entry.state),
     ['invalid_json', 'ok'],
@@ -180,21 +180,21 @@ test('createAuthStore caches for the TTL and invalidate() forces a re-read', asy
   let clock = 0
   const store = createStore({ candidates: [candidate(path)], now: () => clock, ttlMs: () => 5_000 })
 
-  assert.equal((await store.read()).maskedPhone, '138****5678')
+  assert.equal((await store.read()).phone, '138****5678')
 
   // A desktop re-login rewrites the file; inside the TTL the old snapshot is
   // served, which keeps one model request from re-reading the file repeatedly.
   writeAuthFile(dir, authDocument({ phone: '13900001111', session: 'f'.repeat(32) }))
-  assert.equal((await store.read()).maskedPhone, '138****5678')
+  assert.equal((await store.read()).phone, '138****5678')
 
   clock = 6_000
   const refreshed = await store.read()
-  assert.equal(refreshed.maskedPhone, '139****1111')
+  assert.equal(refreshed.phone, '139****1111')
   assert.equal(refreshed.session, 'f'.repeat(32))
 
   writeAuthFile(dir, authDocument({ phone: '13700002222', session: 'e'.repeat(32) }))
   store.invalidate()
-  assert.equal((await store.read()).maskedPhone, '137****2222')
+  assert.equal((await store.read()).phone, '137****2222')
 })
 
 test('redactSensitive removes token-like fragments from verbatim upstream text', () => {

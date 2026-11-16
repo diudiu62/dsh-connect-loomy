@@ -62,7 +62,25 @@ export function uniqueStrings(values: readonly string[]): string[] {
 }
 
 /**
- * Mask a phone number for display: `13812341234` → `138****1234`.
+ * The phone number as the settings card shows it.
+ *
+ * Unmasked on purpose: this is the user's own machine, the value came from
+ * their own login, and a masked number makes it impossible to tell two
+ * accounts apart or to recognise which one a code was sent to. Masking is
+ * kept for *logs* (see `maskPhone` / `redactSensitive`), where the value would
+ * outlive its purpose in a file the user never asked to contain it.
+ */
+export function displayPhone(value: unknown): string | undefined {
+  return asString(value)
+}
+
+/** The local user id as the settings card shows it (unmasked, see displayPhone). */
+export function displayUserId(value: unknown): string | undefined {
+  return asString(value)
+}
+
+/**
+ * Mask a phone number for logs: `13812341234` → `138****1234`.
  *
  * The host never exposes the raw number — not in logs, not in a cache file,
  * not on an HTTP route and not on the command line. Short inputs degrade to a

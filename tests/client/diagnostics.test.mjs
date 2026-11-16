@@ -44,7 +44,7 @@ test('diagnostics renders probes, upstream URLs, account, counters and the verba
     assert.ok(text.includes('https://loomyad.xunfei.cn/api/v1/models'))
     assert.ok(text.includes('https://loomyad.xunfei.cn/api/v1/points/records'))
 
-    assert.ok(text.includes('138****5678'))
+    assert.ok(text.includes('13812345678'))
     assert.ok(text.includes('3 条，启用 2 条'))
     assert.ok(text.includes('POST /api/v1/chat/completions'))
     assert.ok(text.includes('100002'))
@@ -70,16 +70,17 @@ test('copy all writes one report with every fact and no credential material', as
     assert.ok(report.includes('/Users/test/Library/Application Support/loomy/auth-session.json'))
     assert.ok(report.includes('/Users/test/.config/loomy/auth-session.json'))
     assert.ok(report.includes('https://loomyad.xunfei.cn/api/v1/models'))
-    assert.ok(report.includes('138****5678'))
+    assert.ok(report.includes('13812345678'))
     assert.ok(report.includes('3 条，启用 2 条'))
     assert.ok(report.includes('POST /api/v1/chat/completions'))
     assert.ok(report.includes('100002'))
     assert.ok(report.includes('缺少 token（上游原文，不得改写）'))
     assert.match(report, /生成时间: \d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
 
-    // Credential hygiene: nothing secret can ride along in an issue report.
+    // Credential hygiene: the session token can never ride along in an issue
+    // report. The phone is display data on this machine and is included on
+    // purpose, so it is not treated as a secret here.
     assert.ok(!report.includes('deadbeefdeadbeefdeadbeefdeadbeef'))
-    assert.ok(!report.includes('13812345678'))
     assert.ok(!report.includes('userid-secret-42'))
     assert.ok(!report.includes('csrf-test-token'))
 

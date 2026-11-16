@@ -30,7 +30,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { isRecord, maskPhone, maskUserId, safeErrorMessage } from './shared/text.js'
+import { displayPhone, displayUserId, isRecord, safeErrorMessage } from './shared/text.js'
 
 /** Current accounts-file schema version. */
 export const ACCOUNTS_VERSION = 1
@@ -68,7 +68,7 @@ export interface AccountRoute {
   origin: 'plugin' | 'desktop'
   /** Account id (`undefined` for the desktop fallback, which is not stored). */
   accountId?: string
-  maskedPhone?: string
+  phone?: string
 }
 
 /** The base route id; slot 1 uses it verbatim. */
@@ -211,7 +211,7 @@ export interface ImportResult {
 
 /** Route display name for one account. */
 export function routeDisplayName(account: Pick<StoredAccount, 'slot' | 'label' | 'phone'>): string {
-  const identity = account.label?.trim() || maskPhone(account.phone) || `账号 ${account.slot}`
+  const identity = account.label?.trim() || displayPhone(account.phone) || `账号 ${account.slot}`
   // Slot 1 keeps the bare product name so the single-account case looks exactly
   // as it did before multi-account; later slots are disambiguated by identity.
   return account.slot === 1 ? `Loomy · ${identity}` : `Loomy ${account.slot} · ${identity}`
@@ -221,7 +221,7 @@ export function routeDisplayName(account: Pick<StoredAccount, 'slot' | 'label' |
 export function createAccountsStore(options: {
   storageDir: () => string
   /** Desktop fallback: the snapshot the desktop client currently holds. */
-  readDesktop?: () => Promise<{ found: boolean; session?: string; maskedPhone?: string; maskedUserId?: string }>
+  readDesktop?: () => Promise<{ found: boolean; session?: string; phone?: string; userId?: string }>
   ttlMs?: () => number
   now?: () => number
 } = { storageDir: () => '.' } as never): AccountsStore {
@@ -295,7 +295,7 @@ export function createAccountsStore(options: {
           displayName: routeDisplayName(account),
           origin: 'plugin' as const,
           accountId: account.id,
-          ...(maskPhone(account.phone) === undefined ? {} : { maskedPhone: maskPhone(account.phone) }),
+          ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
         }))
       }
       // No plugin account: fall back to the desktop client's sign-in on slot 1,
@@ -308,7 +308,7 @@ export function createAccountsStore(options: {
             slot: 1,
             displayName: 'Loomy',
             origin: 'desktop' as const,
-            ...(desktop.maskedPhone === undefined ? {} : { maskedPhone: desktop.maskedPhone }),
+            ...(desktop.phone === undefined ? {} : { phone: desktop.phone }),
           },
         ]
       }
@@ -575,8 +575,8 @@ export interface StoredAccountView {
   displayName: string
   origin: 'plugin' | 'desktop'
   label?: string
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   addedAt?: number
 }
 
@@ -594,8 +594,8 @@ export async function accountsView(
       displayName: routeDisplayName(account),
       origin: 'plugin' as const,
       ...(account.label === undefined ? {} : { label: account.label }),
-      ...(maskPhone(account.phone) === undefined ? {} : { maskedPhone: maskPhone(account.phone) }),
-      ...(maskUserId(account.userId) === undefined ? {} : { maskedUserId: maskUserId(account.userId) }),
+      ...(displayPhone(account.phone) === undefined ? {} : { phone: displayPhone(account.phone) }),
+      ...(displayUserId(account.userId) === undefined ? {} : { userId: displayUserId(account.userId) }),
       addedAt: account.addedAt,
     }))
   }
@@ -606,6 +606,6 @@ export async function accountsView(
     route: route.route,
     displayName: route.displayName,
     origin: 'desktop' as const,
-    ...(route.maskedPhone === undefined ? {} : { maskedPhone: route.maskedPhone }),
+    ...(route.phone === undefined ? {} : { phone: route.phone }),
   }))
 }

@@ -88,7 +88,7 @@ test('login service: send → cooldown → verify → session stored, precedence
     const sent = await service.sendCode('13800001234')
     assert.equal(sent.ok, true)
     assert.equal(sent.msgid, 'm1')
-    assert.equal(sent.maskedPhone.startsWith('138'), true)
+    assert.equal(sent.phone.startsWith('138'), true)
     assert.equal(sent.resendAfterMs, 60_000)
 
     // Cooldown: a second send before the window is refused without a call.

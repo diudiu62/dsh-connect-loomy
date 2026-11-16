@@ -16,11 +16,11 @@ English | [中文](README.md)
 - **Multi-account** — every signed-in account becomes its own provider route (`loomy`, `loomy-2`, `loomy-3`, …): pick that route in the model picker to spend that account, so two conversations can use two accounts in parallel. Slot numbers are assigned once and never renumbered, so removing an account cannot silently rebind another one's selections to a different person's quota
 - **Account export / import** — the account tab exports every account as one JSON bundle; paste it on another machine and sign in there without an SMS code. The bundle holds the session tokens themselves (equivalent to a password); the upstream issues them with a **14-day** lifetime, so a copied bundle lasts until the original session expires, and signing out on either side revokes it
 - **In-plugin sign-in** (account tab) — log in with an SMS code straight from the settings card; the signing keys are decrypted at runtime from the local Loomy.app bundle (never stored, never logged), account sessions live in `accounts.json` (0600), and the desktop client's sign-in is used automatically while no plugin account exists
-- **Settings section** (account / models / diagnostics) — masked phone and sign-in time, per-model enable with draft-then-save semantics, and a read-only diagnostics table that quotes the upstream error verbatim for bug reports.
+- **Settings section** (account / models / diagnostics) — phone and sign-in time (shown in full: this is local data), per-model enable with draft-then-save semantics, and a read-only diagnostics table that quotes the upstream error verbatim for bug reports.
 - **Draft-then-save model selection** — refreshing the catalog lands names and multipliers immediately but never overwrites unsaved picks; saving hot-swaps the route's model set (emits `llm/models-updated`), no restart needed.
 - **Read-only credits** — `balance`, `dailyBalance`, `availableBalance` plus the ledger, cached 60s host-side with single-flight; failures surface the upstream message and never fake a zero.
 - **Composer readout** — `Loomy · 39,314` beside the model picker, only while the session is on the Loomy route (via the host's `modelSelection` projection). It shrinks instead of pushing the model name out.
-- **CLI** — `status` / `doctor` with `--json`: masked account, catalog counts, upstream probes.
+- **CLI** — `status` / `doctor` with `--json`: account, catalog counts and upstream probes (phone shown in full; nothing goes to logs).
 
 ## Install (web profile)
 

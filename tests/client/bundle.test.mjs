@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { RAW_PHONE } from '../host/helpers.mjs'
 import {
   DIAGNOSTICS,
   STATUS,
@@ -84,7 +85,9 @@ test('no console output carries session, full phone or user id during a full int
   assert.ok(!joined.includes('csrf-test-token'), 'CSRF token must not be logged')
 })
 
-test('the diagnostics fixture itself stays masked (guards the test data)', () => {
-  assert.ok(STATUS.account.maskedPhone.includes('****'))
-  assert.ok(DIAGNOSTICS.account.maskedPhone.includes('****'))
+test('the fixtures carry the phone unmasked, as the host now reports it', () => {
+  // Display data is local and unmasked on purpose; logs are guarded separately
+  // by the redaction test above.
+  assert.equal(STATUS.account.phone, RAW_PHONE)
+  assert.equal(DIAGNOSTICS.account.phone, RAW_PHONE)
 })

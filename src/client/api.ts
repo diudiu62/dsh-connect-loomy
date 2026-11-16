@@ -95,8 +95,8 @@ export interface LoomyAccountRow {
   displayName: string
   origin: 'plugin' | 'desktop'
   label?: string
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   addedAt?: number
 }
 
@@ -112,8 +112,8 @@ export interface LoomyAuthState {
   ok: boolean
   pluginLoggedIn: boolean
   effectiveSource: 'plugin' | 'desktop' | 'env' | 'none'
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   loginAt?: number
   error?: { code: string; message: string }
 }
@@ -121,7 +121,7 @@ export interface LoomyAuthState {
 /** `POST /auth/send-code` response. */
 export interface LoomyAuthSendCode {
   ok: boolean
-  maskedPhone?: string
+  phone?: string
   resendAfterMs?: number
   expiresMs?: number
   error?: { code: string; message: string }
@@ -130,8 +130,8 @@ export interface LoomyAuthSendCode {
 /** `POST /auth/login` response. */
 export interface LoomyAuthLogin {
   ok: boolean
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   error?: { code: string; message: string }
 }
 
@@ -157,7 +157,7 @@ export interface LoomyUpstreamError {
 /** Signed-in account facts. The phone number is already masked host-side. */
 export interface LoomyAccount {
   /** Masked phone number, e.g. `138****1234`. Never a full number. */
-  maskedPhone: string
+  phone: string
   /** Epoch milliseconds of the sign-in. */
   loginAt: number
   /** Host-side opaque user id (not rendered; kept for diagnostics completeness). */
@@ -225,7 +225,7 @@ export interface LoomyDiagnostics {
     modelsUrl: string
     pointsUrl: string
   }
-  account: { maskedPhone: string; userId: string } | null
+  account: { phone: string; userId: string } | null
   catalog: { total: number; enabled: number }
   lastError?: LoomyUpstreamError
 }

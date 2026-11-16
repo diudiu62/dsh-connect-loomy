@@ -52,11 +52,11 @@ export interface AuthSnapshot {
   /** The raw session. In memory only — never serialise this object as-is. */
   session?: string
   /** Masked phone from the file (or `unknown`). */
-  maskedPhone?: string
+  phone?: string
   /** Epoch ms of the credential's last change. */
   loginAt?: number
   /** Masked local user id. */
-  maskedUserId?: string
+  userId?: string
   /** SHA-256 prefix of the session, used only to invalidate caches after re-login. */
   fingerprint?: string
 }
@@ -173,8 +173,8 @@ export async function readAuthSession(
       candidates: views,
       session: document.session,
       fingerprint: sessionFingerprint(document.session),
-      maskedPhone: maskPhone(document.phone),
-      maskedUserId: maskUserId(document.userId),
+      phone: maskPhone(document.phone),
+      userId: maskUserId(document.userId),
       loginAt: document.loginAt,
     }
   }
@@ -205,9 +205,9 @@ export async function readAuthSession(
 export function accountViewOf(snapshot: AuthSnapshot): AccountView | null {
   if (!snapshot.found) return null
   return {
-    maskedPhone: snapshot.maskedPhone ?? '未知',
+    phone: snapshot.phone ?? '未知',
     loginAt: snapshot.loginAt ?? 0,
-    userId: snapshot.maskedUserId ?? '',
+    userId: snapshot.userId ?? '',
   }
 }
 

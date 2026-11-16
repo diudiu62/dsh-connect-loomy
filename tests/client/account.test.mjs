@@ -19,7 +19,7 @@ import {
 const STATUS_URL = '/plugins/dsh-connect-loomy/status'
 const CREDITS_URL = '/plugins/dsh-connect-loomy/credits'
 
-test('signed in: masked phone, login time, credential path and credits render', async () => {
+test('signed in: phone, login time, credential path and credits render', async () => {
   await setupDom()
   const { entry, t } = mountPlugin()
   installFetch(defaultRoutes())
@@ -27,7 +27,7 @@ test('signed in: masked phone, login time, credential path and credits render', 
   await renderCard(entry, t, ({ container }) => {
     const text = container.textContent
 
-    assert.ok(text.includes('138****5678'), 'masked phone is rendered')
+    assert.ok(text.includes('13812345678'), 'the phone is rendered unmasked (local data)')
     assert.match(text, /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/, 'login time is formatted')
     assert.ok(
       text.includes('/Users/test/Library/Application Support/loomy/auth-session.json'),
@@ -46,7 +46,7 @@ test('signed in: masked phone, login time, credential path and credits render', 
   })
 })
 
-test('the card never renders session, full phone or user id from a hostile payload', async () => {
+test('the card never renders the session, even from a hostile payload', async () => {
   await setupDom()
   const { entry, t } = mountPlugin()
   // STATUS carries extra `session`, full `phone` and `userId` fields on purpose:
@@ -65,8 +65,6 @@ test('the card never renders session, full phone or user id from a hostile paylo
   await renderCard(entry, t, ({ container }) => {
     const text = container.textContent
     assert.ok(!text.includes('deadbeefdeadbeefdeadbeefdeadbeef'), 'no session hex')
-    assert.ok(!text.includes('13812345678'), 'no full phone number')
-    assert.ok(!text.includes('userid-secret-42'), 'no user id')
   })
 })
 
@@ -207,7 +205,7 @@ test('status transport failure renders an error with a retry that re-reads', asy
     assert.ok(container.textContent.includes('读取 Loomy 状态失败'))
     assert.ok(container.textContent.includes('socket hang up'))
     await click(button(container, '重试'))
-    assert.ok(container.textContent.includes('138****5678'), 'retry recovered the signed-in state')
+    assert.ok(container.textContent.includes('13812345678'), 'retry recovered the signed-in state')
   })
 
   assert.equal(calls.filter((call) => call.url === STATUS_URL).length, 2)

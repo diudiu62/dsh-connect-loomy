@@ -11,7 +11,10 @@
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequestModule } from 'node:http'
 import { test } from 'node:test'
-import { SESSION, jsonResponse, modelsBody, pointsBody } from './helpers.mjs'
+import { SESSION, jsonResponse, modelsBody, pointsBody,
+  RAW_PHONE,
+  RAW_USER_ID,
+} from './helpers.mjs'
 import {
   ROUTE_PREFIX,
   buildDiagnostics,
@@ -30,8 +33,8 @@ const SNAPSHOT = {
   sourcePath: '/tmp/loomy/auth-session.json',
   session: SESSION,
   fingerprint: '0123456789abcdef',
-  maskedPhone: '138****5678',
-  maskedUserId: '1234**********5678',
+  phone: RAW_PHONE,
+  userId: RAW_USER_ID,
   loginAt: 1_794_574_693_000,
   candidates: [
     { path: '/tmp/loomy/auth-session.json', exists: true, state: 'ok', reason: '已读取登录态' },
@@ -198,9 +201,9 @@ test('buildStatus reports a host-computed enabled list and the CSRF token', asyn
   assert.equal(status.ok, true)
   assert.equal(status.csrfToken, CSRF)
   assert.deepEqual(status.account, {
-    maskedPhone: '138****5678',
+    phone: RAW_PHONE,
     loginAt: 1_794_574_693_000,
-    userId: '1234**********5678',
+    userId: '123456789012345678',
   })
   assert.deepEqual(status.credential, { sourcePath: '/tmp/loomy/auth-session.json', found: true })
   assert.deepEqual(status.catalog, { total: 4, enabled: 2, refreshedAt: 5 })
@@ -210,8 +213,8 @@ test('buildStatus reports a host-computed enabled list and the CSRF token', asyn
 
   const serialised = JSON.stringify(status)
   assert.ok(!serialised.includes(SESSION), 'the session must never be serialised to the browser')
-  assert.ok(!serialised.includes('13812345678'))
-  assert.ok(!serialised.includes('123456789012345678'))
+  // Phone and user id are display data on this machine, so they ARE reported;
+  // only the session is a secret the browser must never receive.
 })
 
 test('buildStatus: a never-saved selection returns every chat model id', async () => {
@@ -262,7 +265,7 @@ test('buildDiagnostics probes all three upstream endpoints with host-computed da
     modelsUrl: `${BASE}/models`,
     pointsUrl: `${BASE}/points/records`,
   })
-  assert.deepEqual(diagnostics.account, { maskedPhone: '138****5678', userId: '1234**********5678' })
+  assert.deepEqual(diagnostics.account, { phone: RAW_PHONE, userId: '123456789012345678' })
   assert.deepEqual(diagnostics.catalog, { total: 4, enabled: 4 })
   assert.deepEqual(
     diagnostics.probes.map((probe) => [probe.path, probe.ok]),
@@ -277,7 +280,7 @@ test('buildDiagnostics probes all three upstream endpoints with host-computed da
 
   const serialised = JSON.stringify(diagnostics)
   assert.ok(!serialised.includes(SESSION))
-  assert.ok(!serialised.includes('13812345678'))
+  // The phone is display data and is reported; the session is not.
 })
 
 test('buildDiagnostics surfaces each upstream failure verbatim', async () => {

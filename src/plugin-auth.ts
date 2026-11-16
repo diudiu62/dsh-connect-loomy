@@ -22,7 +22,7 @@ import { homedir } from 'node:os'
 import { DEFAULT_SESSION_TTL_MS } from './shared/types.js'
 import { authSessionCandidates, type AuthCandidate } from './shared/paths.js'
 import { sessionFingerprint, type AuthSnapshot } from './auth.js'
-import { maskPhone, maskUserId, safeErrorMessage, toEpochMs } from './shared/text.js'
+import { displayPhone, displayUserId, safeErrorMessage, toEpochMs } from './shared/text.js'
 
 /** File name inside the plugin storage directory. */
 export const PLUGIN_AUTH_FILE = 'auth-session.json'
@@ -153,8 +153,8 @@ export async function readPluginAuthSession(
 export function pluginAuthSnapshotView(read: Awaited<ReturnType<typeof readPluginAuthSession>>): {
   exists: boolean
   path: string
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   fingerprint?: string
   problem?: string
 } {
@@ -164,8 +164,8 @@ export function pluginAuthSnapshotView(read: Awaited<ReturnType<typeof readPlugi
   return {
     exists: true,
     path: read.path,
-    ...(read.phone === undefined ? {} : { maskedPhone: maskPhone(read.phone) }),
-    ...(read.userId === undefined ? {} : { maskedUserId: maskUserId(read.userId) }),
+    ...(read.phone === undefined ? {} : { phone: displayPhone(read.phone) }),
+    ...(read.userId === undefined ? {} : { userId: displayUserId(read.userId) }),
     fingerprint: sessionFingerprint(read.session as string),
   }
 }

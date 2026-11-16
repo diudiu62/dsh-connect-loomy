@@ -107,7 +107,7 @@ test('status --json reports the masked account, catalog and live credits', async
   })
 
   assert.equal(document.ok, true)
-  assert.equal(document.account.maskedPhone, '138****5678')
+  assert.equal(document.account.phone, '138****5678')
   assert.equal(document.account.userId, '1234**********5678')
   assert.equal(document.account.loginAt, 1_794_574_693_000)
   assert.equal(document.credential.found, true)
@@ -149,7 +149,7 @@ test('doctor --json reports credential candidates and upstream desc verbatim', a
   })
 
   assert.equal(document.ok, true)
-  assert.equal(document.account.maskedPhone, '138****5678')
+  assert.equal(document.account.phone, '138****5678')
   assert.equal(document.credential.found, true)
   const candidate = document.candidates.find((entry) => entry.path === authPath)
   assert.equal(candidate.state, 'ok')

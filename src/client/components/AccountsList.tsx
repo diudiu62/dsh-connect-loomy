@@ -127,7 +127,7 @@ function AccountRow({
   removing: boolean
   onRemove: (id: string) => void
 }) {
-  const identity = row.label?.trim() || row.maskedPhone || t('accounts.unknownPhone')
+  const identity = row.label?.trim() || row.phone || t('accounts.unknownPhone')
   return (
     <div className="loomy-account-row">
       <div className="loomy-account-main">
@@ -139,10 +139,10 @@ function AccountRow({
       <div className="loomy-account-meta">
         <span className="loomy-label">{t('accounts.route')}</span>
         <code className="loomy-code">{row.route}</code>
-        {row.maskedUserId === undefined ? null : (
+        {row.userId === undefined ? null : (
           <>
             <span className="loomy-label">{t('accounts.userId')}</span>
-            <span className="loomy-value">{row.maskedUserId}</span>
+            <span className="loomy-value">{row.userId}</span>
           </>
         )}
         {row.addedAt === undefined ? null : (

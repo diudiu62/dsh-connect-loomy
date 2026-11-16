@@ -118,7 +118,7 @@ export function formatDiagnosticsReport(input: DiagnosticsReportInput, t: Transl
   lines.push('')
 
   const account = diagnostics?.account ?? status?.account ?? null
-  lines.push(`${t('diagnostics.report.account')}: ${account === null ? t('diagnostics.report.none') : account.maskedPhone}`)
+  lines.push(`${t('diagnostics.report.account')}: ${account === null ? t('diagnostics.report.none') : account.phone}`)
 
   const counters = catalog ?? diagnostics?.catalog ?? status?.catalog ?? null
   lines.push(

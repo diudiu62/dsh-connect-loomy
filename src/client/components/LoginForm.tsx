@@ -85,7 +85,7 @@ export function LoginForm({ t, csrfToken, authState, onChanged, signal }: LoginF
           expiresAt: Date.now() + (result.value.expiresMs ?? 300_000),
         })
         setCode('')
-        setNotice(t('login.codeSent', { phone: result.value.maskedPhone ?? phone.trim() }))
+        setNotice(t('login.codeSent', { phone: result.value.phone ?? phone.trim() }))
         return
       }
       setError(routeErrorMessage(result) ?? t('login.sendFailed'))

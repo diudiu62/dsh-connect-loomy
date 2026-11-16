@@ -71,8 +71,8 @@ export interface AccountRowView {
   displayName: string
   origin: 'plugin' | 'desktop'
   label?: string
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   addedAt?: number
 }
 
@@ -91,15 +91,15 @@ export interface AuthStateView {
   pluginLoggedIn: boolean
   /** Where the *effective* session came from, for the card's copy. */
   effectiveSource: 'plugin' | 'desktop' | 'env' | 'none'
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
   loginAt?: number
 }
 
 /** `POST /auth/send-code` — one SMS sent. */
 export interface AuthSendCodeView {
   ok: boolean
-  maskedPhone?: string
+  phone?: string
   /** Re-send cooldown and code lifetime, for the card's countdown. */
   resendAfterMs?: number
   expiresMs?: number
@@ -108,8 +108,8 @@ export interface AuthSendCodeView {
 /** `POST /auth/login` — code verified, session stored. */
 export interface AuthLoginView {
   ok: boolean
-  maskedPhone?: string
-  maskedUserId?: string
+  phone?: string
+  userId?: string
 }
 
 /** `POST /auth/logout` — plugin-side session removed. */
@@ -171,7 +171,7 @@ export interface UpstreamErrorView {
 /** Signed-in account facts. The phone number and user id are already masked. */
 export interface AccountView {
   /** Masked phone number, e.g. `138****1234`. Never a full number. */
-  maskedPhone: string
+  phone: string
   /** Epoch milliseconds of the credential's last change. */
   loginAt: number
   /** Masked local user id. Never the raw value. */
@@ -266,7 +266,7 @@ export interface DiagnosticsView {
   ok: true
   probes: DiagnosticsProbe[]
   upstream: { baseUrl: string; modelsUrl: string; pointsUrl: string }
-  account: { maskedPhone: string; userId: string } | null
+  account: { phone: string; userId: string } | null
   catalog: { total: number; enabled: number }
   lastError?: UpstreamErrorView
 }

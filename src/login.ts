@@ -11,7 +11,8 @@
  *    session, and the status view reflects the login immediately.
  *
  * Every failure returns an executable message; nothing here throws, nothing
- * logs the phone number (masked only), the code, the msgid or the session.
+ * logs the phone number, the code, the msgid or the session — the card shows
+ * the phone in full (local data), the log never records it at all.
  *
  * @module dsh-connect-loomy/login
  */
@@ -19,7 +20,7 @@
 import { PHONE_PATTERN, resolveXfyunConfig, resetXfyunConfigCache, sendSmsCode, verifySmsCode } from './shared/xfyun.js'
 import { clearPluginAuthSession, writePluginAuthSession } from './plugin-auth.js'
 import { routeForSlot } from './accounts.js'
-import { maskPhone, maskUserId } from './shared/text.js'
+import { displayPhone, displayUserId } from './shared/text.js'
 
 /** Rate-limit guard for `sendMsgCode`: the account API rejects early resends. */
 export const SEND_CODE_COOLDOWN_MS = 60_000
@@ -29,15 +30,15 @@ export const SMS_EXPIRES_MS = 300_000
 
 /** What one "send code" turn produced. */
 export type SendCodeResult =
-  | { ok: true; msgid: string; maskedPhone: string; resendAfterMs: number; expiresMs: number }
+  | { ok: true; msgid: string; phone: string; resendAfterMs: number; expiresMs: number }
   | { ok: false; code: string; message: string }
 
 /** What one "verify code" turn produced. */
 export type LoginResult =
   | {
       ok: true
-      maskedPhone?: string
-      maskedUserId?: string
+      phone?: string
+      userId?: string
       sourcePath: string
       fingerprint: string
       /** Slot the account landed on; the route is derived from it. */
@@ -104,7 +105,7 @@ export function createLoginService(deps: LoginDeps) {
         return {
           ok: false,
           code: 'cooldown',
-          message: `验证码已发送（${maskPhone(pending.phone)}），${waitSeconds} 秒后才能重发。`,
+          message: `验证码已发送（${displayPhone(pending.phone)}），${waitSeconds} 秒后才能重发。`,
         }
       }
       const result = await sendSmsCode({
@@ -119,7 +120,7 @@ export function createLoginService(deps: LoginDeps) {
       return {
         ok: true,
         msgid: result.msgid,
-        maskedPhone: maskedValidPhone(phone),
+        phone: maskedValidPhone(phone),
         resendAfterMs: SEND_CODE_COOLDOWN_MS,
         expiresMs: SMS_EXPIRES_MS,
       }
@@ -176,8 +177,8 @@ export function createLoginService(deps: LoginDeps) {
         deps.invalidateAuth()
         return {
           ok: true,
-          ...(result.phone === undefined ? {} : { maskedPhone: maskPhone(result.phone) }),
-          ...(result.userId === undefined ? {} : { maskedUserId: maskUserId(result.userId) }),
+          ...(result.phone === undefined ? {} : { phone: displayPhone(result.phone) }),
+          ...(result.userId === undefined ? {} : { userId: displayUserId(result.userId) }),
           sourcePath: `accounts.json#slot-${added.account.slot}`,
           fingerprint: added.account.id,
           slot: added.account.slot,
@@ -199,8 +200,8 @@ export function createLoginService(deps: LoginDeps) {
       deps.invalidateAuth()
       return {
         ok: true,
-        ...(result.phone === undefined ? {} : { maskedPhone: maskPhone(result.phone) }),
-        ...(result.userId === undefined ? {} : { maskedUserId: maskUserId(result.userId) }),
+        ...(result.phone === undefined ? {} : { phone: displayPhone(result.phone) }),
+        ...(result.userId === undefined ? {} : { userId: displayUserId(result.userId) }),
         sourcePath: written.path,
         fingerprint: written.fingerprint,
       }
@@ -242,7 +243,7 @@ export function createLoginService(deps: LoginDeps) {
 
 /** A validated phone always masks; the fallback only satisfies the type. */
 function maskedValidPhone(phone: string): string {
-  return maskPhone(phone) ?? '*'.repeat(phone.length)
+  return displayPhone(phone) ?? '*'.repeat(phone.length)
 }
 
 export type LoginService = ReturnType<typeof createLoginService>

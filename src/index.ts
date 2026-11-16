@@ -38,7 +38,7 @@ import { stateFilePath } from './shared/paths.js'
 import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
 import { createLoginService } from './login.js'
 import { accountIdOf, createAccountsStore, type AccountRoute } from './accounts.js'
-import { maskPhone, maskUserId } from './shared/text.js'
+import { displayPhone, displayUserId } from './shared/text.js'
 import { createSessionPrecheck } from './auth.js'
 import { createStateStore } from './shared/state.js'
 import { PROVIDER_ID } from './shared/types.js'
@@ -186,8 +186,8 @@ export function apply(ctx: Context, config: LoomyConfig): void {
         ? {
             found: true,
             ...(snapshot.session === undefined ? {} : { session: snapshot.session }),
-            ...(snapshot.maskedPhone === undefined ? {} : { maskedPhone: snapshot.maskedPhone }),
-            ...(snapshot.maskedUserId === undefined ? {} : { maskedUserId: snapshot.maskedUserId }),
+            ...(snapshot.phone === undefined ? {} : { phone: snapshot.phone }),
+            ...(snapshot.userId === undefined ? {} : { userId: snapshot.userId }),
           }
         : { found: false }
     },
@@ -209,8 +209,8 @@ export function apply(ctx: Context, config: LoomyConfig): void {
       candidates: [],
       session: account.session,
       fingerprint: accountIdOf(account.session),
-      ...(account.phone === undefined ? {} : { maskedPhone: maskPhone(account.phone) }),
-      ...(account.userId === undefined ? {} : { maskedUserId: maskUserId(account.userId) }),
+      ...(account.phone === undefined ? {} : { phone: displayPhone(account.phone) }),
+      ...(account.userId === undefined ? {} : { userId: displayUserId(account.userId) }),
       loginAt: account.addedAt,
       sourceOrigin: 'plugin' as const,
     }

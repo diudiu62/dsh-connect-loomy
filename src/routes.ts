@@ -235,7 +235,7 @@ export async function buildDiagnostics(deps: RouteDeps): Promise<DiagnosticsView
     ok: true,
     probes,
     upstream: urls,
-    account: account === null ? null : { maskedPhone: account.maskedPhone, userId: account.userId },
+    account: account === null ? null : { phone: account.phone, userId: account.userId },
     catalog: { total: models.length, enabled: enabledIds.length },
     ...(lastError === undefined ? {} : { lastError }),
   }
@@ -392,8 +392,8 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
                 : snapshot.sourceOrigin === 'env'
                   ? 'env'
                   : 'desktop',
-          ...(snapshot.found ? { ...(snapshot.maskedPhone === undefined ? {} : { maskedPhone: snapshot.maskedPhone }) } : {}),
-          ...(snapshot.found && snapshot.maskedUserId !== undefined ? { maskedUserId: snapshot.maskedUserId } : {}),
+          ...(snapshot.found ? { ...(snapshot.phone === undefined ? {} : { phone: snapshot.phone }) } : {}),
+          ...(snapshot.found && snapshot.userId !== undefined ? { userId: snapshot.userId } : {}),
           ...(snapshot.found && snapshot.loginAt !== undefined ? { loginAt: snapshot.loginAt } : {}),
         }
         corsSafeJson(res, 200, payload)
@@ -416,7 +416,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
         }
         const result = await deps.login.sendCode(phone)
         const payload: AuthSendCodeView = result.ok
-          ? { ok: true, maskedPhone: result.maskedPhone, resendAfterMs: result.resendAfterMs, expiresMs: result.expiresMs }
+          ? { ok: true, phone: result.phone, resendAfterMs: result.resendAfterMs, expiresMs: result.expiresMs }
           : { ok: false }
         if (!result.ok) {
           corsSafeJson(res, 200, { ...payload, error: { code: result.code, message: result.message } })
@@ -448,8 +448,8 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
         }
         const payload: AuthLoginView = {
           ok: true,
-          ...(result.maskedPhone === undefined ? {} : { maskedPhone: result.maskedPhone }),
-          ...(result.maskedUserId === undefined ? {} : { maskedUserId: result.maskedUserId }),
+          ...(result.phone === undefined ? {} : { phone: result.phone }),
+          ...(result.userId === undefined ? {} : { userId: result.userId }),
         }
         corsSafeJson(res, 200, payload)
       },

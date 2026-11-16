@@ -236,7 +236,7 @@ async function doctorDocument(): Promise<DoctorDocument> {
 function printStatusHuman(document: StatusDocument): void {
   const lines: string[] = ['Loomy Connect status', '===================']
   lines.push(
-    `Account: ${document.account === null ? 'signed out' : `${document.account.maskedPhone} (since ${formatDateTime(document.account.loginAt)})`}`,
+    `Account: ${document.account === null ? 'signed out' : `${document.account.phone} (since ${formatDateTime(document.account.loginAt)})`}`,
   )
   lines.push(
     `Credential: ${document.credential.found ? 'found' : 'missing'} — ${document.credential.sourcePath}${document.credential.reason === undefined ? '' : ` (${document.credential.reason})`}`,
@@ -263,7 +263,7 @@ function printStatusHuman(document: StatusDocument): void {
 
 function printDoctorHuman(document: DoctorDocument): void {
   const lines: string[] = ['Loomy Connect doctor', '====================']
-  lines.push(`Account: ${document.account === null ? 'signed out' : document.account.maskedPhone}`)
+  lines.push(`Account: ${document.account === null ? 'signed out' : document.account.phone}`)
   lines.push('Credential candidates:')
   for (const candidate of document.candidates) {
     lines.push(`  [${candidate.state}] ${candidate.path}${candidate.reason === '' ? '' : ` — ${candidate.reason}`}`)

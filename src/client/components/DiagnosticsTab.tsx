@@ -136,7 +136,7 @@ function DiagnosticsBody({
       </div>
 
       <FactRow label={t('diagnostics.account')}>
-        {account === null ? t('common.none') : account.maskedPhone}
+        {account === null ? t('common.none') : account.phone}
       </FactRow>
 
       <FactRow label={t('diagnostics.catalog')}>

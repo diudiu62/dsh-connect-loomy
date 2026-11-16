@@ -307,7 +307,7 @@ export function defaultRoutes(overrides = {}) {
         ok: true,
         pluginLoggedIn: false,
         effectiveSource: 'desktop',
-        maskedPhone: '138****0000',
+        phone: '138****0000',
       },
     },
     '/plugins/dsh-connect-loomy/accounts': {
@@ -320,7 +320,7 @@ export function defaultRoutes(overrides = {}) {
             route: 'loomy',
             displayName: 'Loomy',
             origin: 'desktop',
-            maskedPhone: '138****0000',
+            phone: '138****0000',
           },
         ],
       },
@@ -341,7 +341,7 @@ export function defaultRoutes(overrides = {}) {
 export const STATUS = {
   ok: true,
   csrfToken: 'csrf-test-token',
-  account: { maskedPhone: '138****5678', loginAt: 1794574693000, userId: 'userid-secret-42' },
+  account: { phone: '13812345678', loginAt: 1794574693000, userId: 'userid-secret-42' },
   credential: {
     sourcePath: '/Users/test/Library/Application Support/loomy/auth-session.json',
     found: true,
@@ -394,7 +394,7 @@ export const DIAGNOSTICS = {
     modelsUrl: 'https://loomyad.xunfei.cn/api/v1/models',
     pointsUrl: 'https://loomyad.xunfei.cn/api/v1/points/records',
   },
-  account: { maskedPhone: '138****5678', userId: 'userid-secret-42' },
+  account: { phone: '13812345678', userId: 'userid-secret-42' },
   catalog: { total: 3, enabled: 2 },
   lastError: {
     at: 1794574800000,
