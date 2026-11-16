@@ -308,6 +308,6 @@ test('adding an account is the last row of the account list, not its own section
     // The row lives inside the same section that holds the account rows.
     const section = addRow.closest('.loomy-section')
     assert.ok(section, 'inside a section')
-    assert.ok(section.querySelector('.loomy-rows, .loomy-muted, .loomy-notice'))
+    assert.ok(section.querySelector('.loomy-acct-list'), 'the section holds the account rows')
   })
 })

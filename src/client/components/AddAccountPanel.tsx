@@ -52,8 +52,8 @@ export function AddAccountPanel({
     <div className="loomy-add">
       {/* Sits exactly where the next account row would: adding is one more
           line in the list, not a separate destination. */}
-      <div className="loomy-row loomy-add-row">
-        <span className="loomy-row-identity">{t('add.title')}</span>
+      <div className="loomy-acct-row loomy-add-row">
+        <span className="loomy-acct-identity">{t('add.title')}</span>
         <CardButton
           variant={mode === 'login' ? 'primary' : 'ghost'}
           onClick={() => setMode(mode === 'login' ? null : 'login')}

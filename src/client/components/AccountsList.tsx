@@ -43,10 +43,10 @@ export function AccountsList({
   if (accounts.value.accounts.length === 0) return <p className="loomy-muted">{t('accounts.empty')}</p>
 
   return (
-    <div className="loomy-rows">
+    <div className="loomy-acct-list">
       {accounts.value.accounts.map((row) => (
-        <div className="loomy-row" key={row.id}>
-          <span className="loomy-row-identity">{identityOf(row, t)}</span>
+        <div className="loomy-acct-row" key={row.id}>
+          <span className="loomy-acct-identity">{identityOf(row, t)}</span>
           {row.route.length > 0 ? (
             <code className="loomy-code">{row.route}</code>
           ) : (

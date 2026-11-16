@@ -26,33 +26,32 @@ export const CARD_CSS = `
 .loomy-title { font-size: 15px; font-weight: 600; }
 .loomy-subtitle { color: var(--dsw-alias-label-tertiary, #6b7280); }
 /* Account list: one compact line per account (identity · route · badges · action). */
-.loomy-rows { display: flex; flex-direction: column; gap: 2px; }
-.loomy-row {
+.loomy-acct-list { display: flex; flex-direction: column; gap: 2px; }
+.loomy-acct-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  padding: 5px 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  padding: 4px 6px;
   border-radius: 7px;
   font-size: 12px;
+  line-height: 1.6;
 }
-.loomy-row:hover { background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08)); }
-.loomy-row-identity {
+.loomy-acct-row:hover { background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08)); }
+/* The identity gets the free space and truncates only when truly cramped; the
+   route badge and the action keep their natural width so a row stays a row. */
+.loomy-acct-identity {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 45%;
 }
-.loomy-pool-toggle {
-  margin-top: 4px;
-  border-top: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.1));
-  border-radius: 0;
-  padding-top: 8px;
-}
-
-/* Account tab: one line per fact, so the page reads top-down. */
-.loomy-current-account { font-size: 14px; font-weight: 600; }
+/* Buttons in a row must not inherit a block-level width from the host panel. */
+.loomy-acct-row .loomy-button { flex: 0 0 auto; width: auto; }
 .loomy-row-note {
   margin: 0;
   font-size: 11px;
@@ -67,15 +66,6 @@ export const CARD_CSS = `
   padding-top: 8px;
 }
 .loomy-add-body { margin-left: 6px; }
-.loomy-add-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.12));
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08));
-}
 
 /* Account rows (multi-account): one row per provider route. */
 .loomy-accounts { display: flex; flex-direction: column; gap: 10px; }

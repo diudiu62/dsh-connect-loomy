@@ -152,8 +152,8 @@ function PoolToggle({
   if (pool === null) return null
   const disabled = saving || csrfToken === null
   return (
-    <div className="loomy-row loomy-pool-toggle">
-      <label className="loomy-row-identity">
+    <div className="loomy-acct-row loomy-pool-toggle">
+      <label className="loomy-acct-identity">
         <input
           type="checkbox"
           checked={pool.enabled}
