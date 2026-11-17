@@ -44,6 +44,13 @@ export interface AuthSnapshot {
    * it to say which sign-in is in effect.
    */
   sourceOrigin?: 'env' | 'default' | 'plugin'
+  /**
+   * Which stored account this session came from, when it came from the accounts
+   * store. The provider needs it to attribute a failed call back to that
+   * account; without it nothing can be marked unusable and the rotation filter
+   * has nothing to filter on.
+   */
+  sourceAccountId?: string
   /** Every candidate inspected, in precedence order (doctor / diagnostics). */
   candidates: CredentialCandidateView[]
   /** Machine reason for a failed read. */

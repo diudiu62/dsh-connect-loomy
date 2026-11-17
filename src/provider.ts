@@ -36,7 +36,7 @@
 
 import { BASE_ROUTE, isOurRoute, type AccountRoute } from './accounts.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { POOL_ROUTE, disqualifiesAccount, type AccountPool } from './pool.js'
+import { disqualifiesAccount, type AccountPool } from './pool.js'
 import {
   LlmError,
   resolveImageAttachmentAccess,
@@ -318,7 +318,7 @@ class LoomyAdapter extends PiAiAdapter {
    * function on the shared config, so the only way to give *this* call a
    * specific account is to carry the pick alongside its async context.
    */
-  private readonly poolContext = new AsyncLocalStorage<{ accountId: string; session: string }>()
+  private readonly poolContext = new AsyncLocalStorage<{ accountId?: string; session?: string }>()
 
   constructor(
     config: PiAiAdapterOptions,
@@ -327,39 +327,24 @@ class LoomyAdapter extends PiAiAdapter {
     super(config)
   }
 
-  /** The account this call is bound to, if it went through the pool. */
-  private currentPick(): { accountId: string; session: string } | undefined {
-    return this.poolContext.getStore()
-  }
-
-  /** Used by the shared `resolveApiKey` to pick up this call's pool choice. */
-  currentPickForResolve(): { accountId: string; session: string } | undefined {
+  /** The per-call context `resolveApiKey` writes its pick into. */
+  poolContextForResolve(): { accountId?: string; session?: string } | undefined {
     return this.poolContext.getStore()
   }
 
   override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    if (options.provider !== POOL_ROUTE || this.deps.pool === undefined) {
-      return this.guard(super.stream(options))
-    }
-    const pool = this.deps.pool
     const baseStream = super.stream.bind(this)
-    const self = this
-    return (async function* pooled(): AsyncGenerator<StreamChunk, void, undefined> {
-      const pick = await pool.pick()
-      if (pick.kind === 'empty') {
-        throw new LlmError(pick.reason, 'MISSING_CREDENTIAL')
-      }
-      const store = { accountId: pick.account.id, session: pick.account.session }
-      const inner = self.poolContext.run(store, () => baseStream(options))
-      yield* self.guardForPool(inner)
-    })()
+    return this.wrapCall(options, () => baseStream(options))
   }
 
   /**
-   * The frozen per-step path used by `LlmRuntime` (`prepareCall().stream()`)
-   * bypasses `stream()` and calls the adapter's internal snapshot closure, so
-   * the upgrade must be applied here too — otherwise the production request
-   * path silently loses it while direct `stream()` calls (tests) keep it.
+   * The per-step path the host actually uses.
+   *
+   * `LlmRuntime` calls `prepareCall().stream()` and never `stream()` directly,
+   * so anything wrapped only in `stream()` — the transport upgrade, the account
+   * accounting — is dead code in production while the tests (which call
+   * `stream()`) stay green. This override was lost once during a refactor and
+   * silently took both behaviours with it.
    */
   override async prepareCall(
     provider: string,
@@ -369,8 +354,36 @@ class LoomyAdapter extends PiAiAdapter {
     const call = await super.prepareCall(provider, model, signal)
     return {
       model: call.model,
-      stream: (options: GenerateOptions) => this.guard(call.stream(options)),
+      stream: (options: GenerateOptions) => this.wrapCall(options, () => call.stream(options)),
     }
+  }
+
+  /**
+   * One call, wrapped: accounting context for our routes, `guard()` for all.
+   *
+   * `AsyncLocalStorage.run(store, fn)` only covers what `fn` executes
+   * synchronously. An async generator's body runs on the first `next()`, which
+   * happens well after `run` returned — so wrapping just the creation left
+   * `resolveApiKey` running with no store, and every failure was attributed to
+   * nobody. Each `next()` is therefore executed *inside* the store.
+   */
+  private wrapCall(
+    options: GenerateOptions,
+    invoke: () => AsyncIterable<StreamChunk>,
+  ): AsyncIterable<StreamChunk> {
+    if (!isOurRoute(options.provider) || this.deps.pool === undefined) {
+      return this.guard(invoke())
+    }
+    const self = this
+    return (async function* accounted(): AsyncGenerator<StreamChunk, void, undefined> {
+      const context: { accountId?: string; session?: string } = {}
+      const iterator = self.guardForPool(invoke(), context)[Symbol.asyncIterator]()
+      for (;;) {
+        const step = await self.poolContext.run(context, () => iterator.next())
+        if (step.done === true) return
+        yield step.value
+      }
+    })()
   }
 
   /**
@@ -380,8 +393,10 @@ class LoomyAdapter extends PiAiAdapter {
    * stream that ends in an error never clears a health mark, otherwise a broken
    * account would look healthy again just by being picked.
    */
-  async *guardForPool(upstream: AsyncIterable<StreamChunk>): AsyncGenerator<StreamChunk, void, undefined> {
-    const pick = this.currentPick()
+  async *guardForPool(
+    upstream: AsyncIterable<StreamChunk>,
+    context: { accountId?: string; session?: string },
+  ): AsyncGenerator<StreamChunk, void, undefined> {
     const pool = this.deps.pool
     let contentSeen = false
     try {
@@ -389,15 +404,28 @@ class LoomyAdapter extends PiAiAdapter {
         if (chunkHasContent(chunk)) contentSeen = true
         yield chunk
       }
-      if (contentSeen && pick !== undefined && pool !== undefined) {
-        await pool.markHealthy(pick.accountId).catch(() => undefined)
+      if (contentSeen && context.accountId !== undefined && pool !== undefined) {
+        await pool.markHealthy(context.accountId).catch(() => undefined)
       }
     } catch (error) {
-      if (pick !== undefined && pool !== undefined) {
+      if (context.accountId !== undefined && pool !== undefined) {
         const message = error instanceof Error ? error.message : String(error)
-        if (disqualifiesAccount(message)) {
-          const code = error instanceof LlmError ? error.code : 'CALL_FAILED'
-          await pool.markUnavailable(pick.accountId, code, message).catch(() => undefined)
+        // Keep whatever code the failure carries: an LlmError's own code, or a
+        // provider-level code attached to a plain Error. Falling back to
+        // CALL_FAILED loses the distinction the drawer wants to show.
+        const carried = (error as { code?: unknown } | null)?.code
+        const code =
+          error instanceof LlmError
+            ? error.code
+            : typeof carried === 'string' && carried.length > 0
+              ? carried
+              : 'CALL_FAILED'
+        // The code is authoritative: a MISSING_CREDENTIAL failure means "this
+        // account cannot work", whatever wording the message happens to carry.
+        // Message matching stays for upstream business codes that arrive as
+        // plain text (100002 and friends).
+        if (code === 'MISSING_CREDENTIAL' || disqualifiesAccount(message)) {
+          await pool.markUnavailable(context.accountId, code, message).catch(() => undefined)
         }
       }
       throw error
@@ -590,17 +618,16 @@ export function createProviderRuntime(deps: ProviderDeps): ProviderRuntime {
         // The pool route's account was chosen for this very call and parked in
         // the async context by `stream()`; using it here is what keeps two
         // concurrent calls from spending the same account.
-        if (route === POOL_ROUTE) {
-          const pick = adapterRef?.currentPickForResolve()
-          if (pick === undefined) {
-            throw new LlmError('账号池没有为本次调用选出账号', 'MISSING_CREDENTIAL')
-          }
-          return pick.session
-        }
         const snapshot =
           deps.sessionForRoute === undefined
             ? await deps.readSession()
             : await deps.sessionForRoute(route)
+        // Attribute this call to its account so a failure can bench it.
+        const context = adapterRef?.poolContextForResolve()
+        if (context !== undefined && snapshot.sourceAccountId !== undefined) {
+          context.accountId = snapshot.sourceAccountId
+          context.session = snapshot.session
+        }
         if (!snapshot.found || snapshot.session === undefined) {
           throw new LlmError(missingCredentialMessage(snapshot), 'MISSING_CREDENTIAL')
         }

@@ -76,6 +76,13 @@ export interface RouteDeps {
   creditsForAccount?: (account: { id: string; session: string; phone?: string }) => CreditsCache
   /** The multi-account store. */
   accounts: AccountsStore
+  /**
+   * Clean-up after an account is removed: drop its caches and repoint the
+   * active selection. Without this the removed account's balances stay in
+   * memory and `activeAccountId` keeps naming a row that no longer exists, so
+   * the next call silently bills a different account.
+   */
+  onAccountRemoved?: (id: string) => Promise<void>
   /** Read/write which account the single route authenticates as. */
   activeAccount: {
     read: () => Promise<string | undefined>
@@ -700,6 +707,7 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
           corsSafeJson(res, 200, { ok: false, error: { code: result.code, message: result.message } })
           return
         }
+        await deps.onAccountRemoved?.(id)
         await deps.refreshRoutes()
         corsSafeJson(res, 200, { ok: true, removed: result.removed })
       },

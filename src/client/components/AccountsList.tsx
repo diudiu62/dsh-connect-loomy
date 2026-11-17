@@ -9,6 +9,7 @@
  * @module dsh-connect-loomy/client/components/AccountsList
  */
 
+import { useState } from 'react'
 import type { LoomyAccountRow, LoomyAccounts } from '../api.js'
 import { formatCount } from '../format.js'
 import { Badge, CardButton, Notice } from './common.js'
@@ -30,6 +31,9 @@ export interface AccountsListProps {
   creditsByAccount?: Map<string, { available: number; total: number; error?: string }>
 }
 
+/** Removal is destructive — the session dies with the row — so it asks twice. */
+type ConfirmState = { id: string } | null
+
 /** Render every account as a compact row. */
 export function AccountsList({
   t,
@@ -43,13 +47,18 @@ export function AccountsList({
   exportingId,
   creditsByAccount,
 }: AccountsListProps) {
+  const [confirm, setConfirm] = useState<ConfirmState>(null)
   if (accounts.kind === 'idle' || accounts.kind === 'loading') return <p className="loomy-muted">{t('common.loading')}</p>
   if (accounts.kind === 'stale') return <Notice tone="error">{accounts.message}</Notice>
   if (accounts.kind === 'unavailable') return <p className="loomy-muted">{t('accounts.unavailable')}</p>
   if (accounts.kind === 'failed' || accounts.kind === 'error') {
     return <Notice tone="error">{t('accounts.failed', { message: loadableMessage(accounts, t) })}</Notice>
   }
-  if (accounts.value.accounts.length === 0) return <p className="loomy-muted">{t('accounts.empty')}</p>
+  if (accounts.value.accounts.length === 0) {
+    // Removing the last account takes the provider route with it, so the picker
+    // loses its Loomy group entirely — say that, not just "empty".
+    return <Notice tone="info">{t('accounts.emptyNoRoute')}</Notice>
+  }
 
   return (
     <div className="loomy-acct-list">
@@ -85,13 +94,32 @@ export function AccountsList({
                 >
                   {exportingId === row.id ? t('accounts.exporting') : t('accounts.exportRow')}
                 </CardButton>
-                <CardButton
-                  variant="ghost"
-                  onClick={() => onRemove(row.id)}
-                  disabled={removingId === row.id || csrfToken === null}
-                >
-                  {removingId === row.id ? t('accounts.removing') : t('accounts.remove')}
-                </CardButton>
+                {confirm?.id === row.id ? (
+                  <>
+                    <CardButton
+                      variant="ghost"
+                      onClick={() => {
+                        setConfirm(null)
+                        onRemove(row.id)
+                      }}
+                      disabled={removingId === row.id || csrfToken === null}
+                    >
+                      {removingId === row.id ? t('accounts.removing') : t('accounts.removeConfirm')}
+                    </CardButton>
+                    <CardButton variant="ghost" onClick={() => setConfirm(null)}>
+                      {t('common.cancel')}
+                    </CardButton>
+                  </>
+                ) : (
+                  <CardButton
+                    variant="ghost"
+                    onClick={() => setConfirm({ id: row.id })}
+                    disabled={removingId === row.id || csrfToken === null}
+                    title={t('accounts.removeHint')}
+                  >
+                    {t('accounts.remove')}
+                  </CardButton>
+                )}
               </>
             )}
           </span>

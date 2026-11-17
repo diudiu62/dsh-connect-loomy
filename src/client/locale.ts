@@ -101,6 +101,10 @@ export type LoomyLocaleKey =
   | 'accounts.exportRowHint'
   | 'accounts.routesNow'
   | 'accounts.adopted'
+  | 'accounts.removeConfirm'
+  | 'accounts.removeHint'
+  | 'accounts.emptyNoRoute'
+  | 'common.cancel'
   | 'accounts.creditsInline'
   | 'accounts.creditsError'
   | 'account.credits.total'
@@ -301,6 +305,9 @@ export const en: Record<LoomyLocaleKey, string> = {
   'accounts.exportRowHint': 'Copy this account as a portable bundle.',
   'accounts.routesNow': 'Model picker routes:',
   'accounts.adopted': 'Added as {route} — pick it in the model picker.',
+  'accounts.removeConfirm': 'Remove it',
+  'accounts.removeHint': 'Removes the sign-in from this machine; adding it back needs an SMS code unless you exported it.',
+  'accounts.emptyNoRoute': 'No account. Loomy will not appear in the model picker until you add one.',
   'accounts.creditsInline': '· {available} pts',
   'accounts.creditsError': '· points unavailable',
   'account.credits.total': 'Total (all accounts)',
@@ -387,6 +394,7 @@ export const en: Record<LoomyLocaleKey, string> = {
   'common.copy': 'Copy',
   'common.copied': 'Copied',
   'common.copyFailed': 'Copy failed — select the text and copy it manually.',
+  'common.cancel': 'Cancel',
   'common.none': '—',
   'common.unknownError': 'Unknown error',
   'community.title': 'Community',
@@ -537,6 +545,9 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'accounts.exportRowHint': '把这一个账号导出为可迁移的包。',
   'accounts.routesNow': '模型选择器里的路由：',
   'accounts.adopted': '已添加为 {route}，可在模型选择器里选择。',
+  'accounts.removeConfirm': '确认移除',
+  'accounts.removeHint': '会从本机删除该登录态；除非先导出过，否则重新添加需要验证码。',
+  'accounts.emptyNoRoute': '还没有账号。添加之前，模型选择器里不会出现 Loomy。',
   'accounts.creditsInline': '· {available} 分',
   'accounts.creditsError': '· 积分不可用',
   'account.credits.total': '合计（所有账号）',
@@ -623,6 +634,7 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'common.copy': '复制',
   'common.copied': '已复制',
   'common.copyFailed': '复制失败，请手动选择文本复制。',
+  'common.cancel': '取消',
   'common.none': '—',
   'common.unknownError': '未知错误',
   'community.title': '社群与反馈',

@@ -111,6 +111,7 @@ function makeDeps(overrides = {}) {
     credits: overrides.credits ?? creditsOf(),
     ...(overrides.creditsFor === undefined ? {} : { creditsFor: overrides.creditsFor }),
     ...(overrides.creditsForAccount === undefined ? {} : { creditsForAccount: overrides.creditsForAccount }),
+    ...(overrides.onAccountRemoved === undefined ? {} : { onAccountRemoved: overrides.onAccountRemoved }),
     csrfToken: overrides.csrfToken ?? CSRF,
     baseURL: () => BASE,
     fetchImpl:
@@ -617,4 +618,46 @@ test('one unreadable account does not blank the credits overview', async (t) => 
   assert.equal(body.availableBalance, 100)
   const broken = body.perAccount.find((entry) => entry.accountId === 'acc2')
   assert.equal(broken.error, '缺少 token', 'the failing row says why, verbatim')
+})
+
+test('removing an account runs the clean-up hook before the routes are reconciled', async (t) => {
+  const order = []
+  const removed = []
+  const baseURL = await startRoutes(
+    t,
+    makeDeps({
+      accounts: {
+        ...makeDeps().accounts,
+        remove: async (id) => {
+          removed.push(id)
+          order.push('remove')
+          return { kind: 'ok', removed: true }
+        },
+      },
+      onAccountRemoved: async (id) => {
+        order.push(`cleanup:${id}`)
+      },
+      refreshRoutes: async () => {
+        order.push('refresh')
+      },
+    }),
+  )
+
+  const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/accounts/remove`, {
+    method: 'POST',
+    headers: {
+      host: new URL(baseURL).host,
+      origin: baseURL,
+      'content-type': 'application/json',
+      'x-loomy-csrf': CSRF,
+    },
+    body: JSON.stringify({ id: 'acc-1' }),
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(JSON.parse(response.text).ok, true)
+  assert.deepEqual(removed, ['acc-1'])
+  // Clean-up must happen after the store changed and before the route set is
+  // rebuilt, so the repointed selection is what gets registered.
+  assert.deepEqual(order, ['remove', 'cleanup:acc-1', 'refresh'])
 })

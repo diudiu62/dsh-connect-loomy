@@ -7,6 +7,7 @@ import {
   createAccountPool,
   createAccountsStore,
   createProviderRuntime,
+  NO_POINTS_CODE,
   disqualifiesAccount,
   DEFAULT_POOL_COOLDOWN_MS,
   POOL_ROUTE,
@@ -135,6 +136,146 @@ test('rotation is a mode, not a provider route: the picker keeps one group', asy
       seen.add(pick.account.slot)
     }
     assert.equal(seen.size, 2, 'both accounts get picked')
+  } finally {
+    cleanup()
+  }
+})
+
+test('a benched account is never selected, and "none healthy" is reported as such', async () => {
+  const { store, cleanup } = freshStore()
+  try {
+    const a = await store.add({ session: S('a'), phone: '13800000001' })
+    const b = await store.add({ session: S('b'), phone: '13800000002' })
+    const pool = createAccountPool({ accounts: store, now: () => 1_000_000 })
+
+    await pool.markUnavailable(a.account.id, 'MISSING_CREDENTIAL', '100002 缺少 token')
+
+    // Only the healthy one is ever chosen, whatever the dice say.
+    for (const dice of [0, 0.5, 0.999]) {
+      const pick = await createAccountPool({ accounts: store, now: () => 1_000_000, random: () => dice }).pick()
+      assert.equal(pick.kind, 'ok')
+      assert.equal(pick.account.id, b.account.id)
+    }
+    assert.deepEqual((await pool.usable()).map((x) => x.id), [b.account.id])
+
+    // Bench the second too: the pool must say so rather than hand one back for
+    // the caller to use anyway.
+    await pool.markUnavailable(b.account.id, 'MISSING_CREDENTIAL', 'expired')
+    const none = await pool.pick()
+    assert.equal(none.kind, 'none-healthy')
+    assert.deepEqual(await pool.usable(), [])
+  } finally {
+    cleanup()
+  }
+})
+
+test('an account with no points left is marked unusable with its own reason', async () => {
+  const { store, cleanup } = freshStore()
+  try {
+    const a = await store.add({ session: S('a'), phone: '13800000001' })
+    const pool = createAccountPool({ accounts: store, now: () => 1_000_000 })
+
+    // This is what the credits read does when a balance hits zero.
+    await pool.markUnavailable(a.account.id, NO_POINTS_CODE, '积分不足（可用余额为 0），暂不参与轮换')
+
+    const state = await pool.state()
+    const row = state.entries.find((entry) => entry.id === a.account.id)
+    assert.equal(row.unavailable, true)
+    assert.equal(row.code, NO_POINTS_CODE, 'the drawer can say "no points", not "expired"')
+    assert.deepEqual(await pool.usable(), [], 'a zero-balance account is out of rotation')
+  } finally {
+    cleanup()
+  }
+})
+
+test('both entry points account for the call: stream() and prepareCall().stream()', async () => {
+  // REGRESSION: the adapter's prepareCall override was lost in a refactor, so in
+  // production (LlmRuntime uses prepareCall().stream()) neither the accounting
+  // nor the transport upgrade ran, while tests calling stream() stayed green.
+  const { store, cleanup } = freshStore()
+  const marked = []
+  const healthy = []
+  const pool = {
+    pick: async () => ({ kind: 'empty', reason: 'unused' }),
+    markUnavailable: async (id, code, message) => marked.push([id, code, message]),
+    markHealthy: async (id) => healthy.push(id),
+    usable: async () => [],
+    state: async () => ({ total: 0, healthy: 0, entries: [] }),
+  }
+  try {
+    const account = await store.add({ session: S('a'), phone: '13800000001' })
+
+    const runtime = createProviderRuntime({
+      catalog: {
+        kickStaleRefresh() {},
+        enabledModels: () => [
+          { id: 'm1', name: 'M1', multiplier: 1, contextWindow: 1000, maxOutput: 100, vision: false, efforts: [], defaultEffort: '' },
+        ],
+      },
+      baseURL: () => 'https://example.invalid/api/v1',
+      loomyVersion: () => '0.9.39',
+      readSession: async () => ({ found: false, sourcePath: 'x', candidates: [] }),
+      sessionForRoute: async () => ({
+        found: true,
+        sourcePath: 'accounts.json#slot-1',
+        candidates: [],
+        session: S('a'),
+        sourceAccountId: account.account.id,
+      }),
+      pool,
+      precheck: async () => ({ ok: true, definite: false }),
+    })
+    runtime.setRoutes([{ route: 'loomy', slot: 1, displayName: 'Loomy', origin: 'plugin' }])
+
+    // Replace the base adapter's stream with a stub that fails with a
+    // disqualifying error, then succeeds with content.
+    const baseProto = Object.getPrototypeOf(Object.getPrototypeOf(runtime.adapter))
+    const originalStream = baseProto.stream
+    const originalPrepare = baseProto.prepareCall
+    // The stub must resolve auth like the real adapter does: that is the step
+    // that tells the accounting layer which account this call belongs to.
+    const fakeStream = (behaviour) =>
+      async function* () {
+        const config = this?.config
+        if (config?.resolveApiKey !== undefined) {
+          await config.resolveApiKey('loomy', config.profiles().get('loomy'))
+        }
+        if (behaviour === 'fail') throw Object.assign(new Error('100002 缺少 token'), { code: 'MISSING_CREDENTIAL' })
+        yield { type: 'text', text: 'hello' }
+      }
+
+    try {
+      // `prepareCall` builds its own internal stream, which a stub on
+      // `stream()` cannot reach — so stub the base `prepareCall` itself. That is
+      // exactly the seam the missing override failed to wrap.
+      baseProto.prepareCall = async function () {
+        // Bind to the adapter, as the real implementation does: the stub needs
+        // `this.config.resolveApiKey` to report which account the call uses.
+        return { model: {}, stream: fakeStream('fail').bind(this) }
+      }
+      for (const path of ['stream', 'prepareCall']) {
+        baseProto.stream = fakeStream('fail')
+        const options = { provider: 'loomy', model: 'm1', messages: [] }
+        const sink = async (iterable) => {
+          try {
+            for await (const _chunk of iterable) { /* drain */ }
+          } catch { /* expected */ }
+        }
+        if (path === 'stream') await sink(runtime.adapter.stream(options))
+        else {
+          const call = await runtime.adapter.prepareCall('loomy', 'm1')
+          await sink(call.stream(options))
+        }
+        assert.ok(
+          marked.some(([id, code]) => id === account.account.id && code === 'MISSING_CREDENTIAL'),
+          `${path} must record the failure against the account`,
+        )
+        marked.length = 0
+      }
+    } finally {
+      baseProto.stream = originalStream
+      baseProto.prepareCall = originalPrepare
+    }
   } finally {
     cleanup()
   }

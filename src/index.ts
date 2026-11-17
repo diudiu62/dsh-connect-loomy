@@ -38,7 +38,7 @@ import { stateFilePath } from './shared/paths.js'
 import { createAuthDiscovery } from './shared/discover.js'
 import { authSessionCandidatesWithPlugin, defaultPluginStorageDir } from './plugin-auth.js'
 import { createLoginService } from './login.js'
-import { createAccountPool, POOL_ROUTE } from './pool.js'
+import { createAccountPool, NO_POINTS_CODE, POOL_ROUTE } from './pool.js'
 import { accountIdOf, createAccountsStore, type AccountRoute } from './accounts.js'
 import { displayPhone, displayUserId } from './shared/text.js'
 import { createSessionPrecheck } from './auth.js'
@@ -180,6 +180,7 @@ export {
   disqualifiesAccount,
   DEFAULT_POOL_COOLDOWN_MS,
   POOL_ROUTE,
+  NO_POINTS_CODE,
   type AccountPool,
 } from './pool.js'
 
@@ -248,29 +249,63 @@ export function apply(ctx: Context, config: LoomyConfig): void {
   /**
    * The session the single `loomy` route must authenticate as.
    *
-   * Accounts are plugin state now, not provider routes: this picks the active
-   * account, or a random healthy one when rotation is on, and falls back to the
-   * desktop sign-in. `route` is kept in the signature because pi-ai hands it to
-   * us and a future second route would need it.
+   * Accounts are plugin state, not provider routes. Two rules decide who pays:
+   *
+   * 1. **Rotation on** → a random account that is not benched.
+   * 2. **Rotation off** → the selected account, unless it is benched, in which
+   *    case a healthy one is used and the switch is reported; if none is
+   *    healthy the call fails with every account's reason instead of quietly
+   *    using an account the user was told is unusable.
+   *
+   * "Benched" covers dead sessions, upstream refusals and an account with no
+   * spendable points left (see `creditsForAccount`, which marks those).
    */
   const sessionForRoute = async (_route: string): Promise<AuthSnapshot> => {
     const stateNow = await state.load()
     const stored = await accounts.list({ force: false })
     if (stored.length === 0) return auth.read()
 
+    // Ask the pool, so the cooldown lives in exactly one place.
+    const usable = await pool.usable()
+
+    const benchedSummary = (): string =>
+      stored
+        .map((account) => {
+          const who = account.label ?? account.phone ?? `slot ${account.slot}`
+          const why = account.unavailableMessage ?? account.unavailableCode ?? '不可用'
+          return `${who}：${why}`
+        })
+        .join('；')
+
     const rotate = stateNow.poolEnabled !== false && stored.length > 1
     let chosen: (typeof stored)[number] | undefined
     if (rotate) {
+      if (usable.length === 0) {
+        return {
+          found: false,
+          sourcePath: 'accounts.json',
+          candidates: [],
+          sourceAccountId: undefined,
+          reason: 'missing',
+          problem: `所有账号当前都不可用，已停止调用，避免用坏账号继续失败。原因——${benchedSummary()}。可在输入框旁的账号抽屉里点「刷新」重试，或重新登录相应账号。`,
+        }
+      }
       const pick = await pool.pick()
       chosen = pick.kind === 'empty' ? undefined : pick.account
     } else {
-      chosen = stored.find((account) => account.id === stateNow.activeAccountId) ?? stored[0]
+      const selected = stored.find((account) => account.id === stateNow.activeAccountId)
+      chosen =
+        selected !== undefined && usable.includes(selected)
+          ? selected
+          : (usable[0] ?? undefined)
     }
+
     if (chosen === undefined) return auth.read()
     return {
       found: true,
       sourcePath: `accounts.json#slot-${chosen.slot}`,
       candidates: [],
+      sourceAccountId: chosen.id,
       session: chosen.session,
       fingerprint: accountIdOf(chosen.session),
       ...(chosen.phone === undefined ? {} : { phone: chosen.phone }),
@@ -321,7 +356,7 @@ export function apply(ctx: Context, config: LoomyConfig): void {
   const creditsForAccount = (account: { id: string; session: string }): ReturnType<typeof createCreditsCache> => {
     let cache = creditsByAccountId.get(account.id)
     if (cache === undefined) {
-      cache = createCreditsCache({
+      const inner = createCreditsCache({
         baseURL,
         readSession: async () => ({
           found: true,
@@ -332,6 +367,21 @@ export function apply(ctx: Context, config: LoomyConfig): void {
         pageSize: () => live(config.creditsPageSize),
         ttlMs: () => live(config.creditsTtlMs),
       })
+      // An account with nothing left to spend is unusable in exactly the way a
+      // dead session is: the next call would fail. Reading the balance is the
+      // only moment we learn that, so mark it here (and only here — a zero
+      // balance is not an error, it is a fact about the account).
+      cache = {
+        read: async (readOptions) => {
+          const result = await inner.read(readOptions)
+          if (result.kind === 'ok' && result.credits.availableBalance <= 0) {
+            await accounts
+              .markUnavailable(account.id, NO_POINTS_CODE, '积分不足（可用余额为 0），暂不参与轮换')
+              .catch(() => undefined)
+          }
+          return result
+        },
+      }
       creditsByAccountId.set(account.id, cache)
     }
     return cache
@@ -505,6 +555,16 @@ export function apply(ctx: Context, config: LoomyConfig): void {
     creditsFor,
     creditsForAccount,
     accounts,
+    onAccountRemoved: async (id: string) => {
+      creditsByAccountId.delete(id)
+      const current = await state.load()
+      if (current.activeAccountId !== id) return
+      const rest = await accounts.list({ force: true })
+      const next = rest[0]?.id
+      // Repoint explicitly rather than leaving a dangling id: the fallback would
+      // pick an account anyway, but silently.
+      await state.save(next === undefined ? { ...current, activeAccountId: undefined } : { ...current, activeAccountId: next })
+    },
     activeAccount: {
       read: async () => (await state.load()).activeAccountId,
       write: async (id: string) => {

@@ -28,6 +28,9 @@ import type { AccountsStore, StoredAccount } from './accounts.js'
 /** Route id of the pool. Kept out of `loomy-N` so slot maths never sees it. */
 export const POOL_ROUTE = 'loomy-pool'
 
+/** Failure code used when an account has no spendable points left. */
+export const NO_POINTS_CODE = 'no_points'
+
 /** How long an account stays out of rotation after a failure. */
 export const DEFAULT_POOL_COOLDOWN_MS = 10 * 60 * 1000
 
@@ -44,6 +47,8 @@ export interface AccountPool {
   markUnavailable(id: string, code: string, message: string): Promise<void>
   /** Record that a call through `id` succeeded. */
   markHealthy(id: string): Promise<void>
+  /** Accounts not currently benched, in store order. */
+  usable(): Promise<StoredAccount[]>
   /** Pool state for the settings card. */
   state(): Promise<{ total: number; healthy: number; entries: PoolEntryView[] }>
 }
@@ -104,7 +109,9 @@ export function createAccountPool(options: {
           total: accounts.length,
         }
       }
-      // Everything is cooling down: retry the one that failed longest ago.
+      // Every account is benched. Report that plainly instead of handing back
+      // one of them: the caller used to call that account anyway, which is the
+      // opposite of what a benched account is for.
       const oldest = [...accounts].sort(
         (left, right) => (left.unavailableAt ?? 0) - (right.unavailableAt ?? 0),
       )[0] as StoredAccount
@@ -117,6 +124,11 @@ export function createAccountPool(options: {
 
     async markHealthy(id) {
       await options.accounts.markHealthy(id)
+    },
+
+    async usable() {
+      const accounts = await options.accounts.list({ force: false })
+      return accounts.filter(isHealthy)
     },
 
     async state() {

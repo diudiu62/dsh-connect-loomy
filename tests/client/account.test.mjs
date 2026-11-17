@@ -351,3 +351,48 @@ test('a successful import refreshes the points, not just the list', async () => 
     assert.ok(calls.includes('credits'), `points were refreshed after import: ${JSON.stringify(calls)}`)
   })
 })
+
+test('removing an account asks once before it destroys the sign-in', async () => {
+  await setupDom()
+  const { entry, t } = mountPlugin('zh')
+  const removed = []
+  installFetch(
+    defaultRoutes({
+      [ACCOUNTS_URL]: {
+        body: {
+          ok: true,
+          accounts: [
+            { id: 'acc1', slot: 1, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '18912342700' },
+          ],
+          routes: [{ route: 'loomy', displayName: 'Loomy', origin: 'plugin', slot: 1 }],
+        },
+      },
+      '/plugins/dsh-connect-loomy/accounts/remove': (init) => {
+        removed.push(JSON.parse(init.body).id)
+        return new Response(JSON.stringify({ ok: true, removed: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    }),
+  )
+
+  await renderCard(entry, t, async ({ container }) => {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    // First press only arms the confirmation — nothing is destroyed.
+    await click(button(container, '移除'))
+    assert.deepEqual(removed, [], 'one press must not delete the account')
+    assert.ok(button(container, '确认移除'), 'it asks for confirmation')
+
+    // Backing out leaves the account alone.
+    await click(button(container, '取消'))
+    assert.deepEqual(removed, [])
+    assert.ok(button(container, '移除'), 'the row is back to normal')
+
+    // Confirming does it.
+    await click(button(container, '移除'))
+    await click(button(container, '确认移除'))
+    assert.deepEqual(removed, ['acc1'])
+  })
+})

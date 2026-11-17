@@ -2,7 +2,7 @@
   "name": "dsh-connect-loomy",
   "displayName": "DSH Connect Loomy",
   "description": "把本机登录的 Loomy（讯飞办公助手）模型接入 DeepSeek Harness 模型选择器，并提供设置卡片与只读积分概览。",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "diudiu62",
     "url": "https://github.com/diudiu62"
