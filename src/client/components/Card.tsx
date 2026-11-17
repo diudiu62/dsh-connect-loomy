@@ -52,6 +52,13 @@ import {
   type ModelDraft,
 } from '../draft.js'
 import { formatDiagnosticsReport } from '../format.js'
+import type { LoomyLocaleKey } from '../locale.js'
+import {
+  COMMUNITY,
+  communityChannels,
+  communityHref,
+  type CommunityChannel,
+} from '../../shared/community.js'
 import { ensureStyles } from '../styles.js'
 import { AccountTab } from './AccountTab.js'
 import { DiagnosticsTab, type CopyState } from './DiagnosticsTab.js'
@@ -61,6 +68,29 @@ import { mapResult, type Loadable, type LoomyT } from './types.js'
 
 /** Selectable card sections. */
 type TabKey = 'account' | 'models' | 'diagnostics'
+
+/**
+ * Locale key per contact slot.
+ *
+ * The values live in `src/shared/community.ts`; only their *labels* belong to
+ * the dictionary, so no UI copy is hard-coded in this component.
+ */
+const CHANNEL_LABEL: Record<CommunityChannel, LoomyLocaleKey> = {
+  issues: 'community.issues',
+  discussions: 'community.discussions',
+  qqGroup: 'community.qqGroup',
+  wechat: 'community.wechat',
+  email: 'community.email',
+}
+
+/**
+ * Contacts worth showing.
+ *
+ * Computed once at module load: `communityChannels()` already drops the
+ * `[PLACEHOLDER]` entries, so an unreleased group number cannot render as a
+ * dead invitation, and a release that fills one in needs no code change.
+ */
+const CONTACTS = communityChannels()
 
 /** Props composed by the slot framework: the translate seat, plus the surface. */
 export interface LoomySettingsCardProps {
@@ -578,10 +608,47 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
     setCopyState((await copyToClipboard(text)) ? 'copied' : 'failed')
   }, [status, diagnostics, catalog, draft, t])
 
+  /**
+   * Where to get help — pinned to the card's top-right corner so it is visible
+   * without scrolling, and rendered in every state, including "the host exposed
+   * no routes" and "the status read failed": exactly when a channel is needed.
+   * The diagnostic-report hint is this group's tooltip; the diagnostics tab
+   * already explains the copy-paste flow, so a visible duplicate is just noise.
+   */
+  const community = (
+    <nav className="loomy-community" aria-label={t('community.title')} title={t('community.hint')}>
+      <span className="loomy-community-title">{t('community.title')}</span>
+      <span className="loomy-community-items">
+        {CONTACTS.map((channel) => {
+          const value = COMMUNITY[channel]
+          const href = communityHref(channel, value)
+          return href === undefined ? (
+            <span key={channel} className="loomy-community-item">
+              {t(CHANNEL_LABEL[channel])}：{value}
+            </span>
+          ) : (
+            <a
+              key={channel}
+              className="loomy-community-link"
+              href={href}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              {t(CHANNEL_LABEL[channel])}
+            </a>
+          )
+        })}
+      </span>
+    </nav>
+  )
+
   const header = (
     <header className="loomy-header">
-      {surface === 'settings' ? null : <div className="loomy-title">{t('card.title')}</div>}
-      <div className="loomy-subtitle">{t('card.subtitle')}</div>
+      <div className="loomy-header-text">
+        {surface === 'settings' ? null : <div className="loomy-title">{t('card.title')}</div>}
+        <div className="loomy-subtitle">{t('card.subtitle')}</div>
+      </div>
+      {community}
     </header>
   )
 
@@ -713,6 +780,7 @@ function LoomyCard({ t, surface }: LoomySettingsCardProps) {
           />
         ) : null}
       </div>
+
     </div>
   )
 }

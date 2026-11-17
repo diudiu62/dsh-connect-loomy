@@ -22,7 +22,33 @@ export const CARD_CSS = `
   font-size: 13px;
   line-height: 1.55;
 }
-.loomy-header { display: flex; flex-direction: column; gap: 4px; }
+/* Header: text on the left, the community entry pinned to the top-right. */
+.loomy-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+}
+.loomy-header-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.loomy-community {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  white-space: nowrap;
+}
+.loomy-community-title { font-weight: 600; }
+.loomy-community-items { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+.loomy-community-link { color: var(--dsw-alias-label-link, #2563eb); text-decoration: none; }
+.loomy-community-link:hover { text-decoration: underline; }
+@media (max-width: 520px) {
+  /* Narrow card: the corner block drops under the subtitle instead of crushing it. */
+  .loomy-community { white-space: normal; margin-left: 0; }
+}
 .loomy-title { font-size: 15px; font-weight: 600; }
 .loomy-subtitle { color: var(--dsw-alias-label-tertiary, #6b7280); }
 /* Composer account drawer: anchored above the badge, never widening the row. */

@@ -206,9 +206,17 @@ ${collected.join('\n')}
 </style>${markup}`
 }
 
-/** Screenshot one document to a PNG, trimming the frame to the content height. */
+/**
+ * Screenshot one document to a PNG, trimming the frame to the content height.
+ *
+ * `--no-sandbox` + a throwaway `--user-data-dir` are not optional in practice:
+ * the default profile is locked while a normal Chrome window is open (exit 1,
+ * no PNG), and a sandboxed macOS session cannot start the GPU helper at all.
+ * Both flags only affect this temporary, file:// document.
+ */
 function shoot(html, file, width, height) {
   const temp = join(tmpdir(), `loomy-shot-${process.pid}-${Math.random().toString(36).slice(2, 8)}.html`)
+  const profile = join(tmpdir(), `loomy-shot-profile-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
   writeFileSync(temp, html)
   try {
     execFileSync(
@@ -217,6 +225,8 @@ function shoot(html, file, width, height) {
         '--headless=new',
         '--disable-gpu',
         '--hide-scrollbars',
+        `--user-data-dir=${profile}`,
+        '--no-sandbox',
         '--force-device-scale-factor=2',
         `--window-size=${width},${height}`,
         `--screenshot=${file}`,
@@ -227,6 +237,7 @@ function shoot(html, file, width, height) {
     )
   } finally {
     rmSync(temp, { force: true })
+    rmSync(profile, { recursive: true, force: true })
   }
 }
 

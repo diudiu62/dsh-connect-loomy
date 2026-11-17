@@ -18,7 +18,7 @@
  * @module dsh-connect-loomy/shared/xfyun
  */
 
-import { createDecipheriv, createHash, createHmac, randomUUID, scryptSync } from 'node:crypto'
+import { constants, createDecipheriv, createHash, createHmac, publicEncrypt, randomUUID, scryptSync } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -322,6 +322,104 @@ export async function requestAccount(options: {
     }
   }
   return { kind: 'ok', data: isRecord(parsed) && 'data' in parsed ? parsed['data'] : parsed }
+}
+
+/**
+ * Ask the account API for a fresh RSA public key.
+ *
+ * The response carries `{pukey, rcode}`. Both are single-use: `rcode` is bound
+ * to that key, so a login must use the pair from the same call — reusing a key
+ * with a stale `rcode` answers `010003 请求参数错误`, which reads like a malformed
+ * request rather than an expired handshake.
+ */
+export async function fetchPasswordKey(options: {
+  config: XfyunConfig
+  fetchImpl?: typeof fetch
+}): Promise<{ kind: 'ok'; publicKey: string; rcode: string } | { kind: 'failure'; code: string; message: string }> {
+  const result = await requestAccount({
+    config: options.config,
+    path: '/login/account/getPuKey',
+    body: { base: xfyunBase(options.config.appId) },
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+  })
+  if (result.kind === 'failure') return result
+  const data = isRecord(result.data) ? result.data : undefined
+  const publicKey = data?.['pukey']
+  const rcode = data?.['rcode']
+  if (typeof publicKey !== 'string' || publicKey.length < 32 || typeof rcode !== 'string' || rcode.length === 0) {
+    return { kind: 'failure', code: 'no_pubkey', message: '账号服务未返回可用的 RSA 公钥（pukey/rcode）' }
+  }
+  return { kind: 'ok', publicKey, rcode }
+}
+
+/** RSA-encrypt a password the way the desktop client does (PKCS#1 v1.5, base64). */
+export function encryptPassword(publicKey: string, password: string): string {
+  const body = publicKey.match(/.{1,64}/gu)?.join('\n') ?? publicKey
+  const pem = `-----BEGIN PUBLIC KEY-----\n${body}\n-----END PUBLIC KEY-----\n`
+  return publicEncrypt({ key: pem, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(password, 'utf8')).toString(
+    'base64',
+  )
+}
+
+/**
+ * Sign in with phone + password.
+ *
+ * Verified against the live account API: `type: 1`, an RSA-encrypted password
+ * and the `rcode` from the same `getPuKey` call are all required — dropping any
+ * of them answers `010003`, and a wrong password answers `220204`.
+ */
+export async function loginWithPassword(options: {
+  config: XfyunConfig
+  phone: string
+  password: string
+  fetchImpl?: typeof fetch
+}): Promise<
+  | { kind: 'ok'; session: string; userId?: string; phone?: string }
+  | { kind: 'failure'; code: string; message: string }
+> {
+  const key = await fetchPasswordKey({
+    config: options.config,
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+  })
+  if (key.kind === 'failure') return key
+
+  let encrypted: string
+  try {
+    encrypted = encryptPassword(key.publicKey, options.password)
+  } catch (error) {
+    return { kind: 'failure', code: 'encrypt_failed', message: `密码加密失败：${safeErrorMessage(error)}` }
+  }
+
+  const result = await requestAccount({
+    config: options.config,
+    path: '/login/account/byPwd',
+    body: {
+      base: xfyunBase(options.config.appId),
+      param: {
+        loginid: options.phone,
+        password: encrypted,
+        rcode: key.rcode,
+        type: 1,
+        expire: 14 * 24 * 3600,
+      },
+    },
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+  })
+  if (result.kind === 'failure') return result
+
+  const data = isRecord(result.data) ? result.data : undefined
+  const session = data?.['session']
+  if (typeof session !== 'string' || session.length < 16 || /\s/u.test(session)) {
+    return { kind: 'failure', code: 'no_session', message: '账号服务未返回可用的 session（密码登录被拒绝）' }
+  }
+  const userId = data?.['userid']
+  const phone = data?.['phone']
+  return {
+    kind: 'ok',
+    session,
+    ...(typeof userId === 'string' && userId.length > 0 ? { userId } : {}),
+    ...(typeof phone === 'string' && phone.length > 0 ? { phone } : {}),
+  }
 }
 
 /** Phone shape the account API accepts (mainland China mobile numbers). */

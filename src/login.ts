@@ -17,7 +17,14 @@
  * @module dsh-connect-loomy/login
  */
 
-import { PHONE_PATTERN, resolveXfyunConfig, resetXfyunConfigCache, sendSmsCode, verifySmsCode } from './shared/xfyun.js'
+import {
+  PHONE_PATTERN,
+  loginWithPassword,
+  resolveXfyunConfig,
+  resetXfyunConfigCache,
+  sendSmsCode,
+  verifySmsCode,
+} from './shared/xfyun.js'
 import { clearPluginAuthSession, writePluginAuthSession } from './plugin-auth.js'
 import { routeForSlot } from './accounts.js'
 import { displayPhone, displayUserId } from './shared/text.js'
@@ -27,6 +34,73 @@ export const SEND_CODE_COOLDOWN_MS = 60_000
 
 /** Login attempts may verify for a few minutes after the SMS lands. */
 export const SMS_EXPIRES_MS = 300_000
+
+
+/**
+ * Store a freshly obtained session.
+ *
+ * Shared by both sign-in paths (SMS code and phone+password) so they cannot
+ * diverge: with an accounts store the session becomes an account (and its own
+ * route); without one it falls back to the legacy single-session file.
+ */
+type PersistedLogin =
+  | { kind: 'ok'; login: LoginResult & { ok: true } }
+  | { kind: 'failure'; login: LoginResult & { ok: false } }
+
+async function persistLogin(
+  deps: LoginDeps,
+  now: () => number,
+  result: { session: string; phone?: string; userId?: string },
+  fallbackPhone?: string,
+): Promise<PersistedLogin> {
+  if (deps.accounts !== undefined) {
+    const added = await deps.accounts.add({
+      session: result.session,
+      ...(result.phone === undefined ? {} : { phone: result.phone }),
+      ...(result.userId === undefined ? {} : { userId: result.userId }),
+    })
+    if (added.kind === 'failure') {
+      return { kind: 'failure', login: { ok: false, code: added.code, message: added.message } }
+    }
+    await deps.refreshRoutes?.()
+    deps.invalidateAuth()
+    return {
+      kind: 'ok',
+      login: {
+        ok: true,
+        ...(result.phone === undefined ? {} : { phone: displayPhone(result.phone) }),
+        ...(result.userId === undefined ? {} : { userId: displayUserId(result.userId) }),
+        sourcePath: `accounts.json#slot-${added.account.slot}`,
+        fingerprint: added.account.id,
+        slot: added.account.slot,
+        route: routeForSlot(added.account.slot),
+        replaced: added.replaced,
+      },
+    }
+  }
+
+  const written = await writePluginAuthSession({
+    storageDir: deps.storageDir(),
+    session: result.session,
+    ...(result.userId === undefined ? {} : { userId: result.userId }),
+    ...(result.phone === undefined ? (fallbackPhone === undefined ? {} : { phone: fallbackPhone }) : { phone: result.phone }),
+    now,
+  })
+  if (written.kind === 'failure') {
+    return { kind: 'failure', login: { ok: false, code: written.code, message: written.message } }
+  }
+  deps.invalidateAuth()
+  return {
+    kind: 'ok',
+    login: {
+      ok: true,
+      ...(result.phone === undefined ? {} : { phone: displayPhone(result.phone) }),
+      ...(result.userId === undefined ? {} : { userId: displayUserId(result.userId) }),
+      sourcePath: written.path,
+      fingerprint: written.fingerprint,
+    },
+  }
+}
 
 /** What one "send code" turn produced. */
 export type SendCodeResult =
@@ -127,6 +201,37 @@ export function createLoginService(deps: LoginDeps) {
     },
 
     /**
+     * Sign in with phone + password (no SMS).
+     *
+     * Same post-login path as the code flow: the account lands in the store, gets
+     * its slot and its own route-less identity, and the caller's refresh picks
+     * it up.
+     */
+    async loginWithPassword(rawPhone: string, rawPassword: string): Promise<LoginResult> {
+      const phone = rawPhone.trim()
+      if (!PHONE_PATTERN.test(phone)) {
+        return { ok: false, code: 'invalid_phone', message: '手机号格式不正确（需要中国大陆手机号）' }
+      }
+      if (rawPassword.length === 0) {
+        return { ok: false, code: 'invalid_password', message: '请输入密码。' }
+      }
+      const config = resolveXfyunConfig()
+      if (config.kind === 'missing') return { ok: false, code: 'app_missing', message: config.problem }
+
+      const result = await loginWithPassword({
+        config: config.config,
+        phone,
+        password: rawPassword,
+        ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+      })
+      if (result.kind === 'failure') {
+        return { ok: false, code: result.code, message: `登录失败：${result.message}` }
+      }
+      const persisted = await persistLogin(deps, now, result, phone)
+      return persisted.login
+    },
+
+    /**
      * Verify the code and sign in. Success persists the session and invalidates
      * the auth cache; the next status read shows the new account.
      */
@@ -161,50 +266,8 @@ export function createLoginService(deps: LoginDeps) {
       }
       pending = undefined
 
-      // Multi-account: the account store owns the session, and each account
-      // becomes its own provider route. The legacy single-session file is still
-      // written for slot 1 so a downgrade to the previous build keeps working.
-      if (deps.accounts !== undefined) {
-        const added = await deps.accounts.add({
-          session: result.session,
-          ...(result.phone === undefined ? {} : { phone: result.phone }),
-          ...(result.userId === undefined ? {} : { userId: result.userId }),
-        })
-        if (added.kind === 'failure') {
-          return { ok: false, code: added.code, message: added.message }
-        }
-        await deps.refreshRoutes?.()
-        deps.invalidateAuth()
-        return {
-          ok: true,
-          ...(result.phone === undefined ? {} : { phone: displayPhone(result.phone) }),
-          ...(result.userId === undefined ? {} : { userId: displayUserId(result.userId) }),
-          sourcePath: `accounts.json#slot-${added.account.slot}`,
-          fingerprint: added.account.id,
-          slot: added.account.slot,
-          route: routeForSlot(added.account.slot),
-          replaced: added.replaced,
-        }
-      }
-
-      const written = await writePluginAuthSession({
-        storageDir: deps.storageDir(),
-        session: result.session,
-        ...(result.userId === undefined ? {} : { userId: result.userId }),
-        ...(result.phone === undefined ? { phone } : { phone: result.phone }),
-        now,
-      })
-      if (written.kind === 'failure') {
-        return { ok: false, code: written.code, message: written.message }
-      }
-      deps.invalidateAuth()
-      return {
-        ok: true,
-        ...(result.phone === undefined ? {} : { phone: displayPhone(result.phone) }),
-        ...(result.userId === undefined ? {} : { userId: displayUserId(result.userId) }),
-        sourcePath: written.path,
-        fingerprint: written.fingerprint,
-      }
+      const persisted = await persistLogin(deps, now, result, phone)
+      return persisted.login
     },
 
     /**

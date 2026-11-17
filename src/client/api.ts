@@ -45,6 +45,7 @@ export const ROUTES = {
   authState: `${ROUTE_PREFIX}/auth/state`,
   authSendCode: `${ROUTE_PREFIX}/auth/send-code`,
   authLogin: `${ROUTE_PREFIX}/auth/login`,
+  authLoginPassword: `${ROUTE_PREFIX}/auth/login-password`,
   authLogout: `${ROUTE_PREFIX}/auth/logout`,
   accounts: `${ROUTE_PREFIX}/accounts`,
   accountRemove: `${ROUTE_PREFIX}/accounts/remove`,
@@ -509,6 +510,16 @@ export function authLogin(
   options: RouteOptions = {},
 ): Promise<RouteResult<LoomyAuthLogin>> {
   return postJson<LoomyAuthLogin>(ROUTES.authLogin, csrfToken, { phone, code }, options)
+}
+
+/** Sign in with phone + password (the password is RSA-encrypted by the host). */
+export function authLoginPassword(
+  csrfToken: string,
+  phone: string,
+  password: string,
+  options: RouteOptions = {},
+): Promise<RouteResult<LoomyAuthLogin>> {
+  return postJson<LoomyAuthLogin>(ROUTES.authLoginPassword, csrfToken, { phone, password }, options)
 }
 
 /** Remove the plugin-side session (desktop client untouched). */

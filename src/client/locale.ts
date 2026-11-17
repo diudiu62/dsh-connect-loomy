@@ -61,6 +61,11 @@ export type LoomyLocaleKey =
   | 'login.sourceDesktop'
   | 'login.sourceEnv'
   | 'login.sourceNone'
+  | 'login.modeCode'
+  | 'login.modePassword'
+  | 'login.passwordIntro'
+  | 'login.passwordPlaceholder'
+  | 'login.loginPassword'
   | 'accounts.title'
   | 'accounts.intro'
   | 'accounts.empty'
@@ -139,6 +144,13 @@ export type LoomyLocaleKey =
   | 'tabs.account'
   | 'tabs.models'
   | 'tabs.diagnostics'
+  | 'community.title'
+  | 'community.issues'
+  | 'community.discussions'
+  | 'community.qqGroup'
+  | 'community.wechat'
+  | 'community.email'
+  | 'community.hint'
   | 'common.loading'
   | 'common.refresh'
   | 'common.refreshing'
@@ -255,6 +267,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const en: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
   'login.title': 'Sign in to Loomy',
+  'login.modeCode': 'SMS code',
+  'login.modePassword': 'Phone + password',
+  'login.passwordIntro': 'Use the password set for your Loomy account. No SMS needed.',
+  'login.passwordPlaceholder': 'Password',
+  'login.loginPassword': 'Sign in',
   'login.intro': 'One SMS code per account. Accounts signed in here take precedence over the desktop client.',
   'login.phonePlaceholder': 'Phone number',
   'login.codePlaceholder': 'Verification code',
@@ -383,6 +400,14 @@ export const en: Record<LoomyLocaleKey, string> = {
   'common.copyFailed': 'Copy failed — select the text and copy it manually.',
   'common.none': '—',
   'common.unknownError': 'Unknown error',
+  'community.title': 'Community',
+  'community.issues': 'GitHub Issues',
+  'community.discussions': 'Discussions',
+  'community.qqGroup': 'QQ group',
+  'community.wechat': 'WeChat',
+  'community.email': 'Email',
+  'community.hint':
+    'Stuck? The diagnostics tab copies a ready-to-paste report (no tokens). Ask in Issues, or use Discussions for usage questions.',
   'account.title': 'Local sign-in',
   'account.loggedIn': 'Signed in',
   'account.loggedOut': 'Not signed in',
@@ -484,6 +509,11 @@ export const en: Record<LoomyLocaleKey, string> = {
 export const zh: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
   'login.title': '登录 Loomy 账号',
+  'login.modeCode': '验证码登录',
+  'login.modePassword': '账号密码',
+  'login.passwordIntro': '用 Loomy 账号的密码登录，不需要收验证码。',
+  'login.passwordPlaceholder': '密码',
+  'login.loginPassword': '登录',
   'login.intro': '每个账号一次验证码。这里登录的账号优先于桌面端登录态。',
   'login.phonePlaceholder': '手机号',
   'login.codePlaceholder': '验证码',
@@ -612,6 +642,14 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'common.copyFailed': '复制失败，请手动选择文本复制。',
   'common.none': '—',
   'common.unknownError': '未知错误',
+  'community.title': '社群与反馈',
+  'community.issues': 'GitHub Issues',
+  'community.discussions': 'Discussions',
+  'community.qqGroup': 'QQ 群',
+  'community.wechat': '微信',
+  'community.email': '邮箱',
+  'community.hint':
+    '遇到问题：诊断页可一键复制排障信息（不含凭据）；也可以在 Issues 提问，用法讨论放 Discussions。',
   'account.title': '本机登录态',
   'account.loggedIn': '已登录',
   'account.loggedOut': '未登录',

@@ -110,6 +110,15 @@ Press **Refresh** in the drawer; otherwise the host answers from a 60-second cac
 **Points show as unavailable?**
 That account's sign-in expired. Sign in again — the other accounts are unaffected.
 
+## Stuck? Ask the community
+
+- **Bugs and feature requests**: [GitHub Issues](https://github.com/diudiu62/dsh-connect-loomy/issues)
+- **Usage questions and examples**: [GitHub Discussions](https://github.com/diudiu62/dsh-connect-loomy/discussions)
+
+Before posting, press **Copy report** on the card's diagnostics tab and paste that text along: it carries versions, paths and the upstream wording, but no session token, phone number or user id.
+
+The same entry is pinned to the **top-right corner of the settings card**, next to the title. Group chat details are not decided yet; when they are, change one place — [`src/shared/community.ts`](src/shared/community.ts). Placeholders such as `[QQ_GROUP]` are hidden, and a real value appears automatically in the card, in `--help` and in these docs.
+
 ## Learn more
 
 - **Technical details**: [plugin contract](docs/dsh-plugin-contract.md) · [measured upstream contract](docs/loomy-upstream.md) · [verification report](docs/verification-report.md)

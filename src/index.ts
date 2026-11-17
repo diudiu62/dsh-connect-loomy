@@ -124,6 +124,16 @@ export {
   windowsLocalAppData,
 } from './shared/paths.js'
 export {
+  COMMUNITY,
+  communityChannels,
+  communityHref,
+  DISCUSSIONS_URL,
+  isPlaceholder,
+  ISSUES_URL,
+  REPOSITORY_URL,
+  type CommunityChannel,
+} from './shared/community.js'
+export {
   AUTH_FILE_NAME,
   createAuthDiscovery,
   DEFAULT_DISCOVERY_TTL_MS,
@@ -135,6 +145,9 @@ export { PROVIDER_ID, ROUTE_PREFIX, ROUTES } from './shared/types.js'
 export { requestPlatform } from './shared/upstream.js'
 export {
   configFromEnv,
+  encryptPassword,
+  fetchPasswordKey,
+  loginWithPassword,
   decryptLoomyEnv,
   loomyAppEnvCandidates,
   resolveXfyunConfig,

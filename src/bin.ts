@@ -22,6 +22,7 @@ import { accountViewOf, credentialViewOf, readAuthSession } from './auth.js'
 import { normalizeCatalog } from './catalog.js'
 import { fetchCredits, fetchIdentity } from './credits.js'
 import { authSessionCandidates, resolveDshHome, stateFilePath } from './shared/paths.js'
+import { COMMUNITY, communityChannels, ISSUES_URL } from './shared/community.js'
 import { createAuthDiscovery } from './shared/discover.js'
 import { createStateStore } from './shared/state.js'
 import { resolveEnabledIds } from './catalog.js'
@@ -60,6 +61,12 @@ function printHelp(): void {
       `  LOOMY_BASE_URL             override the gateway (default ${DEFAULT_BASE_URL})`,
       '  LOOMY_AUTH_SESSION_FILE    use exactly this sign-in file (no desktop fallback)',
       '  DSH_HOME                   harness home used for the catalog cache (default ~/.dsh)',
+      '',
+      'Community:',
+      `  issues                     ${ISSUES_URL}`,
+      ...communityChannels()
+        .filter((channel) => channel !== 'issues')
+        .map((channel) => `  ${channel.padEnd(26)} ${COMMUNITY[channel]}`),
       '',
     ].join('\n'),
   )

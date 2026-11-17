@@ -22,6 +22,7 @@ export const ROUTES = {
   authState: `${ROUTE_PREFIX}/auth/state`,
   authSendCode: `${ROUTE_PREFIX}/auth/send-code`,
   authLogin: `${ROUTE_PREFIX}/auth/login`,
+  authLoginPassword: `${ROUTE_PREFIX}/auth/login-password`,
   authLogout: `${ROUTE_PREFIX}/auth/logout`,
   accounts: `${ROUTE_PREFIX}/accounts`,
   accountRemove: `${ROUTE_PREFIX}/accounts/remove`,
