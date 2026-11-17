@@ -15,6 +15,14 @@ import {
   PHONE_PATTERN,
 } from '../../lib/index.js'
 
+/** Stand-in for the app's embedded account-plane credentials. */
+const FAKE_CONFIG = {
+  baseURL: 'https://account.invalid',
+  accessKeyId: 'test-key-id',
+  accessKeySecret: 'test-key-secret',
+  appId: 'test-app',
+}
+
 /** A fake fetch that answers the account envelope the way the real one does. */
 function fakeFetch(routes) {
   return async (url, init) => {
@@ -77,6 +85,9 @@ test('login service: send → cooldown → verify → session stored, precedence
       invalidateAuth: () => {},
       now: () => 1_000_000,
       fetchImpl,
+      // CI has no Loomy.app, so the credentials must be supplied here rather
+      // than resolved from the filesystem.
+      resolveConfig: () => ({ kind: 'ok', config: FAKE_CONFIG, sourcePath: 'test' }),
     })
 
     // Invalid phone is refused locally, no upstream call.
@@ -141,6 +152,7 @@ test('login service surfaces upstream failures verbatim', async () => {
       invalidateAuth: () => {},
       now: () => 2_000_000,
       fetchImpl,
+      resolveConfig: () => ({ kind: 'ok', config: FAKE_CONFIG, sourcePath: 'test' }),
     })
     await service.sendCode('13800001234')
     const failed = await service.login('13800001234', '000000')

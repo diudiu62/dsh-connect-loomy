@@ -17,7 +17,14 @@
  * @module dsh-connect-loomy/login
  */
 
-import { PHONE_PATTERN, resolveXfyunConfig, resetXfyunConfigCache, sendSmsCode, verifySmsCode } from './shared/xfyun.js'
+import {
+  PHONE_PATTERN,
+  resolveXfyunConfig,
+  resetXfyunConfigCache,
+  sendSmsCode,
+  verifySmsCode,
+  type ResolvedXfyunConfig,
+} from './shared/xfyun.js'
 import { clearPluginAuthSession, writePluginAuthSession } from './plugin-auth.js'
 import { routeForSlot } from './accounts.js'
 import { displayPhone, displayUserId } from './shared/text.js'
@@ -139,6 +146,15 @@ export interface LoginDeps {
   }
   /** Ask the host to reconcile provider routes after an account change. */
   refreshRoutes?: () => Promise<void>
+  /**
+   * Where the account-plane credentials come from.
+   *
+   * Injectable because resolving them reads the installed desktop app: a test
+   * (or CI, where Loomy is not installed) must be able to supply credentials
+   * without the app on disk, or every login test silently exercises the
+   * "app missing" branch instead of the flow it claims to test.
+   */
+  resolveConfig?: () => ResolvedXfyunConfig
   now?: () => number
   fetchImpl?: typeof fetch
   logger?: { warn(message: string, error?: unknown): void }
@@ -147,6 +163,7 @@ export interface LoginDeps {
 /** Create the login service. One per plugin instance. */
 export function createLoginService(deps: LoginDeps) {
   const now = deps.now ?? (() => Date.now())
+  const resolveConfig = deps.resolveConfig ?? resolveXfyunConfig
   /** One pending SMS per process; a second send before cooldown is refused. */
   let pending: { msgid: string; phone: string; sentAt: number } | undefined
 
@@ -163,7 +180,7 @@ export function createLoginService(deps: LoginDeps) {
       if (!PHONE_PATTERN.test(phone)) {
         return { ok: false, code: 'invalid_phone', message: '手机号格式不正确（需要中国大陆手机号）' }
       }
-      const config = resolveXfyunConfig()
+      const config = resolveConfig()
       if (config.kind === 'missing') {
         return { ok: false, code: 'app_missing', message: config.problem }
       }
@@ -209,7 +226,7 @@ export function createLoginService(deps: LoginDeps) {
       if (pending === undefined || pending.phone !== phone) {
         return { ok: false, code: 'no_pending_code', message: '请先发送验证码，再输入登录。' }
       }
-      const config = resolveXfyunConfig()
+      const config = resolveConfig()
       if (config.kind === 'missing') {
         return { ok: false, code: 'app_missing', message: config.problem }
       }
