@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { STATUS, defaultRoutes, installFetch, mountPlugin, renderCard, setupDom } from './helpers.mjs'
-import { DISCUSSIONS_URL, ISSUES_URL } from '../../lib/index.js'
+import { ISSUES_URL } from '../../lib/index.js'
 
 const STATUS_URL = '/plugins/dsh-connect-loomy/status'
 
@@ -36,14 +36,19 @@ test('the community entry is pinned to the card header, top-right', async () => 
     const text = community.textContent ?? ''
     assert.ok(text.includes('社群与反馈'), 'the entry is titled')
     assert.ok(text.includes('GitHub Issues'), 'Issues is labelled')
-    assert.ok(text.includes('Discussions'), 'Discussions is labelled')
+    assert.ok(text.includes('QQ 群'), 'the QQ group is labelled')
+    assert.ok(!text.includes('Discussions'), 'Discussions was removed from the card')
+    assert.ok(text.includes('537149884'), 'the real group number is rendered')
 
     const links = [...community.querySelectorAll('a')]
     assert.deepEqual(
       links.map((link) => link.getAttribute('href')),
-      [ISSUES_URL, DISCUSSIONS_URL],
-      'both GitHub channels link out, in order',
+      [ISSUES_URL],
+      'issues is the only outbound link',
     )
+    // A QQ group has no derivable join URL, so the number stays plain text
+    // rather than becoming a link to nowhere.
+    assert.equal(community.querySelector('a[href*="537149884"]'), null)
     for (const link of links) {
       assert.equal(link.getAttribute('target'), '_blank')
       assert.ok((link.getAttribute('rel') ?? '').includes('noreferrer'), 'external links use rel=noreferrer')
@@ -71,7 +76,9 @@ test('placeholders never reach the DOM, tooltip included', async () => {
 
   await renderCard(entry, t, ({ container }) => {
     const html = container.querySelector('.loomy-community')?.outerHTML ?? ''
-    assert.ok(!html.includes('[QQ_GROUP]'), 'the QQ placeholder is filtered out')
+    assert.ok(!html.includes('discussions'), 'the removed channel leaves no trace in the DOM')
+    assert.ok(!html.includes('[QQ_GROUP]'), 'a leftover QQ placeholder is filtered out')
+    assert.ok(html.includes('537149884'), 'the filled-in group number is present')
     assert.ok(!html.includes('[WECHAT_ID]'), 'the WeChat placeholder is filtered out')
     assert.ok(!html.includes('[EMAIL]'), 'the email placeholder is filtered out')
   })

@@ -77,7 +77,6 @@ type TabKey = 'account' | 'models' | 'diagnostics'
  */
 const CHANNEL_LABEL: Record<CommunityChannel, LoomyLocaleKey> = {
   issues: 'community.issues',
-  discussions: 'community.discussions',
   qqGroup: 'community.qqGroup',
   wechat: 'community.wechat',
   email: 'community.email',

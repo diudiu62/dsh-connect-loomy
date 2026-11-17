@@ -112,12 +112,12 @@ Loomy · 40,500 积分
 
 ## 卡住了？来群里问
 
+- **QQ 群**：`537149884`（最快，装上就能问）
 - **提问题 / 提需求**：[GitHub Issues](https://github.com/diudiu62/dsh-connect-loomy/issues)
-- **聊用法、看别人怎么用**：[GitHub Discussions](https://github.com/diudiu62/dsh-connect-loomy/discussions)
 
 提问前先点设置卡片诊断页的 **复制诊断**，把那段文本一起贴上——里面有版本、路径和上游原话，但不含登录凭据、手机号和用户 id。
 
-这一栏也常驻在设置卡片的**右上角**（标题旁），不用滚到底部就能点。群号/微信/邮箱还没定，定下来后只需改 [`src/shared/community.ts`](src/shared/community.ts) 一处：占位符（`[QQ_GROUP]` 这种）不会显示，填上真实值就会自动出现在卡片、`--help` 和这份文档里。
+这一栏也常驻在设置卡片的**右上角**（标题旁），不用滚到底部就能点。联系方式只维护在 [`src/shared/community.ts`](src/shared/community.ts) 一处：群号已经填好，微信/邮箱还是占位符（`[WECHAT_ID]` 这种），占位符不会显示，填上真实值就会自动出现在卡片、`--help` 和这份文档里。
 
 ## 想了解更多
 

@@ -9,7 +9,6 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   COMMUNITY,
-  DISCUSSIONS_URL,
   ISSUES_URL,
   REPOSITORY_URL,
   communityChannels,
@@ -17,16 +16,17 @@ import {
   isPlaceholder,
 } from '../../lib/index.js'
 
-test('the GitHub channels are derived from the repository url', () => {
+test('the GitHub channel is derived from the repository url', () => {
   assert.equal(REPOSITORY_URL, 'https://github.com/diudiu62/dsh-connect-loomy')
   assert.equal(ISSUES_URL, `${REPOSITORY_URL}/issues`)
-  assert.equal(DISCUSSIONS_URL, `${REPOSITORY_URL}/discussions`)
   assert.equal(COMMUNITY.issues, ISSUES_URL)
-  assert.equal(COMMUNITY.discussions, DISCUSSIONS_URL)
+  // Discussions was deliberately dropped from the card and the docs.
+  assert.equal('discussions' in COMMUNITY, false)
 })
 
 test('placeholders are recognised, real values are not', () => {
   assert.equal(isPlaceholder('[QQ_GROUP]'), true)
+  assert.equal(isPlaceholder('537149884'), false)
   assert.equal(isPlaceholder('  [WECHAT_ID]  '), true)
   assert.equal(isPlaceholder(''), true)
   assert.equal(isPlaceholder('   '), true)
@@ -37,27 +37,24 @@ test('placeholders are recognised, real values are not', () => {
 })
 
 test('only usable contacts are rendered, in declaration order', () => {
-  // Shipped table: the unfilled slots are hidden, so the card cannot invite
-  // users to a group nobody can join.
-  assert.deepEqual(communityChannels(), ['issues', 'discussions'])
-  // Filling a slot is enough — no component or dictionary change.
-  assert.deepEqual(communityChannels({ ...COMMUNITY, qqGroup: '123456789' }), [
-    'issues',
-    'discussions',
-    'qqGroup',
-  ])
+  // Shipped table: the maintainer's QQ group is real, the unfilled slots are
+  // hidden — a shipped card must never invite users to a group nobody can join.
+  assert.deepEqual(communityChannels(), ['issues', 'qqGroup'])
+  assert.equal(COMMUNITY.qqGroup, '537149884')
+  assert.equal(isPlaceholder(COMMUNITY.qqGroup), false)
+  // Filling a remaining slot needs no component or dictionary change.
   assert.deepEqual(communityChannels({ ...COMMUNITY, email: 'dev@example.com' }), [
     'issues',
-    'discussions',
+    'qqGroup',
     'email',
   ])
-  // An explicitly blanked link is dropped too (a release could disable one).
-  assert.deepEqual(communityChannels({ ...COMMUNITY, discussions: ' ' }), ['issues'])
+  // An explicitly blanked entry is dropped too (a release could disable one).
+  assert.deepEqual(communityChannels({ ...COMMUNITY, issues: ' ' }), ['qqGroup'])
+  assert.deepEqual(communityChannels({ ...COMMUNITY, qqGroup: '  ' }), ['issues'])
 })
 
 test('hrefs: GitHub stays a url, the mailbox becomes mailto, chat stays text', () => {
   assert.equal(communityHref('issues', ISSUES_URL), ISSUES_URL)
-  assert.equal(communityHref('discussions', DISCUSSIONS_URL), DISCUSSIONS_URL)
   assert.equal(communityHref('email', ' dev@example.com '), 'mailto:dev@example.com')
   // No stable join URL can be derived from a QQ group number.
   assert.equal(communityHref('qqGroup', '123456789'), undefined)

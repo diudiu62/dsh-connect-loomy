@@ -216,3 +216,19 @@ test('a wrong password is reported with the upstream wording', async () => {
   assert.equal(result.code, '220204')
   assert.match(result.message, /密码错误/u)
 })
+
+test('password failures explain what to actually do', async () => {
+  const cases = [
+    ['220202', '解密密码失败', /RSA 加密/u],
+    ['220204', '密码错误', /验证码登录/u],
+    ['220206', '登录方式非法', /不支持密码登录/u],
+  ]
+  const { passwordFailureHint } = await import('../../lib/index.js')
+  for (const [code, desc, expectation] of cases) {
+    const hint = passwordFailureHint(code, desc)
+    assert.ok(hint.includes(desc), 'the upstream wording is kept')
+    assert.match(hint, expectation, `code ${code} must say what to do`)
+  }
+  // An unknown code passes through untouched rather than being reworded.
+  assert.equal(passwordFailureHint('999999', '自定义错误'), '自定义错误')
+})

@@ -22,17 +22,17 @@ export const REPOSITORY_URL = 'https://github.com/diudiu62/dsh-connect-loomy'
 /** Bug reports and feature requests. */
 export const ISSUES_URL = `${REPOSITORY_URL}/issues`
 
-/** Usage questions and show-and-tell. */
-export const DISCUSSIONS_URL = `${REPOSITORY_URL}/discussions`
-
 /** Every contact point, in the order the card renders them. */
 export const COMMUNITY = {
   /** Always available. */
   issues: ISSUES_URL,
-  /** Always available. */
-  discussions: DISCUSSIONS_URL,
-  /** Group chat (QQ). Replace the placeholder with the real group number. */
-  qqGroup: '[QQ_GROUP]',
+  /**
+   * Group chat (QQ), the maintainer's own group.
+   *
+   * Rendered as plain text, not a link: QQ's join URL needs a per-group `k`
+   * key, so a number is the only thing that can be stated truthfully.
+   */
+  qqGroup: '537149884',
   /** Group chat (WeChat). Replace with a group invite or the maintainer id. */
   wechat: '[WECHAT_ID]',
   /** Mailbox for private reports (security, credentials). */
@@ -74,7 +74,7 @@ export function communityChannels(
  * plain text; the mailbox becomes `mailto:` and GitHub stays as-is.
  */
 export function communityHref(channel: CommunityChannel, value: string): string | undefined {
-  if (channel === 'issues' || channel === 'discussions') return value
+  if (channel === 'issues') return value
   if (channel === 'email') return `mailto:${value.trim()}`
   return undefined
 }

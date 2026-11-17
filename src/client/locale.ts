@@ -146,7 +146,6 @@ export type LoomyLocaleKey =
   | 'tabs.diagnostics'
   | 'community.title'
   | 'community.issues'
-  | 'community.discussions'
   | 'community.qqGroup'
   | 'community.wechat'
   | 'community.email'
@@ -402,12 +401,11 @@ export const en: Record<LoomyLocaleKey, string> = {
   'common.unknownError': 'Unknown error',
   'community.title': 'Community',
   'community.issues': 'GitHub Issues',
-  'community.discussions': 'Discussions',
   'community.qqGroup': 'QQ group',
   'community.wechat': 'WeChat',
   'community.email': 'Email',
   'community.hint':
-    'Stuck? The diagnostics tab copies a ready-to-paste report (no tokens). Ask in Issues, or use Discussions for usage questions.',
+    'Stuck? The diagnostics tab copies a ready-to-paste report (no tokens). Ask in Issues, or in the QQ group.',
   'account.title': 'Local sign-in',
   'account.loggedIn': 'Signed in',
   'account.loggedOut': 'Not signed in',
@@ -644,12 +642,11 @@ export const zh: Record<LoomyLocaleKey, string> = {
   'common.unknownError': '未知错误',
   'community.title': '社群与反馈',
   'community.issues': 'GitHub Issues',
-  'community.discussions': 'Discussions',
   'community.qqGroup': 'QQ 群',
   'community.wechat': '微信',
   'community.email': '邮箱',
   'community.hint':
-    '遇到问题：诊断页可一键复制排障信息（不含凭据）；也可以在 Issues 提问，用法讨论放 Discussions。',
+    '遇到问题：诊断页可一键复制排障信息（不含凭据）；也可以在 Issues 提问，或直接进 QQ 群。',
   'account.title': '本机登录态',
   'account.loggedIn': '已登录',
   'account.loggedOut': '未登录',

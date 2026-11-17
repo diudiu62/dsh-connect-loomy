@@ -405,7 +405,12 @@ export async function loginWithPassword(options: {
     },
     ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
   })
-  if (result.kind === 'failure') return result
+  if (result.kind === 'failure') {
+    // Translate the three codes the password endpoint actually returns. They
+    // mean very different things and the raw desc alone misleads: 220202 reads
+    // like "bad password" but means "that string is not RSA ciphertext".
+    return { ...result, message: passwordFailureHint(result.code, result.message) }
+  }
 
   const data = isRecord(result.data) ? result.data : undefined
   const session = data?.['session']
@@ -419,6 +424,26 @@ export async function loginWithPassword(options: {
     session,
     ...(typeof userId === 'string' && userId.length > 0 ? { userId } : {}),
     ...(typeof phone === 'string' && phone.length > 0 ? { phone } : {}),
+  }
+}
+
+/**
+ * Turn an account API password failure into something a user can act on.
+ *
+ * Measured codes: 220202 解密密码失败 (the value is not RSA ciphertext),
+ * 220204 密码错误 (ciphertext was fine, password wrong), 220206 登录方式非法
+ * (this account cannot use password login at all).
+ */
+export function passwordFailureHint(code: string, message: string): string {
+  switch (code) {
+    case '220202':
+      return `${message}：password 必须是你账号密码的原文经 RSA 加密后的结果；直接把已加密的串（如 passwordEnc）再传过来会被判为无法解密。`
+    case '220204':
+      return `${message}：密码不正确。若不确定密码，请改用验证码登录。`
+    case '220206':
+      return `${message}：该账号不支持密码登录（可能从未设置密码），请改用验证码登录。`
+    default:
+      return message
   }
 }
 

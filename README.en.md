@@ -112,12 +112,12 @@ That account's sign-in expired. Sign in again — the other accounts are unaffec
 
 ## Stuck? Ask the community
 
+- **QQ group**: `537149884` (fastest; ask right after installing)
 - **Bugs and feature requests**: [GitHub Issues](https://github.com/diudiu62/dsh-connect-loomy/issues)
-- **Usage questions and examples**: [GitHub Discussions](https://github.com/diudiu62/dsh-connect-loomy/discussions)
 
 Before posting, press **Copy report** on the card's diagnostics tab and paste that text along: it carries versions, paths and the upstream wording, but no session token, phone number or user id.
 
-The same entry is pinned to the **top-right corner of the settings card**, next to the title. Group chat details are not decided yet; when they are, change one place — [`src/shared/community.ts`](src/shared/community.ts). Placeholders such as `[QQ_GROUP]` are hidden, and a real value appears automatically in the card, in `--help` and in these docs.
+The same entry is pinned to the **top-right corner of the settings card**, next to the title. Contacts live in one place — [`src/shared/community.ts`](src/shared/community.ts). The QQ group is filled in; WeChat and email are still placeholders (`[WECHAT_ID]`). Placeholders are hidden, and a real value appears automatically in the card, in `--help` and in these docs.
 
 ## Learn more
 
