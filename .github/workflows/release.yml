@@ -1,0 +1,92 @@
+name: Release
+
+# 推一个 `release/vX.Y.Z` 的 tag，GitHub 就自动构建、跑测试、打包并发布 Release。
+#
+# Why the tag carries the version twice (in the name and in package.json): the
+# plugin market reads a GitHub-only entry's version from the `package.json` at
+# the tag it links, so the two must agree or the listing shows one version and
+# serves another. The first job step fails fast when they disagree.
+#
+# The uploaded asset name is deliberately version-free: the market entry points
+# at `releases/latest/download/dsh-connect-loomy.tgz`, and a versioned asset name
+# works on the day it is published and 404s the moment the next release is cut.
+
+on:
+  push:
+    tags:
+      - 'release/v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Tag and package.json must agree on the version
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#release/v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "tag version:     $TAG_VERSION"
+          echo "package version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag release/v$TAG_VERSION 与 package.json 的 $PKG_VERSION 不一致；先改 package.json 再打 tag。"
+            exit 1
+          fi
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          npm pack --pack-destination dist
+          # Stable asset name: see the note at the top of this file.
+          mv dist/dsh-connect-loomy-*.tgz dist/dsh-connect-loomy.tgz
+          ls -lh dist
+
+      - name: Verify the tarball is complete
+        run: |
+          set -euo pipefail
+          for entry in package/package.json package/cordis.patch.yml package/lib/index.js package/lib/client.js package/lib/bin.js; do
+            tar -tzf dist/dsh-connect-loomy.tgz | grep -qx "$entry" \
+              || { echo "::error::tarball 缺少 $entry"; exit 1; }
+          done
+          # `prepack` rebuilds, so a stale lib/ cannot slip through — but prove it.
+          tar -xzf dist/dsh-connect-loomy.tgz -O package/package.json > /tmp/packed.json
+          node -e "const p=require('/tmp/packed.json'); const want=process.env.GITHUB_REF_NAME.replace('release/v',''); if(p.version!==want){console.error('打包内的版本 '+p.version+' != '+want);process.exit(1)}"
+          echo "tarball ok"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "v${GITHUB_REF_NAME#release/v}" \
+            --generate-notes \
+            "dist/dsh-connect-loomy.tgz#dsh-connect-loomy.tgz"
