@@ -71,8 +71,13 @@ jobs:
       - name: Verify the tarball is complete
         run: |
           set -euo pipefail
+          # List once into a file. `tar -tzf ... | grep -q` looks fine but grep
+          # exits at the first hit, tar takes SIGPIPE, and `pipefail` turns that
+          # into a failure — which is exactly how this step first reported a
+          # complete tarball as missing package/package.json.
+          tar -tzf dist/dsh-connect-loomy.tgz > /tmp/tarball-list.txt
           for entry in package/package.json package/cordis.patch.yml package/lib/index.js package/lib/client.js package/lib/bin.js; do
-            tar -tzf dist/dsh-connect-loomy.tgz | grep -qx "$entry" \
+            grep -qx "$entry" /tmp/tarball-list.txt \
               || { echo "::error::tarball 缺少 $entry"; exit 1; }
           done
           # `prepack` rebuilds, so a stale lib/ cannot slip through — but prove it.
