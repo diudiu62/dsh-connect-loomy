@@ -61,11 +61,6 @@ export type LoomyLocaleKey =
   | 'login.sourceDesktop'
   | 'login.sourceEnv'
   | 'login.sourceNone'
-  | 'login.modeCode'
-  | 'login.modePassword'
-  | 'login.passwordIntro'
-  | 'login.passwordPlaceholder'
-  | 'login.loginPassword'
   | 'accounts.title'
   | 'accounts.intro'
   | 'accounts.empty'
@@ -266,11 +261,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const en: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
   'login.title': 'Sign in to Loomy',
-  'login.modeCode': 'SMS code',
-  'login.modePassword': 'Phone + password',
-  'login.passwordIntro': 'Use the password set for your Loomy account. No SMS needed.',
-  'login.passwordPlaceholder': 'Password',
-  'login.loginPassword': 'Sign in',
   'login.intro': 'One SMS code per account. Accounts signed in here take precedence over the desktop client.',
   'login.phonePlaceholder': 'Phone number',
   'login.codePlaceholder': 'Verification code',
@@ -507,11 +497,6 @@ export const en: Record<LoomyLocaleKey, string> = {
 export const zh: Record<LoomyLocaleKey, string> = {
   'tab.label': 'Loomy',
   'login.title': '登录 Loomy 账号',
-  'login.modeCode': '验证码登录',
-  'login.modePassword': '账号密码',
-  'login.passwordIntro': '用 Loomy 账号的密码登录，不需要收验证码。',
-  'login.passwordPlaceholder': '密码',
-  'login.loginPassword': '登录',
   'login.intro': '每个账号一次验证码。这里登录的账号优先于桌面端登录态。',
   'login.phonePlaceholder': '手机号',
   'login.codePlaceholder': '验证码',

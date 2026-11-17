@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { authLogin, authLoginPassword, authLogout, authSendCode, type LoomyAuthState } from '../api.js'
+import { authLogin, authLogout, authSendCode, type LoomyAuthState } from '../api.js'
 import { loadableMessage, type LoomyT } from './types.js'
 import { CardButton, Notice } from './common.js'
 
@@ -48,10 +48,6 @@ function routeErrorMessage<T>(result: { kind: string; message?: string; value?: 
 
 /** Render the SMS login flow (or the signed-out / signed-in states around it). */
 export function LoginForm({ t, csrfToken, authState, onChanged, signal }: LoginFormProps) {
-  // Two ways in: a code (works for accounts that never set a password) or
-  // phone + password (no SMS at all). Both land in the same account list.
-  const [mode, setMode] = useState<'code' | 'password'>('code')
-  const [password, setPassword] = useState('')
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [sent, setSent] = useState<SentState | null>(null)
@@ -122,38 +118,6 @@ export function LoginForm({ t, csrfToken, authState, onChanged, signal }: LoginF
     }
   }
 
-  const loginByPassword = async (): Promise<void> => {
-    if (csrfToken === null || busy !== null) return
-    setBusy('login')
-    setError(null)
-    setNotice(null)
-    try {
-      const result = await authLoginPassword(
-        csrfToken,
-        phone.trim(),
-        password,
-        signal === undefined ? {} : { signal },
-      )
-      if (result.kind === 'ok' && result.value.ok) {
-        setPassword('')
-        setNotice(t('login.success'))
-        onChanged()
-        return
-      }
-      setError(
-        result.kind === 'ok'
-          ? (result.value.error?.message ?? t('login.failed'))
-          : result.kind === 'unavailable'
-            ? t('accounts.unavailable')
-            : result.message,
-      )
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('login.failed'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
   const logout = async (): Promise<void> => {
     if (csrfToken === null || busy !== null) return
     setBusy('logout')
@@ -197,15 +161,7 @@ export function LoginForm({ t, csrfToken, authState, onChanged, signal }: LoginF
 
   return (
     <div className="loomy-login">
-      <div className="loomy-actions">
-        <CardButton variant={mode === 'code' ? 'primary' : 'ghost'} onClick={() => setMode('code')}>
-          {t('login.modeCode')}
-        </CardButton>
-        <CardButton variant={mode === 'password' ? 'primary' : 'ghost'} onClick={() => setMode('password')}>
-          {t('login.modePassword')}
-        </CardButton>
-      </div>
-      <p className="loomy-muted">{mode === 'code' ? t('login.intro') : t('login.passwordIntro')}</p>
+      <p className="loomy-muted">{t('login.intro')}</p>
       <div className="loomy-login-row">
         <input
           className="loomy-input"
@@ -226,28 +182,7 @@ export function LoginForm({ t, csrfToken, authState, onChanged, signal }: LoginF
           {busy === 'send' ? t('login.sending') : t('login.sendCode')}
         </CardButton>
       </div>
-      {mode === 'password' ? (
-        <div className="loomy-login-row">
-          <input
-            className="loomy-input"
-            type="password"
-            autoComplete="current-password"
-            placeholder={t('login.passwordPlaceholder')}
-            value={password}
-            disabled={busy !== null}
-            aria-label={t('login.passwordPlaceholder')}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <CardButton
-            onClick={() => void loginByPassword()}
-            disabled={busy !== null || csrfToken === null || !phoneValid || password.length === 0}
-          >
-            {busy === 'login' ? t('login.loggingIn') : t('login.loginPassword')}
-          </CardButton>
-        </div>
-      ) : null}
-
-      {mode === 'code' && sent !== null ? (
+      {sent !== null ? (
         <div className="loomy-login-row">
           <input
             className="loomy-input"

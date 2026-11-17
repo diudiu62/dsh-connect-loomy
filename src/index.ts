@@ -144,10 +144,6 @@ export { PROVIDER_ID, ROUTE_PREFIX, ROUTES } from './shared/types.js'
 export { requestPlatform } from './shared/upstream.js'
 export {
   configFromEnv,
-  encryptPassword,
-  fetchPasswordKey,
-  loginWithPassword,
-  passwordFailureHint,
   decryptLoomyEnv,
   loomyAppEnvCandidates,
   resolveXfyunConfig,

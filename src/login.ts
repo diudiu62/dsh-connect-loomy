@@ -17,14 +17,7 @@
  * @module dsh-connect-loomy/login
  */
 
-import {
-  PHONE_PATTERN,
-  loginWithPassword,
-  resolveXfyunConfig,
-  resetXfyunConfigCache,
-  sendSmsCode,
-  verifySmsCode,
-} from './shared/xfyun.js'
+import { PHONE_PATTERN, resolveXfyunConfig, resetXfyunConfigCache, sendSmsCode, verifySmsCode } from './shared/xfyun.js'
 import { clearPluginAuthSession, writePluginAuthSession } from './plugin-auth.js'
 import { routeForSlot } from './accounts.js'
 import { displayPhone, displayUserId } from './shared/text.js'
@@ -198,37 +191,6 @@ export function createLoginService(deps: LoginDeps) {
         resendAfterMs: SEND_CODE_COOLDOWN_MS,
         expiresMs: SMS_EXPIRES_MS,
       }
-    },
-
-    /**
-     * Sign in with phone + password (no SMS).
-     *
-     * Same post-login path as the code flow: the account lands in the store, gets
-     * its slot and its own route-less identity, and the caller's refresh picks
-     * it up.
-     */
-    async loginWithPassword(rawPhone: string, rawPassword: string): Promise<LoginResult> {
-      const phone = rawPhone.trim()
-      if (!PHONE_PATTERN.test(phone)) {
-        return { ok: false, code: 'invalid_phone', message: '手机号格式不正确（需要中国大陆手机号）' }
-      }
-      if (rawPassword.length === 0) {
-        return { ok: false, code: 'invalid_password', message: '请输入密码。' }
-      }
-      const config = resolveXfyunConfig()
-      if (config.kind === 'missing') return { ok: false, code: 'app_missing', message: config.problem }
-
-      const result = await loginWithPassword({
-        config: config.config,
-        phone,
-        password: rawPassword,
-        ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
-      })
-      if (result.kind === 'failure') {
-        return { ok: false, code: result.code, message: `登录失败：${result.message}` }
-      }
-      const persisted = await persistLogin(deps, now, result, phone)
-      return persisted.login
     },
 
     /**

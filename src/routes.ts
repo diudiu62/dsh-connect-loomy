@@ -886,35 +886,6 @@ export function registerLoomyRoutes(ctx: Context, deps: RouteDeps): void {
       },
     },
     {
-      path: ROUTES.authLoginPassword,
-      methods: ['POST'],
-      mutating: true,
-      run: async (req, res) => {
-        const body = await readJsonObject(req)
-        if (body === undefined) {
-          failure(res, 400, 'bad_request', '请求体必须是 JSON 对象')
-          return
-        }
-        const phone = body['phone']
-        const password = body['password']
-        if (typeof phone !== 'string' || typeof password !== 'string') {
-          failure(res, 400, 'bad_request', 'phone 与 password 必须是字符串')
-          return
-        }
-        const result = await deps.login.loginWithPassword(phone, password)
-        if (!result.ok) {
-          corsSafeJson(res, 200, { ok: false, error: { code: result.code, message: result.message } })
-          return
-        }
-        const payload: AuthLoginView = {
-          ok: true,
-          ...(result.phone === undefined ? {} : { phone: result.phone }),
-          ...(result.userId === undefined ? {} : { userId: result.userId }),
-        }
-        corsSafeJson(res, 200, payload)
-      },
-    },
-    {
       path: ROUTES.authLogout,
       methods: ['POST'],
       mutating: true,
