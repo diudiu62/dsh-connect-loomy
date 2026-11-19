@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>Loomy 账号切换器</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-text">Loomy 账号切换器</span>
+      </div>
+      <div class="titlebar-meta">
+        <div class="target-tabs" id="target-tabs" role="tablist"></div>
+        <span class="chip" id="status-chip">检测中…</span>
+        <span class="chip chip-ghost" id="current-chip">当前账号 —</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel accounts-panel">
+        <div class="panel-head">
+          <h2>账号库 <span class="count" id="account-count">0</span></h2>
+          <div class="panel-actions">
+            <button class="btn btn-ghost" id="btn-capture" title="把客户端当前登录的账号存进账号库">捕获当前</button>
+            <button class="btn btn-ghost" id="btn-export" title="导出为 JSON，可粘到别的机器">导出</button>
+            <button class="btn btn-accent" id="btn-refresh-all" title="并发查询账号库里每个账号的剩余积分">刷新积分</button>
+          </div>
+        </div>
+        <div class="account-list" id="account-list">
+          <p class="empty">账号库还是空的，把 JSON 粘到右边导入。</p>
+        </div>
+      </section>
+
+      <section class="column">
+        <div class="panel import-panel">
+          <div class="panel-head">
+            <h2>导入登录态</h2>
+            <div class="panel-actions">
+              <button class="btn btn-ghost" id="btn-file">选文件…</button>
+            </div>
+          </div>
+          <textarea
+            id="import-text"
+            spellcheck="false"
+            placeholder='粘贴 JSON，支持四种形状：
+
+{"session":"…","userid":"…","phone":"181…"}
+
+[{…},{…}]                       多账号数组
+{"accounts":[…]}                裸包装
+{"kind":"dsh-connect-loomy/accounts", …}   DSH 插件导出包'
+          ></textarea>
+          <div class="import-foot">
+            <label class="check">
+              <input type="checkbox" id="opt-restart" checked />
+              <span>切换后重启 Loomy（推荐）</span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="opt-dsh" />
+              <span>同时同步 DSH 插件登录态</span>
+            </label>
+            <button class="btn btn-primary" id="btn-import">导入</button>
+          </div>
+        </div>
+
+        <div class="panel invite-panel">
+          <div class="panel-head">
+            <h2>邀请码</h2>
+            <div class="panel-actions">
+              <button class="btn btn-ghost" id="btn-invite-refresh" title="查询当前账号名下的邀请码">查询</button>
+            </div>
+          </div>
+          <div class="invite-body" id="invite-body">
+            <p class="empty invite-empty">点「查询」查看当前账号名下的邀请码，以及是否已被别人邀请。</p>
+          </div>
+        </div>
+
+        <div class="panel log-panel">
+          <div class="panel-head">
+            <h2>操作记录</h2>
+            <div class="panel-actions">
+              <button class="btn btn-ghost" id="btn-backups">备份目录</button>
+              <button class="btn btn-ghost" id="btn-clear-log">清空</button>
+            </div>
+          </div>
+          <ol class="log" id="log">
+            <li class="log-line log-muted">就绪。切换时会自动退出 Loomy、备份、写入、重启并校验。</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <span id="path-info">—</span>
+      <span class="statusbar-right" id="version-info"></span>
+    </footer>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
