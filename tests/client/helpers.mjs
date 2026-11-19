@@ -43,6 +43,24 @@ export async function setupDom() {
   ReactDOMClient = nodeRequire('react-dom/client')
 }
 
+/**
+ * 丢掉上一套 DOM，重新建一套。
+ *
+ * 流程测试要在同一个进程里渲染多次（每次点一串按钮）。React 的挂载与 act 队列
+ * 在单一 document 上累积后，后面的渲染可能拿到一个空容器 —— 这是测试基建的问题，
+ * 不是产品的问题。每个用例从一套新 DOM 开始就没有这个耦合。
+ */
+export async function resetDom() {
+  if (dom !== undefined) {
+    dom.window.close()
+    dom = undefined
+  }
+  for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'Event', 'MouseEvent', 'KeyboardEvent', 'getComputedStyle']) {
+    Reflect.deleteProperty(globalThis, key)
+  }
+  await setupDom()
+}
+
 /** The DOM window (after {@link setupDom}). */
 export function window() {
   if (dom === undefined) throw new Error('setupDom() must run first')
@@ -71,8 +89,11 @@ export function loadClient() {
     Symbol,
     AbortController,
     AbortSignal,
+    // 浏览器有的计时器：登录倒计时用 setInterval，缺了它在沙箱里就是 ReferenceError。
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
     queueMicrotask,
   }
   // Browser globals the card reads must resolve at call time, not at bundle
@@ -89,7 +110,7 @@ export function loadClient() {
   vm.runInNewContext(source, context, { filename: 'lib/client.js' })
   if (loaded.length !== 1) throw new Error(`expected one loader registration, got ${loaded.length}`)
   const bundle = loaded[0]
-  if (bundle.id !== 'dsh-connect-loomy') throw new Error(`unexpected bundle id ${bundle.id}`)
+  if (bundle.id !== 'dsh-connect-desktop') throw new Error(`unexpected bundle id ${bundle.id}`)
   clientExports = bundle.factory((id) => {
     if (id === 'react') return nodeRequire('react')
     if (id === 'react/jsx-runtime') return nodeRequire('react/jsx-runtime')
@@ -119,7 +140,7 @@ export function createFakeCtx(locale = 'zh') {
   const localeRegistrations = []
   const effects = []
   const entries = []
-  const declared = new Set(['settings.section', 'conversation.input.right'])
+  const declared = new Set(['settings.section', 'settings.section.icon', 'conversation.input.right'])
   let dictionaries
 
   const ctx = {
@@ -281,7 +302,7 @@ export function tab(container, text) {
 
 /** All model-row checkboxes in document order. */
 export function modelCheckboxes(container) {
-  return [...container.querySelectorAll('.loomy-model input[type="checkbox"]')]
+  return [...container.querySelectorAll('.dcss-tick input[type="checkbox"]')]
 }
 
 /** Set `navigator.clipboard.writeText` and record what it received. */
@@ -301,35 +322,33 @@ export function stubClipboard(result = true) {
 
 /** Build the route table used by most tests. */
 export function defaultRoutes(overrides = {}) {
+  const base = '/plugins/dsh-connect-desktop'
   return {
-    '/plugins/dsh-connect-loomy/status': { body: STATUS },
-    '/plugins/dsh-connect-loomy/credits': { body: CREDITS },
-    '/plugins/dsh-connect-loomy/diagnostics': { body: DIAGNOSTICS },
-    '/plugins/dsh-connect-loomy/auth/state': {
-      body: {
-        ok: true,
-        pluginLoggedIn: false,
-        effectiveSource: 'desktop',
-        phone: '138****0000',
-      },
+    [`${base}/status`]: { body: STATUS },
+    [`${base}/loomy/credits`]: { body: CREDITS },
+    [`${base}/loomy/diagnostics`]: { body: DIAGNOSTICS },
+    [`${base}/loomy/auth/state`]: {
+      body: { ok: true, pluginLoggedIn: false, effectiveSource: 'desktop', phone: '138****0000' },
     },
-    '/plugins/dsh-connect-loomy/accounts': {
+    [`${base}/loomy/accounts`]: {
       body: {
         ok: true,
+        rotating: false,
         accounts: [
           {
             id: 'desktop-1',
-            slot: 1,
             route: 'loomy',
             displayName: 'Loomy',
             origin: 'desktop',
             phone: '138****0000',
+            unavailable: false,
           },
         ],
       },
     },
-    '/plugins/dsh-connect-loomy/refresh': { body: CATALOG },
-    '/plugins/dsh-connect-loomy/save': (init) => {
+    [`${base}/loomy/catalog`]: { body: CATALOG },
+    [`${base}/loomy/refresh`]: { body: CATALOG },
+    [`${base}/loomy/save`]: (init) => {
       const request = JSON.parse(init.body)
       return new Response(JSON.stringify({ ok: true, enabled: request.enabledModelIds }), {
         status: 200,
@@ -340,18 +359,62 @@ export function defaultRoutes(overrides = {}) {
   }
 }
 
-/** `/status` payload (contract v2) with deliberately hostile extras. */
+/** `/status`（新契约：一次拿到所有供应商）—— 故意多塞敏感字段，卡片不该显示。 */
+export const VENDOR_STATUS = {
+  id: 'loomy',
+  displayName: 'Loomy',
+  accent: '#2E6BE6',
+  available: true,
+  capabilities: {
+    accounts: 'multi',
+    pool: true,
+    login: ['sms-code'],
+    credits: {
+      kind: 'balance',
+      fields: [
+        { key: 'available', labelKey: 'credits.field.available', role: 'available' },
+        { key: 'daily', labelKey: 'credits.field.daily', role: 'today' },
+        { key: 'total', labelKey: 'credits.field.total', role: 'total' },
+      ],
+    },
+    catalog: { selection: true, visionOverride: true, reasoningEffort: true },
+    transfer: true,
+    adopt: true,
+    diagnostics: true,
+  },
+  credential: {
+    found: true,
+    sourceOrigin: 'desktop',
+    sourcePath: '/Users/test/Library/Application Support/loomy/auth-session.json',
+    candidates: [],
+  },
+  account: { phone: '138****0000', loginAt: 1794574693000, userId: '1234**********5678', route: 'loomy' },
+  catalog: { total: 3, enabled: 2, refreshedAt: 1794575000000 },
+  enabledModelIds: ['spark-x2.6', 'DeepSeek-V4.1-Flash'],
+}
+
+/**
+ * 用一份自定义能力构造 `/status` 载荷。
+ *
+ * 能力矩阵测试要逐个能力位开关，手抄整份载荷会漂移，所以集中在这里拼装：
+ * 除 `capabilities` / `available` 外的字段取自 {@link VENDOR_STATUS}。
+ */
+export function buildStatus({ capabilities, available = true, vendorOverrides = {} }) {
+  const vendor = {
+    ...VENDOR_STATUS,
+    ...vendorOverrides,
+    capabilities,
+    available,
+    ...(available ? {} : { unavailableReason: '未检测到该客户端' }),
+  }
+  return { ok: true, csrfToken: 'csrf-test-token', vendors: [vendor] }
+}
+
 export const STATUS = {
   ok: true,
   csrfToken: 'csrf-test-token',
-  account: { phone: '13812345678', loginAt: 1794574693000, userId: 'userid-secret-42', route: 'loomy' },
-  credential: {
-    sourcePath: '/Users/test/Library/Application Support/loomy/auth-session.json',
-    found: true,
-  },
-  catalog: { total: 3, enabled: 2, refreshedAt: 1794575000000 },
-  enabledModelIds: ['spark-x2.6', 'DeepSeek-V4.1-Flash'],
-  // Extras a buggy host might append; the card must never display them.
+  vendors: [VENDOR_STATUS],
+  // 有 bug 的宿主可能多塞这些；卡片绝不能显示。
   session: 'deadbeefdeadbeefdeadbeefdeadbeef',
   phone: '13812345678',
 }
@@ -359,9 +422,8 @@ export const STATUS = {
 /** `/credits` payload. */
 export const CREDITS = {
   ok: true,
-  balance: 35500,
-  dailyBalance: 5000,
-  availableBalance: 40500,
+  // 桶按能力声明的 key 给出；`records` 与 `perAccount` 可选。
+  fields: { available: 40500, daily: 5000, total: 35500 },
   fetchedAt: 1794575100000,
   records: [
     {
@@ -381,24 +443,36 @@ export const CREDITS = {
   ],
 }
 
-/** `/diagnostics` payload with the upstream error message kept verbatim. */
+/** `/diagnostics` 载荷（新契约：供应商一片，含逐字保留的上游错误）。 */
 export const DIAGNOSTICS = {
   ok: true,
-  probes: [
-    {
-      path: '/Users/test/Library/Application Support/loomy/auth-session.json',
-      ok: true,
-      reason: 'parsed',
-    },
-    { path: '/Users/test/.config/loomy/auth-session.json', ok: false, reason: 'ENOENT' },
+  id: 'loomy',
+  displayName: 'Loomy',
+  baseUrl: 'https://loomyad.xunfei.cn/api/v1/models',
+  endpoints: [
+    { label: 'models', url: 'https://loomyad.xunfei.cn/api/v1/models' },
+    { label: 'points', url: 'https://loomyad.xunfei.cn/api/v1/points/records' },
   ],
-  upstream: {
-    baseUrl: 'https://loomyad.xunfei.cn/api/v1',
-    modelsUrl: 'https://loomyad.xunfei.cn/api/v1/models',
-    pointsUrl: 'https://loomyad.xunfei.cn/api/v1/points/records',
+  credential: {
+    found: true,
+    sourceOrigin: 'desktop',
+    sourcePath: '/Users/test/Library/Application Support/loomy/auth-session.json',
+    candidates: [
+      { path: '/Users/test/Library/Application Support/loomy/auth-session.json', exists: true, state: 'ok', reason: '已读取' },
+      { path: '/Users/test/.config/loomy/auth-session.json', exists: false, state: 'missing', reason: '文件不存在' },
+    ],
   },
-  account: { phone: '13812345678', userId: 'userid-secret-42' },
-  catalog: { total: 3, enabled: 2 },
+  account: { phone: '138****0000', userId: '1234**********5678' },
+  inspected: [
+    '/Users/test/Library/Application Support/loomy/auth-session.json',
+    '/Users/test/.config/loomy/auth-session.json',
+  ],
+  probes: [
+    { path: '/Users/test/Library/Application Support/loomy/auth-session.json', ok: true, reason: '已读取' },
+    { path: '/Users/test/.config/loomy/auth-session.json', ok: false, reason: '文件不存在' },
+  ],
+  catalog: { total: 3, enabled: 2, refreshedAt: 1794575000000 },
+  accounts: { total: 1, healthy: 1 },
   lastError: {
     at: 1794574800000,
     path: 'POST /api/v1/chat/completions',
@@ -411,7 +485,8 @@ export const DIAGNOSTICS = {
 export const CATALOG = {
   ok: true,
   refreshedAt: 1794575200000,
-  catalog: [
+  selection: null,
+  models: [
     {
       id: 'spark-x2.6',
       name: 'Spark-X2.6 正式版(限时免费)(x0.0)',

@@ -32,14 +32,21 @@ export function resolveDshHome(
   return resolve(home, '.dsh')
 }
 
-/** Directory this plugin owns under the harness home. */
-export function stateDirectory(dshHome: string = resolveDshHome()): string {
-  return join(dshHome, 'storages', 'dsh-connect-loomy')
+/**
+ * 目录名与 `dsh-connect-desktop` 这个包名一致（`core/store.ts#STORAGE_ROOT` 是权威）。
+ *
+ * 0.3.0 起按供应商分目录：`$DSH_HOME/storages/dsh-connect-desktop/<vendorId>/`。
+ * 这两个函数只服务于"没有宿主上下文"的调用方（CLI、测试）；运行时永远走
+ * `deps.storageDir`。名字必须与 `core/store.ts` 一致，否则会出现"测试里能读到、
+ * 真机上读不到"。
+ */
+export function stateDirectory(dshHome: string = resolveDshHome(), vendorId = 'loomy'): string {
+  return join(dshHome, 'storages', 'dsh-connect-desktop', vendorId)
 }
 
-/** The one JSON file holding the catalog cache, the saved selection and last error. */
-export function stateFilePath(dshHome: string = resolveDshHome()): string {
-  return join(stateDirectory(dshHome), 'state.json')
+/** 某个供应商的 state 文档（目录缓存、已保存的选择、最后一次上游错误）。 */
+export function stateFilePath(dshHome: string = resolveDshHome(), vendorId = 'loomy'): string {
+  return join(stateDirectory(dshHome, vendorId), 'state.json')
 }
 
 /** One credential candidate plus whether it came from an explicit override. */

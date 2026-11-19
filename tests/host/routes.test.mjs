@@ -1,663 +1,297 @@
 /**
- * Host routes: the contract-v2 JSON shapes plus the guard order.
+ * HTTP 守卫管线与能力门控（`core/http.ts` + `core/routes.ts`）。
  *
- * The routes are the only browser-facing surface, so this file pins three
- * invariants:
- * 1. responses carry host-computed, credential-free values (never the session);
- * 2. `/status` always returns `enabledModelIds` (including an explicit `[]`);
- * 3. the two POSTs require JSON + the process-level CSRF token, and a foreign
- *    Host/Origin cannot drive the surface at all.
+ * 重构前这条管线有两份拷贝，且已经漂移：一份没有请求体上限，一份的 loopback
+ * 判断更弱。这些测试直接打在*唯一的*实现上，所以两边不可能再各自为政：
+ * 方法 → loopback → content-type → CSRF（只有一个头名）→ 64KiB 上限 → 信封。
  */
 import assert from 'node:assert/strict'
-import { createServer, request as httpRequestModule } from 'node:http'
 import { test } from 'node:test'
-import { SESSION, jsonResponse, modelsBody, pointsBody,
-  RAW_PHONE,
-  RAW_USER_ID,
-} from './helpers.mjs'
-import {
-  ROUTE_PREFIX,
-  buildDiagnostics,
-  buildStatus,
-  normalizeCatalog,
-  parseCreditsPayload,
-  registerLoomyRoutes,
-} from '../../lib/index.js'
+import { CSRF_HEADER, MAX_BODY_BYTES, mountAt, mountRoutes, planVendorRoutes } from '../../lib/index.js'
 
-const BASE = 'https://gateway.test/api/v1'
-const CSRF = 'csrf-test-token'
-const MODELS = normalizeCatalog(modelsBody())
-
-const SNAPSHOT = {
-  found: true,
-  sourcePath: '/tmp/loomy/auth-session.json',
-  session: SESSION,
-  fingerprint: '0123456789abcdef',
-  phone: RAW_PHONE,
-  userId: RAW_USER_ID,
-  loginAt: 1_794_574_693_000,
-  candidates: [
-    { path: '/tmp/loomy/auth-session.json', exists: true, state: 'ok', reason: '已读取登录态' },
-  ],
+/** 只够喂给守卫的假请求。`socket.localAddress` 是 loopback 判断的输入。 */
+function request({ method = 'GET', url = '/', headers = {}, body, localAddress = '127.0.0.1' } = {}) {
+  const listeners = new Map()
+  const req = {
+    method,
+    url,
+    headers,
+    socket: { localAddress },
+    on(event, handler) {
+      listeners.set(event, handler)
+      return req
+    },
+    destroy() {},
+  }
+  // 让 readBody 的 for-await 语义成立：守卫只会在需要时订阅。
+  queueMicrotask(() => {
+    if (body !== undefined) listeners.get('data')?.(Buffer.from(body))
+    listeners.get('end')?.()
+  })
+  return req
 }
 
-function authOf(snapshot = SNAPSHOT) {
-  return {
-    candidates: snapshot.candidates ?? [],
-    async read() {
-      return snapshot
+/** 记录状态码/响应体的假响应。 */
+function response() {
+  const captured = { status: 0, body: undefined, headers: {} }
+  const res = {
+    headersSent: false,
+    writeHead(status, headers) {
+      captured.status = status
+      captured.headers = headers ?? {}
+      res.headersSent = true
     },
-    invalidate() {},
+    end(payload) {
+      captured.body = payload === undefined ? undefined : JSON.parse(payload)
+      res.headersSent = true
+    },
   }
+  return { res, captured }
 }
 
-function catalogOf(options = {}) {
-  const models = options.models ?? MODELS
-  const selection = options.selection ?? null
-  let lastError = options.lastError
-  const view = () => {
-    const saved = selection === null ? null : new Set(selection)
-    return models.map((model) => ({ ...model, enabled: saved === null || saved.has(model.id) }))
-  }
-  const enabledIds = () => view().filter((model) => model.enabled).map((model) => model.id)
-  return {
-    calls: { ensure: 0, hydrate: 0, refresh: 0, save: [] },
-    path: '/tmp/state.json',
-    async ensure() {
-      this.calls.ensure += 1
-      return { kind: 'ok', snapshot: { models, refreshedAt: options.refreshedAt ?? 5, source: 'memory' } }
-    },
-    async hydrate() {
-      this.calls.hydrate += 1
-    },
-    current: () => models,
-    refreshedAt: () => options.refreshedAt ?? 5,
-    selection: () => selection,
-    enabledIds,
-    enabledModels: () => models.filter((model) => enabledIds().includes(model.id)),
-    lastError: () => lastError,
-    async refresh() {
-      this.calls.refresh += 1
-      if (options.refreshResult !== undefined) {
-        if (options.refreshResult.kind === 'failure') lastError = options.refreshResult.failure
-        return options.refreshResult
-      }
-      lastError = undefined
-      return { kind: 'ok', snapshot: { models, refreshedAt: 9, source: 'upstream' } }
-    },
-    async saveSelection(ids) {
-      this.calls.save.push([...ids])
-      const wanted = new Set(ids)
-      return { kind: 'ok', enabled: models.filter((model) => wanted.has(model.id)).map((model) => model.id) }
-    },
-    view,
-  }
-}
-
-function creditsOf(result) {
-  return {
-    calls: [],
-    async read(options = {}) {
-      this.calls.push(options)
-      return result ?? { kind: 'ok', credits: parseCreditsPayload(pointsBody(), 1).credits }
-    },
-  }
-}
-
-function makeDeps(overrides = {}) {
-  return {
-    auth: overrides.auth ?? authOf(),
-    catalog: overrides.catalog ?? catalogOf(),
-    credits: overrides.credits ?? creditsOf(),
-    ...(overrides.creditsFor === undefined ? {} : { creditsFor: overrides.creditsFor }),
-    ...(overrides.creditsForAccount === undefined ? {} : { creditsForAccount: overrides.creditsForAccount }),
-    ...(overrides.onAccountRemoved === undefined ? {} : { onAccountRemoved: overrides.onAccountRemoved }),
-    csrfToken: overrides.csrfToken ?? CSRF,
-    baseURL: () => BASE,
-    fetchImpl:
-      overrides.fetchImpl ?? (async () => jsonResponse({ code: '000000', desc: '成功', data: {} })),
-    now: () => 1_794_574_693_000,
-    logger: { warn() {} },
-    // Defaults for the multi-account routes so a test can drive one without
-    // wiring the whole account store.
-    accounts:
-      overrides.accounts ?? {
-        list: async () => [],
-        routes: async () => [],
-        adoptDesktop: async () => ({ kind: 'failure', code: 'none', message: '无桌面端登录态' }),
-        exportBundle: async () => ({ bundle: { kind: 'dsh-connect-loomy/accounts', version: 1, exportedAt: 0, accounts: [] }, paths: [] }),
-        importBundle: async () => ({ kind: 'ok', added: 0, refreshed: 0, skipped: 0, reassigned: 0 }),
-        remove: async () => ({ kind: 'ok', removed: false }),
-        rename: async () => ({ kind: 'ok' }),
-        markUnavailable: async () => undefined,
-        markHealthy: async () => undefined,
-        invalidate: () => undefined,
-        accountForRoute: async () => undefined,
-      },
-    poolPreference: overrides.poolPreference ?? { read: async () => false, write: async () => undefined },
-    routes: overrides.routes ?? (() => []),
-    refreshRoutes: overrides.refreshRoutes ?? (async () => undefined),
-    login:
-      overrides.login ?? {
-        sendCode: async () => ({ ok: false, code: 'off', message: '未接线' }),
-        login: async () => ({ ok: false, code: 'off', message: '未接线' }),
-        logout: async () => ({ ok: false, code: 'off', message: '未接线' }),
-        resetConfigCache: () => undefined,
-      },
-  }
-}
-
-/** Start a real HTTP server that dispatches to the registered exact routes. */
-async function startRoutes(t, deps) {
-  const routes = new Map()
-  const disposers = []
-  const fakeCtx = {
+/** 在假 ctx 上装一条路由，返回可调用的 handler。 */
+function mountOne(spec, paths = []) {
+  const registered = []
+  const ctx = {
     inject(_services, callback) {
       callback({
         effect(fn) {
-          const dispose = fn()
-          if (typeof dispose === 'function') disposers.push(dispose)
-          return dispose
+          fn()
+          return () => {}
         },
         webServer: {
-          register(spec) {
-            routes.set(spec.path, spec)
-            return () => routes.delete(spec.path)
+          // 与真宿主一致：同路径第二次注册直接抛错。
+          register(route) {
+            if (registered.some((entry) => entry.path === route.path)) {
+              throw new Error(`webserver: duplicate exact route "${route.path}"`)
+            }
+            registered.push(route)
+            paths.push(route.path)
+            return () => {}
           },
         },
       })
     },
   }
-  registerLoomyRoutes(fakeCtx, deps)
-
-  const server = createServer((req, res) => {
-    const { pathname } = new URL(req.url ?? '/', 'http://127.0.0.1')
-    const spec = routes.get(pathname)
-    if (spec === undefined) {
-      res.writeHead(404, { 'content-type': 'text/plain' })
-      res.end('not found')
-      return
-    }
-    void spec.handler(req, res)
-  })
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  t.after(
-    () =>
-      new Promise((resolve) => {
-        for (const dispose of disposers) dispose()
-        server.close(resolve)
-      }),
-  )
-  return `http://127.0.0.1:${server.address().port}`
+  mountAt(ctx, { path: '/x', csrfToken: 'tok', spec })
+  return registered[0].handler
 }
 
-/** Raw http.request so the test controls Host/Origin/content-type exactly. */
-function httpRequest(urlString, options = {}) {
-  const url = new URL(urlString)
-  return new Promise((resolve, reject) => {
-    const request = httpRequestModule(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        path: `${url.pathname}${url.search}`,
-        method: options.method ?? 'GET',
-        headers: options.headers ?? {},
-      },
-      (response) => {
-        const chunks = []
-        response.on('data', (chunk) => chunks.push(chunk))
-        response.on('end', () =>
-          resolve({
-            status: response.statusCode,
-            headers: response.headers,
-            text: Buffer.concat(chunks).toString('utf8'),
-          }),
-        )
-      },
-    )
-    request.on('error', reject)
-    if (options.body !== undefined) {
-      request.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body))
-    }
-    request.end()
-  })
+const GET_SPEC = { suffix: 'demo', methods: ['GET'], mutating: false, run: async () => ({ ok: true, hit: 'get' }) }
+const POST_SPEC = {
+  suffix: 'demo',
+  methods: ['POST'],
+  mutating: true,
+  run: async ({ body }) => ({ ok: true, body: await body() }),
 }
 
-test('buildStatus reports a host-computed enabled list and the CSRF token', async () => {
-  const deps = makeDeps({ catalog: catalogOf({ selection: ['spark-x2.6', 'qwen3.8-flash'] }) })
-  const status = await buildStatus(deps)
+/** 合法请求必须带本机 Host 头（loopback 判断的前提）。 */
+const LOCAL = { host: '127.0.0.1:3000', 'content-type': 'application/json' }
 
-  assert.equal(status.ok, true)
-  assert.equal(status.csrfToken, CSRF)
-  assert.deepEqual(status.account, {
-    phone: RAW_PHONE,
-    loginAt: 1_794_574_693_000,
-    userId: '123456789012345678',
-  })
-  assert.deepEqual(status.credential, { sourcePath: '/tmp/loomy/auth-session.json', found: true })
-  assert.deepEqual(status.catalog, { total: 4, enabled: 2, refreshedAt: 5 })
-  assert.deepEqual(status.enabledModelIds, ['spark-x2.6', 'qwen3.8-flash'])
-  assert.equal(status.nextSteps, undefined)
-  assert.equal(deps.catalog.calls.ensure, 1)
+async function call(handler, options = {}) {
+  const { res, captured } = response()
+  // `undefined` 显式删掉默认头，用来构造"没有 content-type"的请求。
+  const merged = { ...LOCAL, ...options.headers }
+  for (const [key, value] of Object.entries(merged)) if (value === undefined) delete merged[key]
+  await handler(request({ ...options, headers: merged }), res)
+  return captured
+}
 
-  const serialised = JSON.stringify(status)
-  assert.ok(!serialised.includes(SESSION), 'the session must never be serialised to the browser')
-  // Phone and user id are display data on this machine, so they ARE reported;
-  // only the session is a secret the browser must never receive.
+test('the method guard answers 405 and names the allowed verbs', async () => {
+  const handler = mountOne(POST_SPEC)
+  const out = await call(handler, { method: 'DELETE' })
+  assert.equal(out.status, 405)
+  assert.equal(out.body.error.code, 'method_not_allowed')
+  assert.match(out.body.error.message, /POST/u)
 })
 
-test('buildStatus: a never-saved selection returns every chat model id', async () => {
-  const status = await buildStatus(makeDeps())
-  assert.deepEqual(status.enabledModelIds, MODELS.map((model) => model.id))
+test('a Host header that is not this listener is rejected before anything runs', async () => {
+  const handler = mountOne(GET_SPEC)
+  const out = await call(handler, { headers: { host: 'attacker.example:3000' } })
+  assert.equal(out.status, 403)
+  assert.equal(out.body.error.code, 'host_not_allowed')
 })
 
-test('buildStatus: a manually emptied selection returns [] but keeps the field', async () => {
-  const status = await buildStatus(makeDeps({ catalog: catalogOf({ selection: [] }) }))
-  assert.deepEqual(status.enabledModelIds, [])
-  assert.equal(status.catalog.enabled, 0)
+test('a cross-origin browser request is rejected', async () => {
+  const handler = mountOne(GET_SPEC)
+  const out = await call(handler, { headers: { host: '127.0.0.1:3000', origin: 'http://evil.example' } })
+  assert.equal(out.status, 403)
+  assert.equal(out.body.error.code, 'origin_not_allowed')
 })
 
-test('buildStatus stays 200 while signed out and offers executable next steps', async () => {
-  const signedOut = {
-    found: false,
-    sourcePath: '/tmp/missing-auth.json',
-    reason: 'missing',
-    problem: '本机没有找到 Loomy 登录态文件（/tmp/missing-auth.json）。请启动 Loomy 客户端并完成登录。',
-    candidates: [{ path: '/tmp/missing-auth.json', exists: false, state: 'missing', reason: '文件不存在' }],
-  }
-  const catalog = catalogOf({ models: [] })
-  const status = await buildStatus(makeDeps({ auth: authOf(signedOut), catalog }))
+test('a mutating route needs JSON and the one CSRF header', async () => {
+  const handler = mountOne(POST_SPEC)
+  // 没有 content-type：先按"不是 JSON"拒掉。
+  const noType = await call(handler, { method: 'POST', body: '{}', headers: { 'content-type': undefined } })
+  assert.equal(noType.status, 415)
+  assert.equal(noType.body.error.code, 'unsupported_media_type')
 
-  assert.equal(status.ok, true)
-  assert.equal(status.account, null)
-  assert.deepEqual(status.credential, { sourcePath: '/tmp/missing-auth.json', found: false })
-  assert.deepEqual(status.enabledModelIds, [])
-  assert.ok(status.nextSteps.length >= 2)
-  assert.match(status.nextSteps[0], /missing-auth\.json/u)
-  assert.equal(catalog.calls.hydrate, 1, 'a signed-out status only reads the local cache')
-  assert.equal(catalog.calls.ensure, 0)
-})
-
-test('buildStatus includes the last upstream error verbatim', async () => {
-  const lastError = { at: 7, path: '/models', code: '100002', message: '登录已失效，请重新登录' }
-  const status = await buildStatus(makeDeps({ catalog: catalogOf({ lastError }) }))
-  assert.deepEqual(status.lastError, lastError)
-})
-
-test('buildDiagnostics probes all three upstream endpoints with host-computed data', async () => {
-  const deps = makeDeps()
-  const diagnostics = await buildDiagnostics(deps)
-
-  assert.equal(diagnostics.ok, true)
-  assert.deepEqual(diagnostics.upstream, {
-    baseUrl: BASE,
-    modelsUrl: `${BASE}/models`,
-    pointsUrl: `${BASE}/points/records`,
-  })
-  assert.deepEqual(diagnostics.account, { phone: RAW_PHONE, userId: '123456789012345678', route: 'loomy' })
-  assert.deepEqual(diagnostics.catalog, { total: 4, enabled: 4 })
-  assert.deepEqual(
-    diagnostics.probes.map((probe) => [probe.path, probe.ok]),
-    [
-      ['/models', true],
-      ['/points/records', true],
-      ['/user/identity', true],
-    ],
-  )
-  assert.match(diagnostics.probes[0].reason, /4 个聊天模型/u)
-  assert.deepEqual(deps.credits.calls, [{ force: true }], 'diagnostics force fresh reads')
-
-  const serialised = JSON.stringify(diagnostics)
-  assert.ok(!serialised.includes(SESSION))
-  // The phone is display data and is reported; the session is not.
-})
-
-test('buildDiagnostics surfaces each upstream failure verbatim', async () => {
-  const deps = makeDeps({
-    catalog: catalogOf({
-      refreshResult: { kind: 'failure', failure: { at: 1, path: '/models', code: '100002', message: '缺少 token' } },
-    }),
-    credits: creditsOf({
-      kind: 'failure',
-      failure: { at: 2, path: '/points/records', code: '100002', message: '登录已失效（积分）' },
-    }),
-    fetchImpl: async () => jsonResponse({ code: '100002', desc: '登录已失效（身份）' }),
-  })
-  const diagnostics = await buildDiagnostics(deps)
-
-  assert.deepEqual(
-    diagnostics.probes.map((probe) => [probe.path, probe.ok, probe.reason]),
-    [
-      ['/models', false, '缺少 token'],
-      ['/points/records', false, '登录已失效（积分）'],
-      ['/user/identity', false, '登录已失效（身份）'],
-    ],
-  )
-  assert.deepEqual(diagnostics.lastError, { at: 1, path: '/models', code: '100002', message: '缺少 token' })
-})
-
-test('buildDiagnostics: signed out reports every probe with the credential reason', async () => {
-  const signedOut = {
-    found: false,
-    sourcePath: '/tmp/missing-auth.json',
-    reason: 'missing',
-    problem: '本机没有找到 Loomy 登录态文件（/tmp/missing-auth.json）。',
-    candidates: [],
-  }
-  const diagnostics = await buildDiagnostics(
-    makeDeps({ auth: authOf(signedOut), catalog: catalogOf({ models: [] }) }),
-  )
-
-  assert.equal(diagnostics.account, null)
-  assert.equal(diagnostics.probes.length, 3)
-  for (const probe of diagnostics.probes) {
-    assert.equal(probe.ok, false)
-    assert.equal(probe.reason, signedOut.problem)
-  }
-})
-
-test('routes: GET /status is 200, no-store and credential-free', async (t) => {
-  const baseURL = await startRoutes(t, makeDeps())
-  const response = await httpRequest(`${baseURL}${ROUTE_PREFIX}/status`)
-
-  assert.equal(response.status, 200)
-  assert.equal(response.headers['cache-control'], 'no-store')
-  assert.match(response.headers['content-type'], /application\/json/u)
-  const body = JSON.parse(response.text)
-  assert.equal(body.ok, true)
-  assert.equal(body.csrfToken, CSRF)
-  assert.ok(!response.text.includes(SESSION))
-})
-
-test('routes: a foreign Host or Origin cannot drive the surface', async (t) => {
-  const baseURL = await startRoutes(t, makeDeps())
-
-  const badHost = await httpRequest(`${baseURL}${ROUTE_PREFIX}/status`, {
-    headers: { host: 'attacker.example' },
-  })
-  assert.equal(badHost.status, 403)
-  assert.equal(JSON.parse(badHost.text).error.code, 'host_not_allowed')
-
-  const badOrigin = await httpRequest(`${baseURL}${ROUTE_PREFIX}/status`, {
-    headers: { origin: 'http://attacker.example' },
-  })
-  assert.equal(badOrigin.status, 403)
-  assert.equal(JSON.parse(badOrigin.text).error.code, 'origin_not_allowed')
-
-  const localOrigin = await httpRequest(`${baseURL}${ROUTE_PREFIX}/status`, {
-    headers: { origin: 'http://127.0.0.1:3080' },
-  })
-  assert.equal(localOrigin.status, 200)
-})
-
-test('routes: POST /save requires JSON and the CSRF token, then persists the ids', async (t) => {
-  const catalog = catalogOf()
-  const baseURL = await startRoutes(t, makeDeps({ catalog }))
-  const url = `${baseURL}${ROUTE_PREFIX}/save`
-
-  const noToken = await httpRequest(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: { enabledModelIds: ['spark-x2.6'] },
-  })
+  const noToken = await call(handler, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
   assert.equal(noToken.status, 403)
-  assert.equal(JSON.parse(noToken.text).error.code, 'csrf_invalid')
+  assert.equal(noToken.body.error.code, 'csrf_invalid')
+  assert.match(noToken.body.error.message, new RegExp(CSRF_HEADER, 'u'))
 
-  const wrongToken = await httpRequest(url, {
+  const wrongToken = await call(handler, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-loomy-csrf': 'wrong' },
-    body: { enabledModelIds: ['spark-x2.6'] },
+    headers: { 'content-type': 'application/json', [CSRF_HEADER]: 'nope' },
+    body: '{}',
   })
   assert.equal(wrongToken.status, 403)
 
-  const wrongType = await httpRequest(url, {
+  const good = await call(handler, {
     method: 'POST',
-    headers: { 'content-type': 'text/plain', 'x-loomy-csrf': CSRF },
-    body: 'enabledModelIds=spark-x2.6',
+    headers: { 'content-type': 'application/json', [CSRF_HEADER]: 'tok' },
+    body: '{"hello":1}',
   })
-  assert.equal(wrongType.status, 415)
-  assert.equal(JSON.parse(wrongType.text).error.code, 'unsupported_media_type')
-  assert.deepEqual(catalog.calls.save, [], 'no mutation happened on a rejected request')
-
-  const badShape = await httpRequest(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-loomy-csrf': CSRF },
-    body: { enabledModelIds: 'spark-x2.6' },
-  })
-  assert.equal(badShape.status, 400)
-
-  const saved = await httpRequest(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-loomy-csrf': CSRF },
-    body: { enabledModelIds: ['spark-x2.6', 'qwen3.8-flash'] },
-  })
-  assert.equal(saved.status, 200)
-  assert.deepEqual(JSON.parse(saved.text), { ok: true, enabled: ['spark-x2.6', 'qwen3.8-flash'] })
-  assert.deepEqual(catalog.calls.save, [['spark-x2.6', 'qwen3.8-flash']])
-  assert.ok(!saved.text.includes(SESSION))
+  assert.equal(good.status, 200)
+  assert.deepEqual(good.body, { ok: true, body: { hello: 1 } })
 })
 
-test('routes: POST /refresh returns the host-merged catalog (saved selection, not a draft)', async (t) => {
-  const catalog = catalogOf({ selection: ['qwen3.8-flash'] })
-  const baseURL = await startRoutes(t, makeDeps({ catalog }))
-  const response = await httpRequest(`${baseURL}${ROUTE_PREFIX}/refresh`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-loomy-csrf': CSRF },
-    body: {},
-  })
-
-  assert.equal(response.status, 200)
-  const body = JSON.parse(response.text)
-  assert.equal(body.ok, true)
-  assert.equal(body.refreshedAt, 9)
-  assert.equal(body.catalog.length, 4)
-  const enabled = body.catalog.filter((model) => model.enabled).map((model) => model.id)
-  assert.deepEqual(enabled, ['qwen3.8-flash'])
-  assert.equal(body.catalog[0].multiplier, 0)
-  assert.equal(body.catalog[1].contextWindow, 1_048_576)
-  assert.equal(catalog.calls.refresh, 1)
+test('a GET never needs a token, even on a route that accepts writes', async () => {
+  const spec = { ...POST_SPEC, methods: ['GET', 'POST'], run: async () => ({ ok: true, hit: 'read' }) }
+  const handler = mountOne(spec)
+  const out = await call(handler, {})
+  assert.equal(out.status, 200)
+  assert.deepEqual(out.body, { ok: true, hit: 'read' })
 })
 
-test('routes: a credits failure is 200 + ok:false, never a fabricated balance', async (t) => {
-  const failure = { at: 3, path: '/points/records', code: '100002', message: '登录已失效' }
-  const baseURL = await startRoutes(
-    t,
-    makeDeps({ credits: creditsOf({ kind: 'failure', failure }) }),
-  )
-  const response = await httpRequest(`${baseURL}${ROUTE_PREFIX}/credits`)
-
-  assert.equal(response.status, 200)
-  assert.deepEqual(JSON.parse(response.text), {
-    ok: false,
-    error: { code: '100002', message: '登录已失效' },
-  })
+test('the body cap is a shared constant, not a per-vendor guess', () => {
+  assert.equal(MAX_BODY_BYTES, 64 * 1024)
 })
 
-test('routes: a successful credits read returns all three buckets and the ledger', async (t) => {
-  const baseURL = await startRoutes(t, makeDeps())
-  const response = await httpRequest(`${baseURL}${ROUTE_PREFIX}/credits`)
-
-  assert.equal(response.status, 200)
-  const body = JSON.parse(response.text)
-  assert.equal(body.ok, true)
-  assert.equal(body.balance, 35_500)
-  assert.equal(body.dailyBalance, 5_000)
-  assert.equal(body.availableBalance, 40_500)
-  assert.equal(body.records.length, 2)
-  assert.ok(!response.text.includes(SESSION))
-})
-
-test('routes: wrong method is 405, an unknown path is not registered', async (t) => {
-  const baseURL = await startRoutes(t, makeDeps())
-  const wrongMethod = await httpRequest(`${baseURL}${ROUTE_PREFIX}/save`)
-  assert.equal(wrongMethod.status, 405)
-  assert.equal(JSON.parse(wrongMethod.text).error.code, 'method_not_allowed')
-
-  const unknown = await httpRequest(`${baseURL}${ROUTE_PREFIX}/nope`)
-  assert.equal(unknown.status, 404)
-})
-
-test('routes: diagnostics is read-only and never hands the session to the browser', async (t) => {
-  const baseURL = await startRoutes(t, makeDeps())
-  const response = await httpRequest(`${baseURL}${ROUTE_PREFIX}/diagnostics`)
-  assert.equal(response.status, 200)
-  assert.equal(response.headers['cache-control'], 'no-store')
-  const body = JSON.parse(response.text)
-  assert.equal(body.ok, true)
-  assert.deepEqual(body.probes.map((probe) => probe.path), ['/models', '/points/records', '/user/identity'])
-  assert.ok(!response.text.includes(SESSION))
-})
-
-test('the pool route answers both GET and POST (one registration per path)', async (t) => {
-  // REGRESSION: registering GET and POST as two specs for the same path made the
-  // web server keep only one (it keys handlers by path), so a POST answered
-  // "只支持 GET" and the rotation switch could never be turned on.
-  const written = []
-  const baseURL = await startRoutes(
-    t,
-    makeDeps({
-      poolPreference: { read: async () => written.at(-1) ?? false, write: async (value) => written.push(value) },
-    }),
-  )
-
-  const get = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/pool`, {
-    headers: { host: new URL(baseURL).host, origin: baseURL },
-  })
-  assert.equal(get.status, 200, 'GET answers')
-
-  const post = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/pool`, {
-    method: 'POST',
-    headers: {
-      host: new URL(baseURL).host,
-      origin: baseURL,
-      'content-type': 'application/json',
-      'x-loomy-csrf': CSRF,
-    },
-    body: JSON.stringify({ enabled: true }),
-  })
-  assert.equal(post.status, 200, `POST answers, got ${post.status} ${post.text}`)
-  assert.deepEqual(written, [true], 'the preference was written')
-})
-
-test('credits report every account separately and sum them at the top', async (t) => {
-  const perRoute = {
-    loomy: {
-      balance: 35500,
-      dailyBalance: 5000,
-      availableBalance: 40500,
-      fetchedAt: 1_794_574_693_000,
-      records: [{ description: 'a', direction: 'debit', pointsActual: 1, createdAt: 1, balanceAfter: 1 }],
-    },
-    'loomy-2': {
-      balance: 1200,
-      dailyBalance: 300,
-      availableBalance: 1500,
-      fetchedAt: 1_794_574_700_000,
-      records: [{ description: 'b', direction: 'credit', pointsActual: 2, createdAt: 2, balanceAfter: 2 }],
+test('a disabled vendor registers no route at all', () => {
+  const paths = []
+  const ctx = {
+    inject(_services, callback) {
+      callback({
+        effect(fn) {
+          fn()
+          return () => {}
+        },
+        webServer: {
+          register(route) {
+            if (paths.includes(route.path)) {
+              throw new Error(`webserver: duplicate exact route "${route.path}"`)
+            }
+            paths.push(route.path)
+            return () => {}
+          },
+        },
+      })
     },
   }
-  const cacheOf = (credits) => ({ read: async () => ({ kind: 'ok', credits }) })
-  const byAccount = { acc1: perRoute.loomy, acc2: perRoute['loomy-2'] }
-  const deps = makeDeps({
-    credits: cacheOf(perRoute.loomy),
-    creditsForAccount: (account) => cacheOf(byAccount[account.id]),
-    accounts: {
-      ...makeDeps().accounts,
-      list: async () => [
-        { id: 'acc1', slot: 1, session: 's'.repeat(32), phone: '13800000001', addedAt: 1 },
-        { id: 'acc2', slot: 2, session: 't'.repeat(32), phone: '13800000002', addedAt: 2 },
-      ],
+  const descriptor = {
+    id: 'none',
+    displayName: 'None',
+    capabilities: {
+      accounts: 'none',
+      pool: false,
+      login: ['none'],
+      credits: { kind: 'none' },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
     },
-  })
-  const baseURL = await startRoutes(t, deps)
-  const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/credits`, {
-    headers: { host: new URL(baseURL).host, origin: baseURL },
-  })
-  assert.equal(response.status, 200)
-  const body = JSON.parse(response.text)
-
-  // Totals are the sum, so the headline number is what the user actually has.
-  assert.equal(body.availableBalance, 40500 + 1500)
-  assert.equal(body.balance, 35500 + 1200)
-  assert.equal(body.dailyBalance, 5000 + 300)
-
-  // ...and each account keeps its own figures for the rows.
-  assert.equal(body.perAccount.length, 2)
-  assert.deepEqual(
-    body.perAccount.map((entry) => [entry.accountId, entry.account, entry.availableBalance]),
-    [
-      ['acc1', '13800000001', 40500],
-      ['acc2', '13800000002', 1500],
-    ],
-  )
-
-  // The merged ledger keeps the source of every row, by account.
-  assert.deepEqual(body.records.map((record) => record.source.accountId), ['acc2', 'acc1'])
+    accent: '#000',
+    config: { schema: {}, defaults: {} },
+  }
+  const surface = {
+    descriptor,
+    runtime: { descriptor, credentials: {}, chat: { api: 'openai-completions' } },
+    status: async () => ({}),
+    diagnostics: async () => ({ view: {}, probes: [] }),
+    credits: async () => ({ kind: 'failure', failure: { at: 0, path: '', code: '', message: '' } }),
+    catalogView: async () => ({ models: [], refreshedAt: null, selection: null }),
+    saveSelection: async (ids) => ids,
+    accounts: async () => ({ ok: true, accounts: [], rotating: false }),
+    pool: async () => ({ ok: true, enabled: false, active: false, total: 0, healthy: 0 }),
+    accountView: (account) => account,
+    credentialView: async () => ({ found: false, sourcePath: '', sourceOrigin: 'none', candidates: [] }),
+    accountSummary: async () => null,
+  }
+  const specs = planVendorRoutes({ surface, onChanged: () => undefined, invalidate: () => undefined })
+  assert.deepEqual(specs, [])
+  mountRoutes(ctx, { vendorId: 'none', csrfToken: 'tok', specs, pathFor: (suffix) => `/p/none/${suffix}` })
+  assert.deepEqual(paths, [], '关闭的供应商一条路由都不该留下')
 })
 
-test('one unreadable account does not blank the credits overview', async (t) => {
-  const okCache = { read: async () => ({ kind: 'ok', credits: { balance: 100, dailyBalance: 0, availableBalance: 100, fetchedAt: 1, records: [] } }) }
-  const deadCache = { read: async () => ({ kind: 'failure', failure: { at: 1, path: '/points/records', code: '100002', message: '缺少 token' } }) }
-  const deps = makeDeps({
-    credits: okCache,
-    creditsForAccount: (account) => (account.id === 'acc2' ? deadCache : okCache),
-    accounts: {
-      ...makeDeps().accounts,
-      list: async () => [
-        { id: 'acc1', slot: 1, session: 's'.repeat(32), phone: '13800000001', addedAt: 1 },
-        { id: 'acc2', slot: 2, session: 't'.repeat(32), phone: '13800000002', addedAt: 2 },
-      ],
+/**
+ * 回填手机号：一条只在供应商实现 `enrich` 时才存在的路由。
+ *
+ * 需求来源：手机号只存在于上游 `user_info`，早先的版本没在登录时存它，
+ * 于是那批账号只能显示「账号 3」。这条路由让用户可以一次性把它们补回来。
+ */
+/** 只够 planVendorRoutes 用的最小 surface；`accountsExtra` 用来注入可选的账号能力。 */
+function surfaceWith(capabilities, accountsExtra) {
+  const descriptor = {
+    id: 'acme',
+    displayName: 'Acme',
+    accent: '#000',
+    capabilities: {
+      accounts: 'multi',
+      pool: false,
+      login: ['none'],
+      credits: { kind: 'none' },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+      ...capabilities,
     },
-  })
-  const baseURL = await startRoutes(t, deps)
-  const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/credits`, {
-    headers: { host: new URL(baseURL).host, origin: baseURL },
-  })
-  const body = JSON.parse(response.text)
-  assert.equal(body.ok, true, 'the readable account still answers')
-  assert.equal(body.availableBalance, 100)
-  const broken = body.perAccount.find((entry) => entry.accountId === 'acc2')
-  assert.equal(broken.error, '缺少 token', 'the failing row says why, verbatim')
-})
-
-test('removing an account runs the clean-up hook before the routes are reconciled', async (t) => {
-  const order = []
-  const removed = []
-  const baseURL = await startRoutes(
-    t,
-    makeDeps({
+    config: { schema: {}, defaults: {} },
+  }
+  return {
+    descriptor,
+    runtime: {
+      descriptor,
+      credentials: {},
+      chat: { api: 'openai-completions' },
       accounts: {
-        ...makeDeps().accounts,
-        remove: async (id) => {
-          removed.push(id)
-          order.push('remove')
-          return { kind: 'ok', removed: true }
-        },
+        list: async () => [],
+        add: async () => ({ id: 'a', replaced: false }),
+        remove: async () => undefined,
+        markUnavailable: async () => undefined,
+        markHealthy: async () => undefined,
+        routeOf: () => 'acme',
+        displayNameOf: () => 'Acme',
+        ...accountsExtra,
       },
-      onAccountRemoved: async (id) => {
-        order.push(`cleanup:${id}`)
-      },
-      refreshRoutes: async () => {
-        order.push('refresh')
-      },
-    }),
-  )
-
-  const response = await httpRequest(`${baseURL}/plugins/dsh-connect-loomy/accounts/remove`, {
-    method: 'POST',
-    headers: {
-      host: new URL(baseURL).host,
-      origin: baseURL,
-      'content-type': 'application/json',
-      'x-loomy-csrf': CSRF,
     },
-    body: JSON.stringify({ id: 'acc-1' }),
-  })
+    status: async () => ({}),
+    diagnostics: async () => ({ view: {}, probes: [] }),
+    credits: async () => ({ kind: 'failure', failure: { at: 0, path: '', code: '', message: '' } }),
+    catalogView: async () => ({ models: [], refreshedAt: null, selection: null }),
+    saveSelection: async (ids) => ids,
+    accounts: async () => ({ ok: true, accounts: [], rotating: false }),
+    pool: async () => ({ ok: true, enabled: false, active: false, total: 0, healthy: 0 }),
+    accountView: (account) => account,
+    credentialView: async () => ({ found: false, sourcePath: '', sourceOrigin: 'none', candidates: [] }),
+    accountSummary: async () => null,
+  }
+}
 
-  assert.equal(response.status, 200)
-  assert.equal(JSON.parse(response.text).ok, true)
-  assert.deepEqual(removed, ['acc-1'])
-  // Clean-up must happen after the store changed and before the route set is
-  // rebuilt, so the repointed selection is what gets registered.
-  assert.deepEqual(order, ['remove', 'cleanup:acc-1', 'refresh'])
+test('the enrich route exists only for a vendor that implements it', async () => {
+  const withEnrich = planVendorRoutes({
+    surface: surfaceWith({ accounts: 'multi' }, { enrich: async () => 3 }),
+    onChanged: () => undefined,
+    invalidate: () => undefined,
+  })
+  const enrichRoute = withEnrich.find((spec) => spec.suffix === 'accounts/enrich')
+  assert.ok(enrichRoute !== undefined, '实现了 enrich 就有这条路由')
+
+  const result = await enrichRoute.run({ req: { method: 'POST' }, query: new URLSearchParams(), body: async () => ({}) })
+  assert.deepEqual(result, { ok: true, filled: 3 })
+
+  // 没实现的供应商：路由根本不注册（调用方拿到 404，而不是一个永远失败的接口）。
+  const withoutEnrich = planVendorRoutes({
+    surface: surfaceWith({ accounts: 'multi' }, {}),
+    onChanged: () => undefined,
+    invalidate: () => undefined,
+  })
+  assert.equal(
+    withoutEnrich.some((spec) => spec.suffix === 'accounts/enrich'),
+    false,
+    '没实现就不注册',
+  )
 })

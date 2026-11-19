@@ -38,10 +38,14 @@ const PLATFORM_SEEDS = {
 
 test('host entry exports a mountable cordis plugin', async () => {
   const plugin = await import(HOST_ENTRY.href)
-  assert.equal(plugin.name, 'connect-loomy')
+  assert.equal(plugin.name, 'connect-desktop')
   assert.ok(Array.isArray(plugin.inject))
   assert.ok(plugin.inject.includes('llm'), 'the LLM registry must gate apply')
   assert.equal(typeof plugin.apply, 'function')
+  // 契约层必须真的在产物里：这是"加供应商不需要改核心"的可执行证据。
+  assert.equal(typeof plugin.createLoomyModule, 'function')
+  assert.equal(typeof plugin.createRaccoonModule, 'function')
+  assert.equal(typeof plugin.assertRuntime, 'function')
 
   // Schemastery schemas are callable: `Config(raw)` is what the loader and the
   // settings writer use (`dsh-llm-pi-ai/lib/index.js:111` does exactly this).
@@ -51,11 +55,16 @@ test('host entry exports a mountable cordis plugin', async () => {
     value !== null && typeof value === 'object' && typeof value.get === 'function' ? value.get() : value
   const parsed = plugin.Config({})
   assert.equal(read(parsed.enabled), true)
-  assert.equal(read(parsed.baseURL), 'https://loomyad.xunfei.cn/api/v1')
+  // 供应商配置按 id 分组，而且**默认值就已展开**：从没写过配置的用户也要能在
+  // 配置视图里看到两家的字段，否则就是"找不到配置的地方"。
+  const vendors = read(parsed.vendors)
+  assert.deepEqual(Object.keys(vendors).sort(), ['loomy', 'raccoon'])
+  assert.equal(vendors.loomy.baseURL, 'https://loomyad.xunfei.cn/api/v1')
+  assert.equal(vendors.raccoon.baseURL, 'https://xiaohuanxiong.com/api/web/llm/v2')
 
-  const parsedOverride = plugin.Config({ enabled: false, baseURL: 'https://example.test/api/v1' })
+  const parsedOverride = plugin.Config({ enabled: false, vendors: { loomy: { baseURL: 'https://example.test/api/v1' } } })
   assert.equal(read(parsedOverride.enabled), false)
-  assert.equal(read(parsedOverride.baseURL), 'https://example.test/api/v1')
+  assert.equal(read(parsedOverride.vendors).loomy.baseURL, 'https://example.test/api/v1')
 })
 
 test('client bundle is a module-loader factory that registers the locale dictionaries', () => {
@@ -64,7 +73,7 @@ test('client bundle is a module-loader factory that registers the locale diction
     source.startsWith('window.__ModuleLoader__.load({'),
     'the client bundle must be wrapped in the loader factory',
   )
-  assert.ok(source.includes('id: "dsh-connect-loomy"'), 'the loader id must be the package name')
+  assert.ok(source.includes('id: "dsh-connect-desktop"'), 'the loader id must be the package name')
 
   /** @type {Array<{id: string, factory: (require: (id: string) => unknown) => unknown}>} */
   const loaded = []
@@ -83,7 +92,7 @@ test('client bundle is a module-loader factory that registers the locale diction
 
   assert.equal(loaded.length, 1)
   const bundle = loaded[0]
-  assert.equal(bundle.id, 'dsh-connect-loomy')
+  assert.equal(bundle.id, 'dsh-connect-desktop')
 
   const exports = bundle.factory((id) => {
     if (Object.hasOwn(PLATFORM_SEEDS, id)) return PLATFORM_SEEDS[id]
@@ -125,9 +134,9 @@ test('client bundle is a module-loader factory that registers the locale diction
 
   assert.equal(effects, 1)
   assert.equal(registrations.length, 1)
-  assert.equal(registrations[0].ns, 'settings.loomy')
+  assert.equal(registrations[0].ns, 'settings.dsh-connect-desktop')
   assert.ok(
-    binds.includes('settings.loomy'),
+    binds.includes('settings.dsh-connect-desktop'),
     'apply must bind its own namespace for translation',
   )
   assert.deepEqual(

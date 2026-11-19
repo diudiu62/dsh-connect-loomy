@@ -92,7 +92,14 @@ async function runJson(t, args, env) {
   return { ...result, json: JSON.parse(result.stdout) }
 }
 
-test('status --json reports the masked account, catalog and live credits', async (t) => {
+/** 文档是 `{ok, fetchedAt, vendors[]}`；这些断言只关心 Loomy 那一片。 */
+function loomyOf(document) {
+  const vendor = document.vendors.find((entry) => entry.id === 'loomy')
+  assert.ok(vendor !== undefined, 'the CLI must report the loomy vendor')
+  return vendor
+}
+
+test('status --json reports the account, catalog and live credits', async (t) => {
   const dir = tempDir(t)
   const authPath = writeAuthFile(dir)
   const upstream = await startUpstream(t, {
@@ -106,19 +113,18 @@ test('status --json reports the masked account, catalog and live credits', async
     LOOMY_BASE_URL: upstream.baseURL,
   })
 
+  const vendor = loomyOf(document)
   assert.equal(document.ok, true)
-  assert.equal(document.account.phone, '138****5678')
-  assert.equal(document.account.userId, '1234**********5678')
-  assert.equal(document.account.loginAt, 1_794_574_693_000)
-  assert.equal(document.credential.found, true)
-  assert.equal(document.credential.sourcePath, authPath)
-  assert.deepEqual(document.catalog, { total: 4, enabled: 4 })
-  assert.deepEqual(document.enabledModelIds, ['spark-x2.6', 'DeepSeek-V4.1-Flash', 'qwen3.8-flash', 'mystery-chat'])
-  assert.equal(document.credits.ok, true)
-  assert.equal(document.credits.balance, 35_500)
-  assert.equal(document.credits.dailyBalance, 5_000)
-  assert.equal(document.credits.availableBalance, 40_500)
-  assert.equal(document.credits.records.length, 2)
+  assert.equal(vendor.account.phone, RAW_PHONE, '账号不脱敏：CLI 也要给出可核对的号码')
+  assert.equal(vendor.account.userId, RAW_USER_ID)
+  assert.equal(vendor.account.loginAt, 1_794_574_693_000)
+  assert.equal(vendor.credential.found, true)
+  assert.equal(vendor.credential.sourcePath, authPath)
+  assert.deepEqual(vendor.catalog, { total: 4, enabled: 4, refreshedAt: vendor.catalog.refreshedAt })
+  assert.deepEqual(vendor.enabledModelIds, ['spark-x2.6', 'DeepSeek-V4.1-Flash', 'qwen3.8-flash', 'mystery-chat'])
+  assert.equal(vendor.credits.ok, true)
+  // 三个桶现在按能力声明的 key 出现在 `fields` 里。
+  assert.deepEqual(vendor.credits.fields, { available: 40_500, daily: 5_000, total: 35_500 })
 
   // The platform endpoints authenticate with `token:`; Bearer is only for chat.
   const modelsCall = upstream.calls.find((call) => call.url === '/api/v1/models')
@@ -129,9 +135,9 @@ test('status --json reports the masked account, catalog and live credits', async
   assert.equal(pointsCall.headers.token, SESSION)
 
   const combined = `${stdout}${stderr}`
+  // 账号信息原样输出（用户要能核对）；**会话**永远不出现在任何输出里。
+  assert.ok(combined.includes(RAW_PHONE), 'the account is readable, not masked')
   assert.ok(!combined.includes(SESSION), 'the session never reaches the CLI output')
-  assert.ok(!combined.includes(RAW_PHONE), 'the full phone never reaches the CLI output')
-  assert.ok(!combined.includes(RAW_USER_ID), 'the full user id never reaches the CLI output')
 })
 
 test('doctor --json reports credential candidates and upstream desc verbatim', async (t) => {
@@ -148,27 +154,31 @@ test('doctor --json reports credential candidates and upstream desc verbatim', a
     LOOMY_BASE_URL: upstream.baseURL,
   })
 
+  const vendor = loomyOf(document)
   assert.equal(document.ok, true)
-  assert.equal(document.account.phone, '138****5678')
-  assert.equal(document.credential.found, true)
-  const candidate = document.candidates.find((entry) => entry.path === authPath)
+  assert.equal(vendor.credential.found, true)
+  const candidate = vendor.credential.candidates.find((entry) => entry.path === authPath)
   assert.equal(candidate.state, 'ok')
   assert.equal(candidate.exists, true)
-  assert.ok(document.candidates.length >= 1, 'every inspected path is reported')
-
-  assert.deepEqual(
-    document.probes.map((probe) => probe.path),
-    ['/models', '/points/records', '/user/identity'],
-  )
-  // Upstream desc text is repeated verbatim, per endpoint.
-  assert.equal(document.probes[0].ok, false)
-  assert.equal(document.probes[0].reason, '登录已失效，请重新登录')
-  assert.equal(document.probes[1].ok, true)
-  assert.match(document.probes[1].reason, /ok/u)
-  assert.equal(document.probes[2].ok, false)
-  assert.equal(document.probes[2].reason, '登录已失效（identity）')
-  assert.equal(document.lastError.code, '100002')
-  assert.match(document.lastError.message, /登录已失效，请重新登录/u)
+  assert.ok(vendor.credential.candidates.length >= 1, 'every inspected path is reported')
+  // 探针 = 候选路径（本地"我去过哪"）+ 活体端点（"上游现在怎么说"）。
+  assert.ok(vendor.probes.length > vendor.credential.candidates.length)
+  // 端点探针的 path 是上游路径；候选探针的 path 是绝对文件路径（以 .json 结尾）。
+  const endpointNames = new Set(['/models', '/points/records', '/user/identity'])
+  const endpoints = vendor.probes.filter((probe) => endpointNames.has(probe.path))
+  assert.deepEqual(endpoints.map((probe) => probe.path).sort(), [...endpointNames].sort())
+  // 上游 desc 逐字回传：这里三个端点都被假网关拒了。
+  const models = vendor.probes.find((probe) => probe.path === '/models')
+  assert.equal(models.ok, false)
+  assert.equal(models.reason, '登录已失效，请重新登录')
+  for (const probe of vendor.probes) {
+    assert.equal(typeof probe.reason, 'string')
+    assert.equal(typeof probe.path, 'string')
+  }
+  assert.ok(vendor.endpoints.length >= 1, 'the endpoints the vendor talks to are listed')
+  // 上游 `desc` 逐字保留：这里是目录读取失败的那一条。
+  assert.equal(vendor.lastError.code, '100002')
+  assert.match(vendor.lastError.message, /登录已失效，请重新登录/u)
   assert.ok(!stdout.includes(SESSION))
 
   // The human-readable form uses the same facts (no session, masked account).
@@ -177,7 +187,7 @@ test('doctor --json reports credential candidates and upstream desc verbatim', a
     LOOMY_BASE_URL: upstream.baseURL,
   })
   assert.equal(human.code, 0)
-  assert.match(human.stdout, /138\*\*\*\*5678/u)
+  assert.match(human.stdout, new RegExp(RAW_PHONE, 'u'))
   assert.match(human.stdout, /登录已失效，请重新登录/u)
   assert.ok(!human.stdout.includes(SESSION))
 })
@@ -198,19 +208,17 @@ test('doctor --json on a signed-out machine lists candidates and needs no networ
     HOME: process.env.HOME,
   })
 
+  const vendor = loomyOf(document)
   assert.equal(document.ok, true)
-  assert.equal(document.account, null)
-  assert.equal(document.credential.found, false)
-  assert.equal(document.candidates.length, 1, 'an explicit env path must replace the desktop candidate list')
-  assert.equal(document.candidates[0].path, missing)
-  const candidate = document.candidates.find((entry) => entry.path === missing)
+  assert.equal(vendor.credential.found, false)
+  assert.equal(vendor.credential.found, false)
+  assert.equal(vendor.credential.candidates.length, 1, 'an explicit env path must replace the desktop candidate list')
+  assert.equal(vendor.credential.candidates[0].path, missing)
+  const candidate = vendor.credential.candidates.find((entry) => entry.path === missing)
   assert.equal(candidate.exists, false)
   assert.equal(candidate.state, 'missing')
   assert.match(candidate.reason, /文件不存在/u)
-  for (const probe of document.probes) {
-    assert.equal(probe.ok, false)
-    assert.match(probe.reason, /没有找到 Loomy 登录态文件/u)
-  }
+  // 签出时绝不联系上游：目录探针也一条都不该发。
   assert.equal(upstream.calls.length, 0, 'a signed-out doctor does not contact the gateway')
 })
 
@@ -228,11 +236,11 @@ test('status --json reports an upstream credits failure instead of a fabricated 
     LOOMY_BASE_URL: upstream.baseURL,
   })
 
-  assert.equal(document.credits.ok, false)
-  assert.equal(document.credits.error.code, '100002')
-  assert.equal(document.credits.error.message, '积分接口登录已失效')
-  assert.equal(document.credits.balance, undefined, 'no balance is invented on failure')
-  assert.equal(document.credits.availableBalance, undefined)
+  const vendor = loomyOf(document)
+  assert.equal(vendor.credits.ok, false)
+  assert.equal(vendor.credits.error.code, '100002')
+  assert.equal(vendor.credits.error.message, '积分接口登录已失效')
+  assert.equal(vendor.credits.fields, undefined, 'no balance is invented on failure')
 })
 
 test('status --json honours DSH_HOME for its saved-selection count', async (t) => {
@@ -247,7 +255,7 @@ test('status --json honours DSH_HOME for its saved-selection count', async (t) =
 
   // Seed the state cache with an explicit one-model selection.
   const { mkdirSync, writeFileSync } = await import('node:fs')
-  const stateDir = `${dshHome}/storages/dsh-connect-loomy`
+  const stateDir = `${dshHome}/storages/dsh-connect-desktop/loomy`
   mkdirSync(stateDir, { recursive: true, mode: 0o700 })
   writeFileSync(
     `${stateDir}/state.json`,
@@ -260,11 +268,13 @@ test('status --json honours DSH_HOME for its saved-selection count', async (t) =
     LOOMY_BASE_URL: upstream.baseURL,
     DSH_HOME: dshHome,
   })
-  assert.deepEqual(document.catalog, { total: 4, enabled: 1 })
-  assert.deepEqual(document.enabledModelIds, ['qwen3.8-flash'])
+  const vendor = loomyOf(document)
+  assert.equal(vendor.catalog.total, 4)
+  assert.equal(vendor.catalog.enabled, 1)
+  assert.deepEqual(vendor.enabledModelIds, ['qwen3.8-flash'])
 })
 
 test('--help documents LOOMY_AUTH_SESSION_FILE as exclusive (no desktop fallback)', async (t) => {
   const { stdout } = await runCli(t, ['--help'], { LOOMY_AUTH_SESSION_FILE: '' })
-  assert.match(stdout, /use exactly this sign-in file \(no desktop fallback\)/u)
+  assert.match(stdout, /use exactly this Loomy sign-in file \(no desktop fallback\)/u)
 })

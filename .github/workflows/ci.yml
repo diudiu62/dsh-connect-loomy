@@ -1,0 +1,105 @@
+name: CI
+
+# 每次 push 到 main 或开 PR 都跑。和 release.yml 分开是因为两者的目的不同：
+# release 关心"这个 tag 能不能发"，CI 关心"这个提交能不能合"。
+#
+# 两个 job 的分工也刻意分开：`check` 是纯 Node（快、无外部依赖），`layout` 需要
+# 真实 Chrome（慢）。把布局检查塞进 `pnpm check` 会让本地每次改代码都启动浏览器，
+# 而它是回归性质的门禁，不是快速反馈。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck · audit · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm run check` = typecheck(宿主 + 客户端) → audit(架构门禁) → build → test。
+      # audit 保证"新增供应商不用改核心"这条主张机器可判：core 里出现供应商字面量、
+      # 客户端出现 `vendor === '...'` 分支、两家供应商互相 import，都会在这里失败。
+      - name: Check
+        run: pnpm run check
+
+  layout:
+    name: Layout · contrast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # 测量脚本读的是构建产物（lib/client.js），所以先 build。
+      - name: Build
+        run: pnpm run build
+
+      - name: Chrome must be available
+        # 这两条门禁依赖真实浏览器（jsdom 没有布局引擎，尺寸全是 0）。
+        # ubuntu-latest 预装 google-chrome；缺了就直接失败，而不是静默跳过。
+        run: |
+          set -euo pipefail
+          for candidate in /usr/bin/google-chrome /usr/bin/chromium /usr/bin/chromium-browser; do
+            if [ -x "$candidate" ]; then
+              echo "using $candidate"
+              "$candidate" --version
+              exit 0
+            fi
+          done
+          echo "::error::runner 上没有 Chrome/Chromium；布局与对比度门禁无法运行。"
+          exit 1
+
+      - name: No horizontal overflow at any width
+        # 340/380/460/600/700 五档 × 四个 tab。380px 的溢出在 600px 上完全看不出来，
+        # 而"三列固定宽度加起来超过容器"只会在很窄的分屏里出现。
+        run: node scripts/measure-layout.mjs --check-layout
+
+      - name: Text contrast ≥ 4.5:1 in both themes
+        # WCAG AA 对小字的要求。抓过三类真实问题：说明文字 3.71、选中的 tab 4.23、
+        # 摘要元信息 3.71 —— 都只有在真实主题 token 下才量得出来。
+        run: node scripts/measure-layout.mjs --check-contrast
+
+      - name: Generate screenshots
+        # 失败时这些图是判断"到底哪里挤了"的第一手材料（本项目就靠它发现过
+        # 账号行四个按钮吃掉一半宽度）。所以即使门禁红了也照样出图。
+        if: always()
+        run: node scripts/screenshots.mjs
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: docs/assets/*.png
+          if-no-files-found: warn

@@ -15,10 +15,10 @@
  * All functions are pure and return new objects, which lets the jsdom tests
  * exercise the transitions without a host.
  *
- * @module dsh-connect-loomy/client/draft
+ * @module dsh-connect-desktop/client/draft
  */
 
-import { uniqueIds } from './api.js'
+import { uniqueIds } from './transport.js'
 
 /** Saved selection plus the user's in-progress selection. */
 export interface ModelDraft {

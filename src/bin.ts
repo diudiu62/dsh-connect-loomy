@@ -1,304 +1,217 @@
 /**
- * Boot-free CLI: `dsh-connect-loomy status|doctor [--json]`.
+ * Boot-free CLI: `dsh-connect-desktop status|doctor [--vendor <id>] [--json]`.
  *
- * The CLI runs in its own process and therefore cannot see the plugin's
- * settings section (the loader owns that). `LOOMY_BASE_URL` overrides the
- * gateway; `LOOMY_AUTH_SESSION_FILE`, when set, **replaces** the credential
- * candidate list (the desktop paths are not inspected at all, so an isolated
- * run can never pick up the real desktop session). It never writes the plugin's
- * state file: `status` reads the saved selection for its model count but its
- * catalog/credit reads are live.
+ * The CLI is **vendor-generic**: it builds each vendor module with the same dep
+ * builder the registry uses, so a new vendor is supported by this command
+ * without touching it. Only the vendors' own modules know about upstreams.
+ *
+ * It runs in its own process and therefore cannot see the plugin's settings
+ * section (the loader owns that), so configuration comes from the descriptor's
+ * defaults plus environment overrides:
+ *
+ * - `DSH_CONNECT_BASE_URL` applies to every vendor;
+ * - `LOOMY_BASE_URL` / `RACCOON_BASE_URL` override one vendor;
+ * - `LOOMY_AUTH_SESSION_FILE` pins Loomy's credential file (exclusive).
  *
  * Both commands report a signed-out machine as data, not as a crash: the
  * credential candidates and their executable reasons are the whole point of
  * `doctor`. Only an internal failure produces exit code 1.
  *
- * @module dsh-connect-loomy/bin
+ * @module dsh-connect-desktop/bin
  */
 
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { accountViewOf, credentialViewOf, readAuthSession } from './auth.js'
-import { normalizeCatalog } from './catalog.js'
-import { fetchCredits, fetchIdentity } from './credits.js'
-import { authSessionCandidates, resolveDshHome, stateFilePath } from './shared/paths.js'
+import { createVendorDeps } from './core/deps.js'
+import { createAccountPool } from './core/pool.js'
+import { createVendorSurface } from './core/surface.js'
+import type { VendorModule } from './vendor-sdk/contracts.js'
+import type { VendorDiagnosticsView, VendorStatusView } from './shared/views.js'
 import { COMMUNITY, communityChannels, ISSUES_URL } from './shared/community.js'
-import { createAuthDiscovery } from './shared/discover.js'
-import { createStateStore } from './shared/state.js'
-import { resolveEnabledIds } from './catalog.js'
-import {
-  DEFAULT_BASE_URL,
-  DEFAULT_CREDITS_PAGE_SIZE,
-  type AccountView,
-  type CatalogModel,
-  type CredentialCandidateView,
-  type CreditsView,
-  type FailureView,
-  type UpstreamErrorView,
-} from './shared/types.js'
 import { formatDateTime, safeErrorMessage } from './shared/text.js'
-import { catalogUrls } from './catalog.js'
-import { modelsUrl, requestPlatform } from './shared/upstream.js'
+import { createLoomyModule } from './vendors/loomy/index.js'
+import { createRaccoonModule } from './vendors/raccoon/index.js'
 
-/** Environment variable that overrides the gateway for CLI runs. */
-export const LOOMY_BASE_URL_ENV = 'LOOMY_BASE_URL'
+/** Environment variable that overrides every vendor's gateway. */
+export const BASE_URL_ENV = 'DSH_CONNECT_BASE_URL'
 
-function baseURL(): string {
-  const override = process.env[LOOMY_BASE_URL_ENV]
-  return typeof override === 'string' && override.trim().length > 0 ? override.trim() : DEFAULT_BASE_URL
+/** Vendors the CLI knows about. Order is the picker's order. */
+function modules(): VendorModule[] {
+  return [createLoomyModule(), createRaccoonModule()]
+}
+
+/** Per-vendor environment override, then the global one. */
+function baseUrlOverride(vendorId: string): string | undefined {
+  const specific = process.env[`${vendorId.toUpperCase()}_BASE_URL`]
+  if (typeof specific === 'string' && specific.trim().length > 0) return specific.trim()
+  const global = process.env[BASE_URL_ENV]
+  return typeof global === 'string' && global.trim().length > 0 ? global.trim() : undefined
+}
+
+const CLI_LOGGER = {
+  info: (message: string): void => {
+    process.stderr.write(`${message}\n`)
+  },
+  warn: (message: string): void => {
+    process.stderr.write(`${message}\n`)
+  },
+  error: (message: string): void => {
+    process.stderr.write(`${message}\n`)
+  },
 }
 
 function printHelp(): void {
   process.stdout.write(
     [
-      'Usage: dsh-connect-loomy <status|doctor> [--json]',
+      'Usage: dsh-connect-desktop <status|doctor> [--vendor <id>] [--json]',
       '',
-      '  status   sign-in state, catalog counters, saved selection and read-only credits',
+      '  status   per-vendor sign-in state, catalog counters, saved selection and read-only credits',
       '  doctor   credential candidate paths + live upstream probes (verbatim error text)',
+      '  --vendor only report one vendor id (loomy, raccoon)',
       '  --json   emit one credential-free JSON document',
       '',
       'Environment:',
-      `  LOOMY_BASE_URL             override the gateway (default ${DEFAULT_BASE_URL})`,
-      '  LOOMY_AUTH_SESSION_FILE    use exactly this sign-in file (no desktop fallback)',
-      '  DSH_HOME                   harness home used for the catalog cache (default ~/.dsh)',
+      `  ${BASE_URL_ENV}          override every vendor gateway`,
+      '  LOOMY_BASE_URL          override the Loomy gateway only',
+      '  RACCOON_BASE_URL        override the Raccoon gateway only',
+      '  LOOMY_AUTH_SESSION_FILE use exactly this Loomy sign-in file (no desktop fallback)',
+      '  DSH_HOME                harness home used for the state documents (default ~/.dsh)',
       '',
       'Community:',
-      `  issues                     ${ISSUES_URL}`,
+      `  issues                  ${ISSUES_URL}`,
       ...communityChannels()
         .filter((channel) => channel !== 'issues')
-        .map((channel) => `  ${channel.padEnd(26)} ${COMMUNITY[channel]}`),
+        .map((channel) => `  ${channel.padEnd(24)} ${COMMUNITY[channel]}`),
       '',
     ].join('\n'),
   )
 }
 
-interface CatalogReadout {
-  models: CatalogModel[]
-  failure?: UpstreamErrorView
+interface StatusEntry {
+  status: VendorStatusView
+  credits?: { ok: true; fields: Record<string, number>; fetchedAt: number } | { ok: false; error: { code: string; message: string } }
 }
 
-async function fetchCatalog(session: string | undefined, sourcePath: string): Promise<CatalogReadout> {
-  const at = Date.now()
-  if (session === undefined) {
-    return {
-      models: [],
-      failure: {
-        at,
-        path: '/models',
-        code: 'not_signed_in',
-        message: `未找到可用的 Loomy 登录态（${sourcePath}）`,
-      },
-    }
-  }
-  const answer = await requestPlatform({
-    baseURL: baseURL(),
-    path: '/models',
-    session,
-    timeoutMs: 20_000,
-  })
-  if (answer.kind === 'failure') {
-    return {
-      models: [],
-      failure: { at, path: '/models', code: answer.code, message: answer.message, ...(answer.traceId === undefined ? {} : { traceId: answer.traceId }) },
-    }
-  }
-  const models = normalizeCatalog(answer.body)
-  if (models.length === 0) {
-    return { models: [], failure: { at, path: '/models', code: 'bad_response', message: '上游 /models 没有返回可识别的聊天模型' } }
-  }
-  return { models }
-}
-
-interface CandidateReport {
-  path: string
-  exists: boolean
-  state: string
-  reason: string
-}
-
-interface StatusDocument {
-  ok: true
-  fetchedAt: number
-  account: AccountView | null
-  credential: { sourcePath: string; found: boolean; reason?: string }
-  upstream: { baseUrl: string; modelsUrl: string; pointsUrl: string }
-  catalog: { total: number; enabled: number }
-  enabledModelIds: string[]
-  credits: ({ ok: true; balance: number; dailyBalance: number; availableBalance: number; fetchedAt: number; records: CreditsView['records'] } | FailureView) | undefined
-  lastError?: UpstreamErrorView
-}
-
-interface DoctorDocument {
-  ok: true
-  fetchedAt: number
-  account: AccountView | null
-  credential: { sourcePath: string; found: boolean }
-  candidates: CandidateReport[]
-  upstream: { baseUrl: string; modelsUrl: string; pointsUrl: string }
+interface DoctorEntry {
+  view: Omit<VendorDiagnosticsView, 'ok'>
   probes: Array<{ path: string; ok: boolean; reason: string }>
-  catalog: { total: number; enabled: number }
-  lastError?: UpstreamErrorView
 }
 
-/**
- * Credential read for the CLI.
- *
- * `LOOMY_AUTH_SESSION_FILE` is an **exclusive** replacement by contract, so a
- * pinned run never scans: the whole point of pinning is that this process can
- * not pick up a real desktop credential. Everything else gets the same bounded
- * fallback search the host uses, which is what makes `doctor` useful on a
- * Windows install whose `userData` directory is named differently.
- */
-function readAuthForCli(): ReturnType<typeof readAuthSession> {
-  const candidates = authSessionCandidates()
-  const pinned = candidates.length === 1 && candidates[0]?.origin === 'env'
-  return readAuthSession(candidates, pinned ? {} : { discover: createAuthDiscovery() })
-}
-
-function credentialCandidates(snapshot: Awaited<ReturnType<typeof readAuthSession>>): CandidateReport[] {
-  return snapshot.candidates.map((candidate: CredentialCandidateView) => ({
-    path: candidate.path,
-    exists: candidate.exists,
-    state: candidate.state,
-    reason: candidate.reason,
-  }))
-}
-
-async function readSavedSelection(): Promise<string[] | null> {
-  const store = createStateStore(stateFilePath(resolveDshHome()))
-  const state = await store.load()
-  return state.selection
-}
-
-async function statusDocument(): Promise<StatusDocument> {
-  const snapshot = await readAuthForCli()
-  const catalog = await fetchCatalog(snapshot.session, snapshot.sourcePath)
-  const selection = await readSavedSelection()
-  const enabledModelIds = resolveEnabledIds(catalog.models, selection)
-  const creditsResult = await fetchCredits({
-    baseURL: baseURL(),
-    session: { session: snapshot.session, sourcePath: snapshot.sourcePath, ...(snapshot.problem === undefined ? {} : { problem: snapshot.problem }) },
-    pageSize: DEFAULT_CREDITS_PAGE_SIZE,
+/** Build one vendor's surface for a boot-free run. */
+async function surfaceOf(module: VendorModule, vendorId: string) {
+  const override = baseUrlOverride(vendorId)
+  const baseConfig = { ...module.descriptor.config.defaults, ...(override === undefined ? {} : { baseURL: override }) }
+  const deps = createVendorDeps({
+    descriptor: module.descriptor,
+    config: () => baseConfig,
+    logger: CLI_LOGGER,
   })
-  const credits = creditsResult.kind === 'ok'
-    ? { ok: true as const, balance: creditsResult.credits.balance, dailyBalance: creditsResult.credits.dailyBalance, availableBalance: creditsResult.credits.availableBalance, fetchedAt: creditsResult.credits.fetchedAt, records: creditsResult.credits.records }
-    : { ok: false as const, error: { code: creditsResult.failure.code, message: creditsResult.failure.message } }
-  return {
-    ok: true,
-    fetchedAt: Date.now(),
-    account: accountViewOf(snapshot),
-    credential: {
-      ...credentialViewOf(snapshot),
-      ...(snapshot.reason === undefined ? {} : { reason: snapshot.reason }),
-    },
-    upstream: catalogUrls(baseURL()),
-    catalog: { total: catalog.models.length, enabled: enabledModelIds.length },
-    enabledModelIds,
-    credits,
-    ...(catalog.failure === undefined ? {} : { lastError: catalog.failure }),
-  }
+  const runtime = await module.create(deps)
+  const pool = runtime.accounts === undefined ? undefined : createAccountPool({ accounts: runtime.accounts })
+  return createVendorSurface({ descriptor: module.descriptor, runtime, ...(pool === undefined ? {} : { pool }) })
 }
 
-async function doctorDocument(): Promise<DoctorDocument> {
-  const snapshot = await readAuthForCli()
-  const urls = catalogUrls(baseURL())
-  const probes: DoctorDocument['probes'] = []
-  let lastError: UpstreamErrorView | undefined
-  let models: CatalogModel[] = []
-
-  if (snapshot.session === undefined) {
-    const reason = snapshot.problem ?? `未找到 Loomy 登录态（${snapshot.sourcePath}）`
-    probes.push(
-      { path: '/models', ok: false, reason },
-      { path: '/points/records', ok: false, reason },
-      { path: '/user/identity', ok: false, reason },
-    )
-  } else {
-    const [catalog, points, identity] = await Promise.all([
-      fetchCatalog(snapshot.session, snapshot.sourcePath),
-      fetchCredits({
-        baseURL: baseURL(),
-        session: { session: snapshot.session, sourcePath: snapshot.sourcePath },
-        pageSize: DEFAULT_CREDITS_PAGE_SIZE,
-      }),
-      fetchIdentity({
-        baseURL: baseURL(),
-        session: { session: snapshot.session, sourcePath: snapshot.sourcePath },
-      }),
-    ])
-    models = catalog.models
-    if (catalog.failure !== undefined) lastError = catalog.failure
-    probes.push(
-      catalog.failure === undefined
-        ? { path: '/models', ok: true, reason: `ok（${models.length} 个聊天模型）` }
-        : { path: '/models', ok: false, reason: catalog.failure.message },
-      points.kind === 'ok'
-        ? { path: '/points/records', ok: true, reason: `ok（可用 ${points.credits.availableBalance}）` }
-        : { path: '/points/records', ok: false, reason: points.failure.message },
-      identity.kind === 'ok'
-        ? { path: '/user/identity', ok: true, reason: 'ok（登录态有效）' }
-        : { path: '/user/identity', ok: false, reason: identity.failure.message },
-    )
+async function statusEntries(only: string | undefined): Promise<StatusEntry[]> {
+  const entries: StatusEntry[] = []
+  for (const module of modules()) {
+    if (only !== undefined && module.descriptor.id !== only) continue
+    const surface = await surfaceOf(module, module.descriptor.id)
+    const status = await surface.status({ allowNetwork: true })
+    let credits: StatusEntry['credits']
+    if (status.capabilities.credits.kind !== 'none') {
+      const readout = await surface.credits({ force: false })
+      credits =
+        readout.kind === 'ok'
+          ? { ok: true, fields: readout.credits.fields, fetchedAt: readout.credits.fetchedAt }
+          : { ok: false, error: { code: readout.failure.code, message: readout.failure.message } }
+    }
+    entries.push({ status, ...(credits === undefined ? {} : { credits }) })
   }
-
-  const selection = await readSavedSelection()
-  const enabledModelIds = resolveEnabledIds(models, selection)
-  return {
-    ok: true,
-    fetchedAt: Date.now(),
-    account: accountViewOf(snapshot),
-    credential: credentialViewOf(snapshot),
-    candidates: credentialCandidates(snapshot),
-    upstream: urls,
-    probes,
-    catalog: { total: models.length, enabled: enabledModelIds.length },
-    ...(lastError === undefined ? {} : { lastError }),
-  }
+  return entries
 }
 
-function printStatusHuman(document: StatusDocument): void {
-  const lines: string[] = ['Loomy Connect status', '===================']
-  lines.push(
-    `Account: ${document.account === null ? 'signed out' : `${document.account.phone} (since ${formatDateTime(document.account.loginAt)})`}`,
-  )
-  lines.push(
-    `Credential: ${document.credential.found ? 'found' : 'missing'} — ${document.credential.sourcePath}${document.credential.reason === undefined ? '' : ` (${document.credential.reason})`}`,
-  )
-  lines.push(`Upstream: ${document.upstream.baseUrl}`)
-  lines.push(`Models: ${document.catalog.enabled}/${document.catalog.total} enabled`)
-  if (document.credits === undefined) {
-    lines.push('Credits: unavailable (no cached snapshot)')
-  } else if (document.credits.ok) {
-    lines.push(
-      `Credits: available ${document.credits.availableBalance} = balance ${document.credits.balance} + daily ${document.credits.dailyBalance}`,
-      `Fetched: ${formatDateTime(document.credits.fetchedAt)}; ledger rows: ${document.credits.records.length}`,
-    )
-  } else {
-    lines.push(`Credits: unavailable — ${document.credits.error.code} ${document.credits.error.message}`)
+async function doctorEntries(only: string | undefined): Promise<DoctorEntry[]> {
+  const entries: DoctorEntry[] = []
+  for (const module of modules()) {
+    if (only !== undefined && module.descriptor.id !== only) continue
+    const surface = await surfaceOf(module, module.descriptor.id)
+    // 先做一次真实读取：`doctor` 的价值一半在"上游到底说了什么"，而那只有
+    // 真正打过一次上游之后才有。签出时它不会产生任何请求（目录读在本地失败）。
+    await surface.status({ allowNetwork: true }).catch(() => undefined)
+    const entry = await surface.diagnostics()
+    // 再补一层活体探针：逐端点回传上游原文（签出时每行都是同一句可执行原因）。
+    const live = await surface.runtime.probeEndpoints?.().catch(() => undefined)
+    entries.push(live === undefined ? entry : { ...entry, probes: [...entry.probes, ...live] })
   }
-  if (document.lastError !== undefined) {
+  return entries
+}
+
+function printStatusHuman(entries: readonly StatusEntry[]): void {
+  const lines: string[] = ['DSH Connect Desktop status', '==========================']
+  for (const { status, credits } of entries) {
+    lines.push('', `[${status.id}] ${status.displayName} — ${status.available ? 'signed in' : 'unavailable'}`)
+    if (!status.available) lines.push(`  why: ${status.unavailableReason ?? 'unknown'}`)
     lines.push(
-      `Last upstream error: ${document.lastError.code} ${document.lastError.message} (${document.lastError.path}, ${formatDateTime(document.lastError.at)})`,
+      `  credential: ${status.credential.found ? 'found' : 'missing'} — ${status.credential.sourcePath}` +
+        (status.credential.problem === undefined ? '' : ` (${status.credential.problem})`),
     )
+    if (status.account !== null) {
+      lines.push(
+        `  account: ${status.account.label ?? status.account.phone ?? status.account.userId ?? 'unknown'}` +
+          (status.account.route === undefined ? '' : ` as ${status.account.route}`),
+      )
+    }
+    lines.push(`  models: ${status.catalog.enabled}/${status.catalog.total} enabled`)
+    if (status.provider !== undefined) {
+      lines.push(
+        status.provider.registered
+          ? `  provider: registered (${status.provider.routes.join(', ')})`
+          : `  provider: NOT registered — ${status.provider.error ?? 'unknown'}`,
+      )
+    }
+    if (credits !== undefined) {
+      if (credits.ok) {
+        const buckets = Object.entries(credits.fields)
+          .map(([key, value]) => `${key} ${value}`)
+          .join(' · ')
+        lines.push(`  credits: ${buckets}`, `  fetched: ${formatDateTime(credits.fetchedAt)}`)
+      } else {
+        lines.push(`  credits: unavailable — ${credits.error.code} ${credits.error.message}`)
+      }
+    }
+    if (status.lastError !== undefined) {
+      lines.push(
+        `  last error: ${status.lastError.code} ${status.lastError.message} (${status.lastError.path}, ${formatDateTime(status.lastError.at)})`,
+      )
+    }
+    for (const step of status.nextSteps ?? []) lines.push(`  next: ${step}`)
   }
   process.stdout.write(`${lines.join('\n')}\n`)
 }
 
-function printDoctorHuman(document: DoctorDocument): void {
-  const lines: string[] = ['Loomy Connect doctor', '====================']
-  lines.push(`Account: ${document.account === null ? 'signed out' : document.account.phone}`)
-  lines.push('Credential candidates:')
-  for (const candidate of document.candidates) {
-    lines.push(`  [${candidate.state}] ${candidate.path}${candidate.reason === '' ? '' : ` — ${candidate.reason}`}`)
-  }
-  lines.push(`Upstream: ${document.upstream.baseUrl}`)
-  lines.push('Probes:')
-  for (const probe of document.probes) {
-    lines.push(`  ${probe.ok ? 'ok  ' : 'FAIL'} ${probe.path}: ${probe.reason}`)
-  }
-  lines.push(`Models: ${document.catalog.enabled}/${document.catalog.total} enabled`)
-  if (document.lastError !== undefined) {
-    lines.push(`Last upstream error: ${document.lastError.code} ${document.lastError.message}`)
+function printDoctorHuman(entries: readonly DoctorEntry[]): void {
+  const lines: string[] = ['DSH Connect Desktop doctor', '==========================']
+  for (const { view, probes } of entries) {
+    lines.push('', `[${view.id}] ${view.displayName}`, `  base: ${view.baseUrl}`)
+    lines.push(
+      `  account: ${
+        view.account === null
+          ? 'signed out'
+          : (view.account.label ?? view.account.phone ?? view.account.userId ?? 'unknown')
+      }`,
+    )
+    lines.push(`  inspected: ${view.inspected.length === 0 ? '—' : view.inspected.join(', ')}`)
+    lines.push('  credential candidates:')
+    for (const candidate of view.credential.candidates) {
+      lines.push(`    [${candidate.state}] ${candidate.path}${candidate.reason === '' ? '' : ` — ${candidate.reason}`}`)
+    }
+    lines.push('  probes:')
+    for (const probe of probes) {
+      lines.push(`    ${probe.ok ? 'ok  ' : 'FAIL'} ${probe.path}: ${probe.reason}`)
+    }
+    lines.push(`  models: ${view.catalog.enabled}/${view.catalog.total} enabled`)
+    if (view.accounts !== null) lines.push(`  accounts: ${view.accounts.total} (${view.accounts.healthy} healthy)`)
+    if (view.lastError !== undefined) lines.push(`  last error: ${view.lastError.code} ${view.lastError.message}`)
   }
   process.stdout.write(`${lines.join('\n')}\n`)
 }
@@ -311,29 +224,41 @@ export async function run(argv: readonly string[]): Promise<number> {
   }
   const [action, ...flags] = argv
   if (action !== 'status' && action !== 'doctor') {
-    process.stderr.write(`dsh-connect-loomy: expected status or doctor; got ${JSON.stringify(action)}\n`)
+    process.stderr.write(`dsh-connect-desktop: expected status or doctor; got ${JSON.stringify(action)}\n`)
     return 1
   }
   const json = flags.includes('--json')
-  if (flags.some((flag) => flag !== '--json')) {
-    process.stderr.write(`dsh-connect-loomy: invalid options for ${action}: ${flags.join(' ')}\n`)
+  let only: string | undefined
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index]
+    if (flag === '--json') continue
+    if (flag === '--vendor') {
+      only = flags[index + 1]
+      index += 1
+      if (only === undefined) {
+        process.stderr.write('dsh-connect-desktop: --vendor needs an id\n')
+        return 1
+      }
+      continue
+    }
+    process.stderr.write(`dsh-connect-desktop: invalid option ${flag}\n`)
     return 1
   }
   try {
     if (action === 'status') {
-      const document = await statusDocument()
-      if (json) process.stdout.write(`${JSON.stringify(document)}\n`)
-      else printStatusHuman(document)
+      const entries = await statusEntries(only)
+      if (json) process.stdout.write(`${JSON.stringify({ ok: true, fetchedAt: Date.now(), vendors: entries.map((entry) => ({ ...entry.status, ...(entry.credits === undefined ? {} : { credits: entry.credits }) })) })}\n`)
+      else printStatusHuman(entries)
       return 0
     }
-    const document = await doctorDocument()
-    if (json) process.stdout.write(`${JSON.stringify(document)}\n`)
-    else printDoctorHuman(document)
+    const entries = await doctorEntries(only)
+    if (json) process.stdout.write(`${JSON.stringify({ ok: true, fetchedAt: Date.now(), vendors: entries.map((entry) => ({ ...entry.view, probes: entry.probes })) })}\n`)
+    else printDoctorHuman(entries)
     return 0
   } catch (error) {
-    const failure: FailureView = { ok: false, error: { code: 'internal', message: safeErrorMessage(error) } }
+    const failure = { ok: false, error: { code: 'internal', message: safeErrorMessage(error) } }
     if (json) process.stdout.write(`${JSON.stringify(failure)}\n`)
-    else process.stderr.write(`dsh-connect-loomy: ${action} failed: ${safeErrorMessage(error)}\n`)
+    else process.stderr.write(`dsh-connect-desktop: ${action} failed: ${safeErrorMessage(error)}\n`)
     return 1
   }
 }

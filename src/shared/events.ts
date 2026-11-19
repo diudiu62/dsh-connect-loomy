@@ -8,7 +8,7 @@
  * declaration is repeated here. It is additive and identical to the host's:
  * a no-argument notification that the live config object changed.
  *
- * @module dsh-connect-loomy/shared/events
+ * @module dsh-connect-desktop/shared/events
  */
 
 declare module '@deepseek-ai/cordis' {

@@ -8,7 +8,7 @@
  * one exception is a token/PII fragment the upstream happened to echo, which
  * must never reach a log, a settings section, the browser or a cache file.
  *
- * @module dsh-connect-loomy/shared/text
+ * @module dsh-connect-desktop/shared/text
  */
 
 /** A plain record (non-null, non-array object). */
@@ -80,11 +80,20 @@ export function displayUserId(value: unknown): string | undefined {
 }
 
 /**
- * Mask a phone number for logs: `13812341234` → `138****1234`.
+ * Mask a phone number **for logs**: `13812341234` → `138****1234`.
+ *
+ * 账号视图不脱敏（`displayPhone` 原样返回）；这里存在的唯一目的是日志与上游
+ * 错误文本，避免把用户的手机号写进日志文件。
  *
  * The host never exposes the raw number — not in logs, not in a cache file,
  * not on an HTTP route and not on the command line. Short inputs degrade to a
  * fully starred string instead of leaking whatever digits they contain.
+ */
+/**
+ * 掩码一个手机号（`138****1234`）。
+ *
+ * **只用于日志与上游错误文本**，不用于用户可见的账号视图：本地账号按产品决定
+ * 原样展示（`displayPhone`）。视图里出现掩码值会让用户没法核对自己登录的是哪个号。
  */
 export function maskPhone(value: unknown): string | undefined {
   const raw = asString(value)

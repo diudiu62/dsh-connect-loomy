@@ -1,4 +1,10 @@
-# dsh-connect-loomy
+> **本插件已更名为 `dsh-connect-desktop`**（0.2.0 起）。一个插件，多家桌面客户端：
+> 目前支持 **Loomy（讯飞办公助手）** 与 **商汤小浣熊（Raccoon）**。
+> 从旧版迁移只需两条命令 —— 见文末「从旧版迁移（0.3.0 起是破坏性变更）」。
+> 注意：市场里还有一份同名 `dsh-connect-loomy` 的第三方实现（Windows-only），请以
+> `github.com/diudiu62/dsh-connect-desktop` 为准。
+
+# DSH Connect Desktop（原 dsh-connect-loomy）
 
 把 **Loomy（讯飞办公助手）** 里已经登录的聊天模型，接到 **DSH** 的模型选择器里——装完就能像用其它模型一样直接对话，还能随时看到自己还剩多少积分。
 
@@ -8,7 +14,27 @@
 
 | 账号管理 | 输入框旁的账号抽屉 | 积分概览 |
 |---|---|---|
-| ![账号](docs/assets/dsh-connect-loomy-accounts.png) | ![账号抽屉](docs/assets/dsh-connect-loomy-drawer.png) | ![积分概览](docs/assets/dsh-connect-loomy-credits.png) |
+| ![账号](docs/assets/dsh-connect-desktop-accounts.png) | ![账号抽屉](docs/assets/dsh-connect-desktop-drawer.png) | ![积分概览](docs/assets/dsh-connect-desktop-credits.png) |
+| 模型目录 | 诊断 | 配置 |
+| ![模型目录](docs/assets/dsh-connect-desktop-models.png) | ![诊断](docs/assets/dsh-connect-desktop-diagnostics.png) | ![配置](docs/assets/dsh-connect-desktop-config.png) |
+| 暗色主题 | | |
+| ![暗色](docs/assets/dsh-connect-desktop-dark.png) | | |
+
+## 小浣熊（Raccoon）—— 第二个接入的客户端
+
+同一个插件，同一个设置卡片。只要你在这台机器上装过并登录了**商汤小浣熊桌面端**，
+模型选择器里就会出现一组 `raccoon` 模型，规则和 Loomy 完全一样：
+
+- **只读复用**：读客户端自己写的登录态（macOS 为
+  `~/Library/Application Support/office-raccoon/agent/config/auth.json`），
+  插件**不刷新、不写回、不上传**；令牌过期就去客户端重新登录一次。
+- **能做**：对话（含思考链）、模型倍率显示、只读积分余额（可用/每日/奖励/充值分开显示）。
+- **不做**：不提供账号、不共享凭据、不绕过计费；也不替你签到。
+- **没有客户端就没有这一组**：未安装或未登录时，模型选择器不会多出任何东西，
+  Loomy 一侧完全不受影响。
+
+上游接口的实测记录见 [docs/raccoon-upstream.md](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/raccoon-upstream.md)（含目录字段、SSE 形状、
+以及「`reasoning_effort` 不被校验」这条决定档位下拉的证据）。
 
 ## 装之前，先确认两件事
 
@@ -76,6 +102,9 @@ Loomy · 40,500 积分
 2. 回到对话框，**点胶囊**，弹出账号列表
 3. 点哪个账号，就用哪个账号的积分
 
+账号**不会**让模型选择器变多：不管加几个号，Loomy 永远只有一组模型。用哪个号付费是
+**每次调用**决定的，不是你选的那个分组决定的。
+
 抽屉里还有一个开关：**每次调用随机选一个健康账号**。
 
 - 打开：每次对话自动挑一个还有积分的账号，某个账号失效了会自动跳过它
@@ -121,10 +150,13 @@ Loomy · 40,500 积分
 
 ## 想了解更多
 
-- **技术细节**：[插件契约](docs/dsh-plugin-contract.md) · [上游接口实测记录](docs/loomy-upstream.md) · [验证报告](docs/verification-report.md)
-- **命令行**：`node lib/bin.js status --json`（看账号与余额）、`node lib/bin.js doctor --json`（网络与登录排查）
-- **配置项**：缓存时长、接口地址等可在 DSH 的 profile 配置里改，见 [安装与配置说明](docs/dsh-plugin-contract.md)
-- **现在还不支持**：自动每日签到（Loomy 没有这个接口）、账号自动轮换到不同模型、把积分转给别人
+- **接入第三家供应商**：[接入手册](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/vendor-onboarding.md)
+- **架构与为什么这样分层**：[多供应商架构](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/product/vendor-capability-architecture.md)
+- **宿主 API 契约与实际路由表**：[插件契约](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/dsh-plugin-contract.md)
+- **上游接口实测**：[Loomy](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/loomy-upstream.md) · [小浣熊](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/raccoon-upstream.md)
+- **命令行**：`node lib/bin.js status --json`（账号与余额）、`node lib/bin.js doctor --json`（网络与登录排查，含上游活体探测）；`--vendor loomy|raccoon` 只看一家
+- **配置项**：按供应商分组，形状是 `vendors: { loomy: { ... }, raccoon: { ... } }`；缺项自动回落到默认值
+- **现在还不支持**：自动每日签到（Loomy 没有这个接口）、把积分转给别人
 
 ## 卸载
 
@@ -137,3 +169,41 @@ dsh plugin --profile web remove dsh-connect-loomy
 ## 许可
 
 MIT
+
+## 从旧版迁移（0.3.0 起是破坏性变更）
+
+0.3.0 把「一家供应商」变成了一个**契约**（`src/vendor-sdk/contracts.ts`）：能力声明决定
+路由、设置卡片的面板、以及模型选择器里的分组。代价是旧的数据与配置不再沿用：
+
+```bash
+dsh plugin --profile web remove dsh-connect-loomy
+dsh plugin --profile web add github:diudiu62/dsh-connect-desktop
+```
+
+- **账号需要重新登录一次。** 新的数据目录是 `~/.dsh/storages/dsh-connect-desktop/<供应商>/`，
+  旧目录 `~/.dsh/storages/dsh-connect-loomy/` 不再读取（产品决定：用户量小，一次性断干净）。
+- **配置从平铺字段改成按供应商分组。** 旧 patch 里的 `baseURL` / `raccoonBaseURL` 等不再生效，
+  新形状是 `vendors: { loomy: { baseURL }, raccoon: { baseURL } }`，缺省值由插件补全。
+- **HTTP 路由统一到** `/plugins/dsh-connect-desktop/<供应商>/…`，CSRF 头统一为
+  `x-dsh-connect-csrf`（旧的 `x-loomy-csrf` / `x-raccoon-csrf` 已移除）。
+- 聊天记录不受影响：模型 identity（`provider='loomy'` / `'raccoon'`）被刻意冻结。
+
+### 为什么值得这次破坏
+
+新增一家供应商从「复制 2 300 行 + 祈祷别漏页面」变成**只写协议**：
+
+```
+src/vendors/<id>/index.ts   # 一个 descriptor（能力声明）+ create() 返回各 driver
+```
+
+路由、CSRF/loopback 守卫、TTL 缓存、账号池、pi-ai 适配器、设置卡片的面板，全部由
+`src/core` 与 `src/client/capability` 按能力声明生成。`tests/host/vendor-contract.test.mjs`
+里有一个从未在仓库中出现过的假供应商，它挂进真实 registry 后自动获得 8 条路由和一条
+provider 路由——这就是那条主张的可执行形式。设计说明见
+[`docs/product/vendor-capability-architecture.md`](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/product/vendor-capability-architecture.md)，
+逐步接入手册见 [`docs/vendor-onboarding.md`](https://github.com/diudiu62/dsh-connect-loomy/blob/HEAD/docs/vendor-onboarding.md)。
+
+**每次 push / PR 自动跑哪些检查**：类型与架构门禁、构建、全部测试，外加两条只能在
+真实浏览器里量的门禁——五个宽度（340–700px）下不出现横向溢出、浅色与暗色两种主题下
+文字对比度都不低于 WCAG AA 的 4.5:1。见 `.github/workflows/ci.yml`。本地等价命令是
+`pnpm run check` 与 `pnpm run audit:visual`。

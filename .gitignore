@@ -16,3 +16,10 @@ lib/
 # team state / memory (never shipped)
 .agent-teams/
 .memsearch/
+
+# 独立桌面应用（依赖/构建产物在子目录里另有 .gitignore）
+apps/loomy-switcher/node_modules/
+apps/loomy-switcher/dist/
+apps/loomy-switcher/.npm-cache/
+apps/loomy-switcher/.electron-cache/
+apps/loomy-switcher/.stage/

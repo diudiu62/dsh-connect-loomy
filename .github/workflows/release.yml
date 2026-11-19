@@ -8,7 +8,7 @@ name: Release
 # serves another. The first job step fails fast when they disagree.
 #
 # The uploaded asset name is deliberately version-free: the market entry points
-# at `releases/latest/download/dsh-connect-loomy.tgz`, and a versioned asset name
+# at `releases/latest/download/dsh-connect-desktop.tgz`, and a versioned asset name
 # works on the day it is published and 404s the moment the next release is cut.
 
 on:
@@ -53,6 +53,11 @@ jobs:
             exit 1
           fi
 
+      - name: Architecture gate
+        # 「新增供应商不用改核心」这条主张必须是机器可判的：core 里出现供应商字面量、
+        # 客户端出现 `vendor === '...'` 分支、或两家供应商互相 import，都在这里失败。
+        run: pnpm run audit
+
       - name: Test
         run: pnpm test
 
@@ -65,7 +70,7 @@ jobs:
           mkdir -p dist
           npm pack --pack-destination dist
           # Stable asset name: see the note at the top of this file.
-          mv dist/dsh-connect-loomy-*.tgz dist/dsh-connect-loomy.tgz
+          mv dist/dsh-connect-desktop-*.tgz dist/dsh-connect-desktop.tgz
           ls -lh dist
 
       - name: Verify the tarball is complete
@@ -75,13 +80,13 @@ jobs:
           # exits at the first hit, tar takes SIGPIPE, and `pipefail` turns that
           # into a failure — which is exactly how this step first reported a
           # complete tarball as missing package/package.json.
-          tar -tzf dist/dsh-connect-loomy.tgz > /tmp/tarball-list.txt
+          tar -tzf dist/dsh-connect-desktop.tgz > /tmp/tarball-list.txt
           for entry in package/package.json package/cordis.patch.yml package/lib/index.js package/lib/client.js package/lib/bin.js; do
             grep -qx "$entry" /tmp/tarball-list.txt \
               || { echo "::error::tarball 缺少 $entry"; exit 1; }
           done
           # `prepack` rebuilds, so a stale lib/ cannot slip through — but prove it.
-          tar -xzf dist/dsh-connect-loomy.tgz -O package/package.json > /tmp/packed.json
+          tar -xzf dist/dsh-connect-desktop.tgz -O package/package.json > /tmp/packed.json
           node -e "const p=require('/tmp/packed.json'); const want=process.env.GITHUB_REF_NAME.replace('release/v',''); if(p.version!==want){console.error('打包内的版本 '+p.version+' != '+want);process.exit(1)}"
           echo "tarball ok"
 
@@ -94,4 +99,4 @@ jobs:
             --verify-tag \
             --title "v${GITHUB_REF_NAME#release/v}" \
             --generate-notes \
-            "dist/dsh-connect-loomy.tgz#dsh-connect-loomy.tgz"
+            "dist/dsh-connect-desktop.tgz#dsh-connect-desktop.tgz"

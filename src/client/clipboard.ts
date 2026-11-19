@@ -6,7 +6,7 @@
  * that only exercise the fallback). Returns `false` instead of throwing so the
  * UI can show its own "copy failed" copy.
  *
- * @module dsh-connect-loomy/client/clipboard
+ * @module dsh-connect-desktop/client/clipboard
  */
 
 /** Copy `text`; resolves to whether the write was accepted. */

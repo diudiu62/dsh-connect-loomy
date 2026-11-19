@@ -41,26 +41,54 @@ function chromePath() {
   throw new Error(`no Chrome/Chromium found; tried:\n  ${CHROME_CANDIDATES.join('\n  ')}`)
 }
 
-/** The host's alias tokens as literal colours (its first/light definition). */
-function hostTokens() {
+/**
+ * 宿主的 alias token 解析成字面颜色。
+ *
+ * `mode: 'light'` 取第一套（`:root`），`'dark'` 取 `body[data-ds-dark-theme]` 里的
+ * 覆盖值。之所以要两套：卡片所有颜色都走 `--dsw-*` token，但"走 token"不等于
+ * "暗色下能读"——必须真的在暗色里渲染一次。
+ */
+function hostTokens(mode = 'light') {
   const checkout =
     process.env['DSH_CHECKOUT'] ?? '/Users/benny/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh'
   const bundle = join(checkout, 'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js')
   if (!existsSync(bundle)) return ''
   const source = readFileSync(bundle, 'utf8')
-  const staticColour = new Map()
-  for (const match of source.matchAll(/(--dsw-static-[a-z0-9-]+):(#[0-9a-fA-F]{6})/gu)) {
-    if (!staticColour.has(match[1])) staticColour.set(match[1], match[2])
+
+  /** 某一个主题块里的 `--dsw-static-*` 定义。 */
+  const staticColoursIn = (text) => {
+    const map = new Map()
+    for (const match of text.matchAll(/(--dsw-static-[a-z0-9-]+):(#[0-9a-fA-F]{3,8})/gu)) {
+      if (!map.has(match[1])) map.set(match[1], match[2])
+    }
+    return map
   }
-  const declarations = []
-  const seen = new Set()
+
+  // 暗色的 static 覆盖
+  const darkStart = source.indexOf('body[data-ds-dark-theme]{')
+  const lightStatic = staticColoursIn(darkStart === -1 ? source : source.slice(0, darkStart))
+  const darkStatic = darkStart === -1 ? new Map() : staticColoursIn(source.slice(darkStart))
+  const statics = mode === 'dark' ? new Map([...lightStatic, ...darkStatic]) : lightStatic
+
+  // alias 映射**每个 key 有两份**：浅色一份、暗色一份（暗色把 bg-base 指向深色阶）。
+  // 按 key 去重会永远取到浅色那份 —— 那一刻"暗色 token"就静默失效了。
+  const aliases = new Map()
   for (const match of source.matchAll(/(--dsw-alias-[a-z0-9-]+):var\((--dsw-static-[a-z0-9-]+)\)/gu)) {
-    if (seen.has(match[1])) continue
-    seen.add(match[1])
-    const colour = staticColour.get(match[2])
-    if (colour !== undefined) declarations.push(`${match[1]}:${colour};`)
+    const list = aliases.get(match[1])
+    if (list === undefined) aliases.set(match[1], [match[2]])
+    else list.push(match[2])
   }
-  return declarations.length === 0 ? '' : `:root{${declarations.join('')}}`
+
+  const declarations = []
+  for (const [alias, targets] of aliases) {
+    const target = mode === 'dark' ? targets[targets.length - 1] : targets[0]
+    const colour = statics.get(target)
+    if (colour !== undefined) declarations.push(`${alias}:${colour};`)
+  }
+  if (declarations.length === 0) return ''
+  return mode === 'dark'
+    ? `body[data-ds-dark-theme]{${declarations.join('')}}`
+    : `:root{${declarations.join('')}}`
 }
 
 /* Fixtures: invented numbers only. */
@@ -70,13 +98,12 @@ const PHONE_DESKTOP = '13700000003'
 
 const CREDITS = {
   ok: true,
-  balance: 36700,
-  dailyBalance: 5300,
-  availableBalance: 42000,
+  // 桶按能力声明的 key 给出：`available` 是主数字。
+  fields: { available: 42000, daily: 5300, total: 36700 },
   fetchedAt: 1_794_810_151_000,
   perAccount: [
-    { accountId: 'acc1', route: 'loomy', account: PHONE_A, balance: 35500, dailyBalance: 5000, availableBalance: 40500 },
-    { accountId: 'acc2', route: 'loomy', account: PHONE_B, balance: 1200, dailyBalance: 300, availableBalance: 1500 },
+    { accountId: 'acc1', route: 'loomy', account: PHONE_A, fields: { available: 40500, daily: 5000, total: 35500 } },
+    { accountId: 'acc2', route: 'loomy', account: PHONE_B, fields: { available: 1500, daily: 300, total: 1200 } },
   ],
   records: [
     {
@@ -110,34 +137,94 @@ const CREDITS = {
 
 const ACCOUNTS = {
   ok: true,
+  rotating: false,
+  activeId: 'acc1',
   accounts: [
-    { id: 'acc1', slot: 1, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: PHONE_A, addedAt: 1_794_574_693_000 },
-    { id: 'acc2', slot: 2, route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: PHONE_B, addedAt: 1_794_810_000_000 },
-    { id: 'desktop-1', slot: 0, route: '', displayName: '桌面端', origin: 'desktop', phone: PHONE_DESKTOP },
+    { id: 'acc1', route: 'loomy', displayName: 'Loomy', origin: 'plugin', label: '工作号', phone: PHONE_A, addedAt: 1_794_574_693_000, unavailable: false },
+    { id: 'acc2', route: 'loomy-2', displayName: 'Loomy · 2', origin: 'plugin', phone: PHONE_B, addedAt: 1_794_810_000_000, unavailable: false },
+    { id: 'desktop', route: 'loomy', displayName: 'Loomy', origin: 'desktop', phone: PHONE_DESKTOP, unavailable: false },
   ],
-  routes: [{ route: 'loomy', displayName: 'Loomy', origin: 'plugin', slot: 1 }],
 }
 
-/** `/status` rewritten so the whole screenshot describes one coherent state. */
-const STATUS = {
-  ok: true,
-  csrfToken: 'csrf-screenshot',
+/** `/status`（新契约）：一次描述所有供应商的能力与状态。 */
+const LOOMY = {
+  id: 'loomy',
+  displayName: 'Loomy',
+  accent: '#2E6BE6',
+  available: true,
+  capabilities: {
+    accounts: 'multi',
+    pool: true,
+    login: ['sms-code'],
+    credits: {
+      kind: 'balance',
+      ledger: true,
+      fields: [
+        { key: 'available', labelKey: 'credits.field.available', role: 'available' },
+        { key: 'daily', labelKey: 'credits.field.daily', role: 'today' },
+        { key: 'total', labelKey: 'credits.field.total', role: 'total' },
+      ],
+    },
+    catalog: { selection: true, visionOverride: true, reasoningEffort: true },
+    transfer: true,
+    adopt: true,
+    diagnostics: true,
+  },
+  credential: {
+    found: true,
+    sourceOrigin: 'desktop',
+    sourcePath: '~/Library/Application Support/loomy/auth-session.json',
+    candidates: [
+      { path: '~/Library/Application Support/loomy/auth-session.json', exists: true, state: 'ok', reason: '已读取' },
+      { path: '~/.config/loomy/auth-session.json', exists: false, state: 'missing', reason: '文件不存在' },
+    ],
+  },
   account: { phone: PHONE_A, loginAt: 1_794_574_693_000, userId: '261113120739987535', route: 'loomy' },
-  credential: { sourcePath: '~/Library/Application Support/loomy/auth-session.json', found: true },
   catalog: { total: 6, enabled: 6, refreshedAt: 1_794_810_000_000 },
   enabledModelIds: [],
 }
 
+const STATUS = { ok: true, csrfToken: 'csrf-screenshot', vendors: [LOOMY] }
+
+const BASE = '/plugins/dsh-connect-desktop'
+
+/** `/catalog`：三条模型，两条启用（模型页要能看出倍率与上下文）。 */
+const CATALOG_FIXTURE = {
+  ok: true,
+  refreshedAt: 1_794_810_000_000,
+  selection: null,
+  models: [
+    { id: 'spark-x2.6', name: 'Spark-X2.6 正式版(限时免费)(x0.0)', multiplier: 0, contextWindow: 1048576, maxOutput: 131072, vision: false, efforts: ['none', 'low', 'high'], defaultEffort: 'low', enabled: true },
+    { id: 'DeepSeek-V4.1-Flash', name: 'DeepSeek V4.1 Flash(x2.0)', multiplier: 2, contextWindow: 1048576, maxOutput: 384000, vision: true, efforts: ['low', 'high'], defaultEffort: 'high', enabled: true },
+    { id: 'GLM-5.3-Flash', name: 'GLM 5.3 Flash(x0.8)', multiplier: 0.8, contextWindow: 1048576, maxOutput: 131072, vision: true, efforts: ['low'], defaultEffort: 'low', enabled: false },
+  ],
+}
+
 const ROUTE_FIXTURES = {
-  '/plugins/dsh-connect-loomy/status': { body: STATUS },
-  '/plugins/dsh-connect-loomy/pool': { body: { ok: true, enabled: true, accountCount: 2, active: true } },
-  '/plugins/dsh-connect-loomy/accounts': { body: ACCOUNTS },
-  '/plugins/dsh-connect-loomy/accounts/active': { body: { ok: true, activeId: 'acc1', rotating: false } },
-  '/plugins/dsh-connect-loomy/credits': { body: CREDITS },
+  [`${BASE}/status`]: { body: STATUS },
+  [`${BASE}/loomy/pool`]: { body: { ok: true, enabled: false, active: false, total: 3, healthy: 3 } },
+  [`${BASE}/loomy/accounts`]: { body: ACCOUNTS },
+  [`${BASE}/loomy/credits`]: { body: CREDITS },
+  [`${BASE}/loomy/catalog`]: { body: CATALOG_FIXTURE },
+  [`${BASE}/loomy/config`]: {
+    body: {
+      ok: true,
+      vendorId: 'loomy',
+      groups: [
+        { id: 'connection', labelKey: 'config.group.connection' },
+        { id: 'cache', labelKey: 'config.group.cache' },
+      ],
+      fields: [
+        { key: 'baseURL', type: 'string', group: 'connection', value: 'https://loomyad.xunfei.cn/api/v1', default: 'https://loomyad.xunfei.cn/api/v1', overridden: false, description: 'Loomy 平台 API 基地址（含 /api/v1）' },
+        { key: 'creditsPageSize', type: 'number', group: 'cache', value: 20, default: 20, overridden: false, description: '积分流水条数（1-100）' },
+        { key: 'visionModelIds', type: 'string-list', group: 'cache', value: [], default: [], overridden: true, description: '强制按「能识图」提供的模型 id' },
+      ],
+    },
+  },
 }
 
 /** Mount one scenario and return `{ html, height }`. */
-async function renderShot({ view, poolEnabled = true }) {
+async function renderShot({ view, poolEnabled = true, mode = 'light' }) {
   const { setupDom, mountPlugin, installFetch, renderCard, defaultRoutes } = await import(
     join(root, 'tests/client/helpers.mjs')
   )
@@ -148,11 +235,11 @@ async function renderShot({ view, poolEnabled = true }) {
       ...ROUTE_FIXTURES,
       // Each shot states the mode it illustrates: the drawer shows a chosen
       // account (rotation off, hence the tick), the list shows rotation on.
-      '/plugins/dsh-connect-loomy/pool': {
-        body: { ok: true, enabled: poolEnabled, accountCount: 2, active: poolEnabled },
+      [`${BASE}/loomy/pool`]: {
+        body: { ok: true, enabled: poolEnabled, active: poolEnabled, total: 3, healthy: 3 },
       },
-      '/plugins/dsh-connect-loomy/accounts/active': {
-        body: { ok: true, activeId: 'acc1', rotating: poolEnabled },
+      [`${BASE}/loomy/accounts`]: {
+        body: { ...ACCOUNTS, rotating: poolEnabled, ...(poolEnabled ? {} : { activeId: 'acc1' }) },
       },
     }),
   )
@@ -173,7 +260,7 @@ async function renderShot({ view, poolEnabled = true }) {
       t,
       async ({ container }) => {
         await wait(40)
-        click(container.querySelector('.loomy-pill'))
+        click(container.querySelector('.dcss-pill'))
         await wait(80)
         collectStyles()
         // The drawer opens upward and leftwards from the badge, so the badge
@@ -186,24 +273,35 @@ async function renderShot({ view, poolEnabled = true }) {
     await renderCard(entry, t, async ({ container }) => {
       await wait(40)
       collectStyles()
+      if (view === 'models' || view === 'diagnostics' || view === 'config') {
+        const label = view === 'models' ? '模型' : view === 'diagnostics' ? '诊断' : '配置'
+        const target = [...container.querySelectorAll('[role="tab"]')].find(
+          (element) => element.textContent?.trim() === label,
+        )
+        target?.dispatchEvent(new globalThis.window.MouseEvent('click', { bubbles: true }))
+        await wait(60)
+        collectStyles()
+      }
       if (view === 'credits') {
         // Take the credits section itself rather than slicing the HTML string:
         // a substring cut leaves attribute fragments behind.
-        const sections = [...container.querySelectorAll('.loomy-section')]
-        markup = sections.at(-1)?.outerHTML ?? container.innerHTML
+        // 额度区块按它自己的能力标记定位：按"最后一个 section"取会随面板增减而漂移。
+        const credits = container.querySelector('[data-dcss-credits-kind]')
+        markup = credits?.outerHTML ?? container.innerHTML
       } else {
         markup = container.innerHTML
       }
     })
   }
 
+  const background = mode === 'dark' ? 'var(--dsw-alias-bg-base, #14161a)' : 'var(--dsw-alias-bg-base, #ffffff)'
+  const foreground = mode === 'dark' ? 'var(--dsw-alias-label-primary, #e8eaed)' : 'var(--dsw-alias-label-primary, #1f2328)'
   return `<!doctype html><meta charset="utf8"><style>
-${hostTokens()}
-body { margin: 0; padding: 24px; background: var(--dsw-alias-bg-base, #ffffff);
-       color: var(--dsw-alias-label-primary, #1f2328);
+${hostTokens(mode)}
+body { margin: 0; padding: 24px; background: ${background}; color: ${foreground};
        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 ${collected.join('\n')}
-</style>${markup}`
+</style><body${mode === 'dark' ? ' data-ds-dark-theme' : ''}>${markup}</body>`
 }
 
 /**
@@ -215,8 +313,8 @@ ${collected.join('\n')}
  * Both flags only affect this temporary, file:// document.
  */
 function shoot(html, file, width, height) {
-  const temp = join(tmpdir(), `loomy-shot-${process.pid}-${Math.random().toString(36).slice(2, 8)}.html`)
-  const profile = join(tmpdir(), `loomy-shot-profile-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
+  const temp = join(tmpdir(), `dcss-shot-${process.pid}-${Math.random().toString(36).slice(2, 8)}.html`)
+  const profile = join(tmpdir(), `dcss-shot-profile-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
   writeFileSync(temp, html)
   try {
     execFileSync(
@@ -246,9 +344,13 @@ function shoot(html, file, width, height) {
  * so a generic tall window leaves a large empty area under the card.
  */
 const SHOTS = [
-  { name: 'dsh-connect-loomy-accounts.png', view: 'accounts', width: 900, height: 540 },
-  { name: 'dsh-connect-loomy-drawer.png', view: 'drawer', width: 600, height: 360, poolEnabled: false },
-  { name: 'dsh-connect-loomy-credits.png', view: 'credits', width: 900, height: 280 },
+  { name: 'dsh-connect-desktop-accounts.png', view: 'accounts', width: 900, height: 540 },
+  { name: 'dsh-connect-desktop-drawer.png', view: 'drawer', width: 600, height: 360, poolEnabled: false },
+  { name: 'dsh-connect-desktop-credits.png', view: 'credits', width: 900, height: 280 },
+  { name: 'dsh-connect-desktop-models.png', view: 'models', width: 700, height: 520 },
+  { name: 'dsh-connect-desktop-diagnostics.png', view: 'diagnostics', width: 700, height: 700 },
+  { name: 'dsh-connect-desktop-config.png', view: 'config', width: 700, height: 640 },
+  { name: 'dsh-connect-desktop-dark.png', view: 'accounts', width: 700, height: 900, mode: 'dark' },
 ]
 
 mkdirSync(outDir, { recursive: true })

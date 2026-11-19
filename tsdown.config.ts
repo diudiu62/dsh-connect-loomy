@@ -17,7 +17,7 @@
 import { defineConfig } from 'tsdown'
 
 /** The id the client module loader registers this bundle under. */
-const CLIENT_BUNDLE_ID = 'dsh-connect-loomy'
+const CLIENT_BUNDLE_ID = 'dsh-connect-desktop'
 
 /**
  * Opening of the loader factory. `module`/`exports` must exist *before* the
@@ -41,7 +41,7 @@ const CLIENT_FOOTER = `
 
 export default defineConfig([
   {
-    name: 'dsh-connect-loomy:host',
+    name: 'dsh-connect-desktop:host',
     entry: { index: 'src/index.ts' },
     outDir: 'lib',
     format: 'esm',
@@ -65,7 +65,7 @@ export default defineConfig([
     // `bin.js` needs a `#!` banner, and putting that banner on the host config
     // would also prepend it to `lib/index.js`, which the host imports as a
     // module. Same output directory, same externals, no declarations.
-    name: 'dsh-connect-loomy:bin',
+    name: 'dsh-connect-desktop:bin',
     entry: { bin: 'src/bin.ts' },
     outDir: 'lib',
     format: 'esm',
@@ -82,7 +82,7 @@ export default defineConfig([
     clean: false,
   },
   {
-    name: 'dsh-connect-loomy:client',
+    name: 'dsh-connect-desktop:client',
     entry: { client: 'src/client/index.ts' },
     outDir: 'lib',
     format: 'cjs',

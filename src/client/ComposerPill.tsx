@@ -1,240 +1,187 @@
 /**
- * The composer credit readout: `Loomy · 40,496`, rendered in
- * `conversation.input.left` — the left tool cluster of the composer.
+ * 输入框旁的额度徽标 —— 按**路由归属**判断，不再按供应商名写分支。
  *
- * WHY IT IS GATED ON THE SELECTED MODEL. The number is one provider's credit
- * balance, so it must appear only while this session is actually using that
- * provider; a Loomy balance next to a WorkBuddy or DeepSeek model would be a
- * reading about a system the user is not talking to. The host exposes the
- * selection through `useProjection('modelSelection')`, whose snapshot carries
- * `next ?? lastUsed` — the same two fields the host's own composer reads, so
- * the readout follows a model switch without any event of our own.
+ * 上一版是两个手写正则（`isLoomyRoute` / `isRaccoonRoute`）加两个徽标组件，
+ * 于是第三家供应商需要第三个正则和第三个组件。现在只有一条规则：
  *
- * WHY THE FETCH LIVES HERE BUT THE CACHE DOES NOT. The host already caches
- * `/credits` for 60s with single-flight, so the pill does not carry a second
- * TTL: a re-render must not become an upstream request, and N tabs must not
- * become N requests. The component only re-reads when it mounts, when the
- * session switches to a different model, or when the user clicks it.
+ * > 这条 provider 路由属于哪个供应商？= `route === id` 或 `route` 以 `${id}-` 开头。
  *
- * A failure renders nothing rather than a fake zero — an unreadable balance is
- * not a balance of zero, and the settings card's diagnostics tab is where the
- * upstream's own error text lives.
+ * 归属判定用的是 `/status` 里各供应商自己的 id，也就是它声明的路由命名空间。
+ * 额度数字取该供应商的 `credits` 路由，主数字由能力声明里的 `role: 'available'`
+ * 决定（`headlineAmount`），所以换供应商不需要写格式化代码。
  *
- * @module dsh-connect-loomy/client/ComposerPill
+ * @module dsh-connect-desktop/client/ComposerPill
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  describeError,
-  fetchActiveAccount,
-  fetchCredits,
-  fetchStatus,
-  isAbortError,
-  type LoomyCredits,
-} from './api.js'
-import { formatCount } from './format.js'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CreditsView, VendorStatusView } from '../shared/views.js'
+import { Badge, IconButton } from './components/common.js'
+import { PanelSheet } from './capability/PanelSheet.js'
+import { ComposerDrawer } from './capability/ComposerDrawer.js'
+import type { CardT } from './components/types.js'
+import { formatCredit, headlineAmount } from './format.js'
 import { ensureStyles } from './styles.js'
-import { AccountDrawer } from './components/AccountDrawer.js'
-import type { LoomyT } from './components/types.js'
+import { fetchStatus, requestVendor } from './transport.js'
 
-/** The provider route this pill reports on. */
-/** Every route this plugin owns: `loomy`, `loomy-2`, … */
-function isLoomyRoute(provider: string | undefined): boolean {
-  if (provider === undefined) return false
-  // `loomy` (slot 1), `loomy-2`, … and the rotation pool `loomy-pool`.
-  return provider === 'loomy' || provider === 'loomy-pool' || /^loomy-\d+$/u.test(provider)
-}
-
-/** Minimal shape of the host's `modelSelection` projection snapshot. */
+/** 宿主交给 slot 组件的投影。 */
 interface ModelSelectionSnapshot {
   readonly next?: { readonly provider?: string }
   readonly lastUsed?: { readonly provider?: string }
 }
 
-/**
- * Props the host hands every slot component. `useProjection` is framework
- * infrastructure, not something this plugin injects, which is why the
- * component tolerates its absence (older hosts, and the jsdom harness).
- */
-export interface LoomyComposerPillProps {
-  readonly t?: LoomyT
-  readonly useProjection?: (
-    name: 'modelSelection',
-  ) => ModelSelectionSnapshot | undefined
+export interface ComposerPillProps {
+  readonly t?: CardT
+  readonly useProjection?: (name: 'modelSelection') => ModelSelectionSnapshot | undefined
 }
 
-/** The provider this session's composer would send to, if the host says so. */
+/** 本次输入框会发往哪个 provider。 */
 export function selectedProviderOf(projection: ModelSelectionSnapshot | undefined): string | undefined {
   const provider = (projection?.next ?? projection?.lastUsed)?.provider
   return typeof provider === 'string' && provider !== '' ? provider : undefined
 }
 
 /**
- * Credit readout for sessions on the Loomy route.
+ * 这条路由属于哪个供应商。
  *
- * Renders `null` for every other provider, so the composer stays clean and no
- * request is ever made on another provider's behalf.
+ * 纯函数，可单测：给定供应商 id 集合与一个 provider 路由名，回答归属。没有别的地方
+ * 再需要知道"loomy 的路由长什么样"。
  */
-export function LoomyComposerPill({ t, useProjection }: LoomyComposerPillProps) {
-  const projection = useProjection?.('modelSelection')
-  const provider = selectedProviderOf(projection)
-  const owns = isLoomyRoute(provider)
+export function vendorForRoute(route: string | undefined, vendorIds: readonly string[]): string | undefined {
+  if (route === undefined) return undefined
+  return vendorIds.find((id) => route === id || route.startsWith(`${id}-`))
+}
 
-  const [credits, setCredits] = useState<LoomyCredits | null>(null)
-  const [busy, setBusy] = useState(false)
+const passthrough = ((key: string) => key) as unknown as CardT
+
+export function DesktopComposerPill(props: ComposerPillProps) {
+  const t = props.t ?? passthrough
+  const projection = props.useProjection?.('modelSelection')
+  const route = selectedProviderOf(projection)
+  const [vendors, setVendors] = useState<readonly VendorStatusView[]>([])
+  const [csrf, setCsrf] = useState<string | null>(null)
+  const [credits, setCredits] = useState<CreditsView | null>(null)
   const [open, setOpen] = useState(false)
-  const [csrfToken, setCsrfToken] = useState<string | null>(null)
-  const [creditsByAccount, setCreditsByAccount] = useState<Map<string, { available: number; error?: string }>>(new Map())
-  /** Rotation decides per call, so no single account's figure is "the" figure. */
-  const [rotating, setRotating] = useState(false)
-  /** Which account the single route currently uses; the figure follows it. */
-  const [activeId, setActiveId] = useState<string | undefined>(undefined)
-  const inFlight = useRef<AbortController | null>(null)
+  const [configOpen, setConfigOpen] = useState(false)
 
-  const load = useCallback(
-    (signal: AbortSignal, force = false) => {
-      fetchStatus({ signal })
-        .then((result) => {
-          if (result.kind === 'ok') setCsrfToken(result.value.csrfToken ?? null)
-        })
-        .catch(() => {
-          // Without a token the drawer opens read-only; switching is disabled.
-        })
-      fetchActiveAccount({ signal })
-        .then((result) => {
-          if (result.kind !== 'ok') return
-          setRotating(result.value.rotating === true)
-          setActiveId(result.value.activeId)
-        })
-        .catch(() => {
-          // Keep the per-account figure; it is never wrong, only narrower.
-        })
-      fetchCredits(force ? { signal, force: true } : { signal })
-        .then((result) => {
-          // `unavailable` means this host serves no credits route (the host half
-          // is disabled or not restarted). Stay silent: the settings card is
-          // where that condition is explained.
-          if (result.kind !== 'ok') return
-          setCredits(result.value)
-          // Keyed by account: one route now serves every account.
-          const map = new Map<string, { available: number; error?: string }>()
-          for (const entry of result.value.perAccount ?? []) {
-            map.set(entry.accountId ?? entry.route, {
-              available: entry.availableBalance,
-              ...(entry.error === undefined ? {} : { error: entry.error }),
-            })
-          }
-          setCreditsByAccount(map)
-        })
-        .catch((error: unknown) => {
-          if (isAbortError(error)) return
-          // Deliberately no state change: an unreadable balance must not become
-          // a rendered zero, and the card surfaces the upstream error text.
-          console.warn('[dsh-connect-loomy] composer credits readout failed:', describeError(error))
-        })
-    },
-    [],
-  )
+
+  const mounted = useRef(true)
+  const pillRef = useRef<HTMLButtonElement>(null)
+
+  /**
+   * 关闭抽屉并把焦点还给徽标。
+   *
+   * 不归还焦点的话，抽屉一关，键盘用户的焦点就落回 `<body>`，下一次 Tab 要
+   * 从头开始找。
+   */
+  const close = useCallback(() => {
+    setOpen(false)
+    pillRef.current?.focus()
+  }, [])
 
   useEffect(() => {
-    // Another provider's session never subscribes: gating here (not inside the
-    // render) is what keeps the fetch count at zero while Loomy is not selected.
-    if (!owns || provider === undefined) return undefined
     ensureStyles()
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const vendorId = useMemo(() => vendorForRoute(route, vendors.map((vendor) => vendor.id)), [route, vendors])
+
+  const loadStatus = useCallback(async (): Promise<void> => {
+    const result = await fetchStatus()
+    if (!mounted.current || result.kind !== 'ok') return
+    setVendors(result.value.vendors.filter((vendor) => vendor.available))
+    setCsrf(result.value.csrfToken)
+  }, [])
+
+  const refresh = useCallback(async (): Promise<void> => {
+    await loadStatus()
+  }, [loadStatus])
+
+  useEffect(() => {
+    void loadStatus()
+  }, [loadStatus])
+
+  useEffect(() => {
+    if (vendorId === undefined) {
+      setCredits(null)
+      return undefined
+    }
     const controller = new AbortController()
-    load(controller.signal)
+    void (async () => {
+      const result = await requestVendor<CreditsView>({ vendorId, suffix: 'credits', signal: controller.signal })
+      if (!mounted.current || controller.signal.aborted) return
+      setCredits(result.kind === 'ok' ? result.value : null)
+    })()
     return () => controller.abort()
-  }, [owns, load])
+  }, [vendorId, route])
 
-  const openDrawer = useCallback(() => {
-    if (!owns) return
-    setOpen((previous) => !previous)
-  }, [owns])
-
-  const refresh = useCallback(() => {
-    if (!owns || busy || provider === undefined) return
-    inFlight.current?.abort()
-    const controller = new AbortController()
-    inFlight.current = controller
-    setBusy(true)
-    fetchCredits({ signal: controller.signal })
-      .then((result) => {
-        if (result.kind === 'ok') setCredits(result.value)
-      })
-      .catch((error: unknown) => {
-        if (isAbortError(error)) return
-        console.warn('[dsh-connect-loomy] composer credits refresh failed:', describeError(error))
-      })
-      .finally(() => {
-        if (inFlight.current === controller) {
-          inFlight.current = null
-          setBusy(false)
-        }
-      })
-  }, [busy, owns, provider])
-
-  useEffect(() => () => inFlight.current?.abort(), [])
-
-  // The badge's job is to say WHERE this session's model comes from; the number
-  // is secondary. So an unread balance degrades to the bare route name instead
-  // of hiding the readout entirely — a silent disappearance would look exactly
-  // like "the plugin is not installed", which is the opposite of informative.
-  if (!owns) return null
-
-  // The badge stays short: the product name plus the figure that is actually
-  // true right now. Which account that figure belongs to is the drawer's job —
-  // putting a phone number here made the badge wider than the model picker.
-  //   rotation on  → the sum, because any account may be charged next;
-  //   rotation off → that account's own balance.
-  // Look the figure up by **account**, not by route: every account shares the
-  // single `loomy` route, so a route lookup always returned whichever account
-  // came first and the badge never moved when the user switched.
-  const own = credits?.perAccount?.find((entry) => entry.accountId === activeId)
-  const amount = rotating ? credits?.availableBalance : (own?.availableBalance ?? credits?.availableBalance)
-  const accountName = t?.('composer.pillBare') ?? 'Loomy'
-
-  const label =
-    amount === undefined
-      ? accountName
-      : (t?.('composer.pill', { account: accountName, amount: formatCount(amount) }) ??
-        `${accountName} · ${formatCount(amount)}`)
-
-  // The pill's own number is `availableBalance`; the tooltip spells out the two
-  // buckets it adds up, so a session never shows one figure here and a
-  // differently-labelled second one on hover.
-  const title =
-    credits === null
-      ? (t?.('composer.pillPending') ?? 'Loomy credits are still loading. Click to refresh.')
-      : t?.('composer.pillTitle', {
-      available: formatCount(credits.availableBalance),
-      balance: formatCount(credits.balance),
-      daily: formatCount(credits.dailyBalance),
-      }) ??
-      `Loomy credits — available ${formatCount(credits.availableBalance)} (monthly ${formatCount(credits.balance)} + today ${formatCount(credits.dailyBalance)})`
+  const vendor = vendors.find((entry) => entry.id === vendorId)
+  if (vendor === undefined) return null
+  const amount = headlineAmount(vendor.capabilities.credits, credits)
+  const formatted = formatCredit(amount ?? null)
 
   return (
-    <span className="loomy-pill-anchor">
+    <div className="dcss-pill-anchor">
       <button
+        ref={pillRef}
         type="button"
-        className={`loomy-pill${busy ? ' loomy-pill-busy' : ''}${open ? ' loomy-pill-open' : ''}`}
-        onClick={openDrawer}
-        title={title}
-        aria-label={t?.('drawer.open') ?? label}
+        aria-haspopup="dialog"
         aria-expanded={open}
-        data-provider={provider}
+        aria-controls={open ? `dshcd-popover-${vendor.id}` : undefined}
+        className={open ? 'dcss-pill dcss-pill-open' : 'dcss-pill'}
+        title={t('composer.pillTitle', { vendor: vendor.displayName })}
+        onClick={() => (open ? close() : setOpen(true))}
+        style={{ ['--dcss-accent' as string]: vendor.accent }}
       >
-        {label}
+        <span className="dcss-pill-name">{vendor.displayName.split('（')[0]}</span>
+        <span className="dcss-pill-sep" aria-hidden="true">·</span>
+        <span className="dcss-pill-amount">{formatted.missing ? t('composer.pillBare', { vendor: vendor.displayName }) : formatted.text}</span>
       </button>
-      {open ? (
-        <AccountDrawer
-          t={t as never}
-          csrfToken={csrfToken}
-          creditsByAccount={creditsByAccount}
-          onClose={() => setOpen(false)}
-          onChanged={() => load(new AbortController().signal)}
-          onRefreshCredits={() => load(new AbortController().signal, true)}
+      {configOpen ? (
+        <PanelSheet
+          t={t}
+          vendor={vendor}
+          csrf={csrf}
+          /* 从账号抽屉按进来，就先看账号——用户此刻关心的是"谁在付费"。 */
+          initialTab="account"
+          onClose={() => setConfigOpen(false)}
+          onChanged={() => void refresh()}
         />
       ) : null}
-    </span>
+      {open ? (
+        vendor.capabilities.accounts === 'none' ? (
+          <div className="dcss-drawer" role="dialog" aria-modal="false" id={`dshcd-popover-${vendor.id}`}>
+            <div className="dcss-drawer-head">
+              <strong>{vendor.displayName}</strong>
+              <span className="dcss-drawer-spacer" />
+              <Badge tone={vendor.available ? 'ok' : 'danger'}>
+                {vendor.available ? t('account.loggedIn') : t('account.loggedOut')}
+              </Badge>
+              <IconButton className="dcss-drawer-close" label={t('drawer.close')} onClick={() => setOpen(false)} />
+            </div>
+            <p className="dcss-drawer-label">
+              {vendor.credential.found
+                ? vendor.credential.sourcePath
+                : (vendor.credential.problem ?? t('card.empty.body'))}
+            </p>
+          </div>
+        ) : (
+          <ComposerDrawer
+            t={t}
+            vendor={vendor}
+            csrf={csrf}
+            onClose={close}
+            onChanged={() => void refresh()}
+            triggerRef={pillRef}
+            onOpenConfig={() => setConfigOpen(true)}
+          />
+        )
+      ) : null}
+    </div>
   )
 }
+
+/** 旧名保留给索引文件。 */
+export { DesktopComposerPill as LoomyComposerPill }

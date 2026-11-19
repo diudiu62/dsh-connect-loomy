@@ -164,3 +164,52 @@ test('login service surfaces upstream failures verbatim', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+/**
+ * 登录成功后，账号记录里必须带手机号。
+ *
+ * 用户报过："账号没有显示具体的号码，都是显示「账号 n」。"根因就在这里：
+ * 上游 `checkCode` 只在响应里带 `phone` 时才回传，而它**并不总是带**。
+ * 那种情况下账号记录没有 phone，设置卡片只能显示一个认不出来的序号。
+ *
+ * 号码有两个来源可以兜底：`verifySmsCode` 用请求里的号码、`persistLogin` 用
+ * `fallbackPhone`。这条测试把「上游不返回 phone」这个真实情况固定下来。
+ */
+test('the stored account carries the phone the user typed, even when upstream omits it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loomy-login-phone-'))
+  try {
+    const added = []
+    const fetchImpl = fakeFetch({
+      '/login/phone/sendMsgCode': () => ({ code: '000000', desc: '成功', data: { msgid: 'm2' } }),
+      // 注意：响应里**没有** phone。这是上游真实行为之一。
+      '/login/phone/checkCode': () => ({ code: '000000', desc: '成功', data: { session: 'z'.repeat(40) } }),
+    })
+
+    const service = createLoginService({
+      storageDir: () => dir,
+      invalidateAuth: () => {},
+      now: () => 2_000_000,
+      fetchImpl,
+      resolveConfig: () => ({ kind: 'ok', config: FAKE_CONFIG, sourcePath: 'test' }),
+      // 多账号：走 accounts.add，而不是落单文件。
+      accounts: {
+        async add(input) {
+          added.push(input)
+          return { kind: 'ok', account: { id: 'acc-1', slot: 1 }, replaced: false }
+        },
+      },
+    })
+
+    await service.sendCode('13800001234')
+    const done = await service.login('13800001234', '123456')
+    assert.equal(done.ok, true)
+    assert.equal(added.length, 1)
+    assert.equal(
+      added[0].phone,
+      '13800001234',
+      '上游没回 phone 时必须用用户输入的号码，否则账号行显示不出号码',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

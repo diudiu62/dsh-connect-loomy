@@ -1,6 +1,11 @@
 # Declare this package a DSH bundle: the profile's `dsh.profile.bundles`
 # names the package, and `dsh` inserts the entry below into the plugin graph.
 # Same shape as dsh-connect-workbuddy / dsh-connect-trae (family convention).
+#
+# `id` must equal `package.json#name`: the loader keys the settings namespace
+# and the client bundle registration by it. Renamed from `dsh-connect-loomy`
+# in 0.2.0; since 0.3.0 there is no compatibility shim — routes, the settings
+# namespace and the credential document all moved to `dsh-connect-desktop`.
 - insert:
-    - id: dsh-connect-loomy
-      name: dsh-connect-loomy
+    - id: dsh-connect-desktop
+      name: dsh-connect-desktop

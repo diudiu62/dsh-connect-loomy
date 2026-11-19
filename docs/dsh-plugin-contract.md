@@ -1,6 +1,6 @@
-# dsh-connect-loomy：DSH 插件 API 契约（宿主 0.2.2-rc.1）
+# dsh-connect-desktop：DSH 插件 API 契约（宿主 0.2.2-rc.1）
 
-本文把 dsh-connect-loomy 要实现的技术底座逐条钉死：每条结论都给出**可照抄的代码片段**和**出处文件行**。
+本文把 dsh-connect-desktop 要实现的技术底座逐条钉死：每条结论都给出**可照抄的代码片段**和**出处文件行**。
 文中的核心 TypeScript 片段（§2.1–2.3 provider/profile、§3.3–3.4 headers/auth、§4.1 路由、§5.4 设置卡片）已在临时目录用 `tsc --noEmit` 实编通过（见 §10「验证记录」）；其余 JS/HTTP 片段是接口调用示意。
 
 - 读者对象：后续实现 provider 适配器、设置卡片、积分路由的同学。
@@ -14,7 +14,7 @@
 | `$HOST` | `/Users/benny/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai` |
 | `$PI` | `/Users/benny/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@earendil-works/pi-ai/dist` |
 | `$WB` | `/Users/benny/.dsh/profiles/web/node_modules/dsh-connect-workbuddy`（已安装的家族范式实现，只读参考） |
-| `$REPO` | `/Users/benny/Documents/dsh-connect-loomy`（本仓库） |
+| `$REPO` | 本仓库（包名 `dsh-connect-desktop`） |
 | `.refs/` | 本仓库内只读侦察资料（已 gitignore，禁止发布） |
 
 引用的三类证据：
@@ -58,7 +58,7 @@ export const Config = z.object(configFields)
 export type Config = Schemastery.ObjectT<typeof configFields>
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.logger.info(`dsh-connect-loomy: mounted (enabled=${String(config.enabled)})`)
+  ctx.logger.info(`dsh-connect-desktop: mounted (enabled=${String(config.enabled)})`)
 }
 ```
 
@@ -112,17 +112,17 @@ const settingsNs = ctx.fiber.entry?.options.id ?? 'llm-pi-ai'
 
 ```yaml
 - insert:
-    - id: dsh-connect-loomy
-      name: dsh-connect-loomy
+    - id: dsh-connect-desktop
+      name: dsh-connect-desktop
 ```
 
-所以本插件的 settings 命名空间就是 **`dsh-connect-loomy`**。settings 页面读到的视图里，`ns` 字段就是它：
+所以本插件的 settings 命名空间是 **`dsh-connect-desktop`**（`src/config.ts#settingsNamespaceOf` 读 `ctx.fiber.entry.options.id`，兜底同一常量）。settings 页面读到的视图里，`ns` 字段就是它：
 
 ```ts
 // $HOST/dsh-settings/lib/types/types.d.ts:18-41（SettingsNamespaceView）
 interface SettingsNamespaceView {
   autoGenerate: boolean
-  ns: string              // ← "llm-deepseek" / "llm-pi-ai" / "dsh-connect-loomy"
+  ns: string              // ← "llm-deepseek" / "llm-pi-ai" / "dsh-connect-desktop"
   schema: JsonValue       // schema.toJSON()，用 new Schema(json) 复原
   value: JsonValue        // 默认值 → 组合基线 → 用户层，已脱敏
   base?: JsonValue
@@ -158,7 +158,7 @@ ctx.on('loader/volatile-update', () => {
   try {
     ensureRegistrationFacts() // 重新读 profiles() 并在必要时 replace 路由
   } catch (error) {
-    ctx.logger.error('dsh-connect-loomy: configuration conflicts with an existing provider route')
+    ctx.logger.error('dsh-connect-desktop: configuration conflicts with an existing provider route')
     ctx.logger.error(error)
   }
 })
@@ -177,6 +177,19 @@ ctx.on('loader/volatile-update', () => {
 ```
 
 Schemastery 必须是**运行时依赖**（`apply` 里 `z.object` 会被执行），与 `$WB/package.json` 的 `dependencies` 一致；其余 `@deepseek-ai/*` 全部作为 peer/dev，由宿主提供单实例。
+
+**配置形状：根对象只有两个开关，每家供应商一片**（`src/config.ts`）：
+
+```ts
+export const Config = z.object({
+  enabled: z.boolean().default(true).volatile(),   // 总开关：关掉后所有供应商都不注册
+  vendors: z.any().default({}).volatile(),         // { <vendorId>: { ...该供应商自己的 schema } }
+})
+```
+
+供应商配置片的字段与默认值由各自的 descriptor 声明（`descriptor.config.schema` / `.defaults`），
+`src/core/registry.ts` 在缺项时补默认值。这样第 N 家供应商不需要再往根对象上加平行字段——
+这正是 0.2.x 里 `baseURL` / `raccoonBaseURL` 并排那种形态要避免的。
 
 ---
 
@@ -239,7 +252,7 @@ const profile = (): ResolvedPiAiProviderProfile => ({
   imageOffloadCountQuantum: 10,        // 必须 <= maxRequestImages
   requestImagePixelBudget: 4 * 1024 * 1024,
   requestImageMaxBytes: 1024 * 1024,
-  retryPolicy: resolveRetryPolicy(undefined, 'dsh-connect-loomy retryPolicy'),
+  retryPolicy: resolveRetryPolicy(undefined, 'dsh-connect-desktop retryPolicy'),
   configuredMaxTokens: new Map(),      // 显式配置的 per-request 上限；catalog 能力不要塞这里
   modelErrors: new Map(),              // 每个模型的失败原因；空 Map = 健康
   piProvider: provider,                // pi-ai Provider；没有它该路由不出模型
@@ -543,12 +556,12 @@ ctx.inject(['webServer'], (web) => {
     () =>
       web.webServer.register({
         kind: 'exact',                       // 'exact' | 'prefix'
-        path: '/plugins/dsh-connect-loomy/usage',
+        path: '/plugins/dsh-connect-desktop/demo/usage',
         handler: (req: IncomingMessage, res: ServerResponse) => {
           // 自己拥有完整响应生命周期（可挂 SSE）
         },
       }),
-    'dsh-connect-loomy: usage route',
+    'dsh-connect-desktop: usage route',
   )
 })
 ```
@@ -556,7 +569,14 @@ ctx.inject(['webServer'], (web) => {
 契约：
 
 - `WebRoute`：`kind`、`path`（绝对、无尾斜杠）、`handler(req, res)` **自己拥有完整响应生命周期**（`$HOST/dsh-host-webserver/lib/types/index.d.ts:36-45`）。
-- `register(route)` 返回 disposer；重复 `(kind, path)` 直接抛（`:188-193`）。
+- `register(route)` 返回 disposer；重复 `(kind, path)` 直接抛（`$HOST/dsh-host-webserver/lib/index.js:377`：
+  `webserver: duplicate ${kind} route "${path}"`）。
+- **推论（踩过一次）**：同一个路径的多个动词只能注册**一次**。`src/core/routes.ts` 把
+  `GET`/`POST` 合进一条 `RouteSpec.methods`；`src/core/http.ts#mountRoutes` 在挂载前
+  对路径去重并给出可读错误，因为真实的抛错发生在 `web.effect` 里，表现是这一家的
+  **所有**面板都说"宿主未提供该路由"，极难定位。
+- 测试里的假 `webServer.register` **必须**像真宿主一样对重复路径抛错，否则这类问题
+  只会在真机上暴露。
 - 另有 `registerUpgrade`（WebSocket，`:195-200`）、`registerFallback`（SPA 静态回退，`:203-210`）。本插件只用 `register`。
 - `webServer` 只保证「路由被调用」；**不含鉴权、不含 CSRF、不含 JSON 解析**。
 
@@ -596,7 +616,9 @@ const handler = (req: IncomingMessage, res: ServerResponse) => {
 
 ### 4.3 client↔host 只读路由范式
 
-路由 URL 约定：`/plugins/<package-name>/<something>`。这与 client-modules 注册的 `/plugins` **prefix** 路由同域，但不会冲突：宿主路由表**先查 exact 表、miss 后才在 prefix 表里做最长前缀匹配**（`$HOST/dsh-host-webserver/lib/index.js:576-590`），所以 `kind:'exact'` 的插件路由永远先命中；只有未登记的 `/plugins/...` URL 才落到 bundle 路由（它对未知 URL 答 404）。家族实例：
+路由 URL 约定：`/plugins/<package-name>/<vendorId>/<suffix>`。插件级只留一条
+`/plugins/<package-name>/status`（一次回答所有供应商），其余全部挂在供应商命名空间下，
+而且**只注册该供应商能力声明允许的那些**（见 §4.4）。这与 client-modules 注册的 `/plugins` **prefix** 路由同域，但不会冲突：宿主路由表**先查 exact 表、miss 后才在 prefix 表里做最长前缀匹配**（`$HOST/dsh-host-webserver/lib/index.js:576-590`），所以 `kind:'exact'` 的插件路由永远先命中；只有未登记的 `/plugins/...` URL 才落到 bundle 路由（它对未知 URL 答 404）。家族实例：
 
 ```ts
 // $WB/lib/client.js:7-25（常量）
@@ -606,7 +628,7 @@ const WORKBUDDY_USAGE_PATH = "/plugins/dsh-connect-workbuddy/usage"
 客户端读法（同源 GET、`credentials: 'same-origin'`、可被 AbortSignal 取消）：
 
 ```ts
-const response = await fetch('/plugins/dsh-connect-loomy/usage', {
+const response = await fetch('/plugins/dsh-connect-desktop/loomy/credits', {
   headers: { accept: 'application/json' },
   credentials: 'same-origin',
   signal,                                 // 组件卸载时 abort
@@ -622,6 +644,62 @@ if (!response.ok) throw new Error(`HTTP ${response.status}`)
 1. **`undefined`（404/503）与「有路由但值为空」必须区分**：前者用来隐藏 UI 控件，后者渲染空态。
 2. 响应加 `cache-control: no-store`；客户端不要缓存。
 3. 读路由不要触发上游写操作；积分概览这类会花配额的上游读，在 host 侧加短 TTL 缓存 + 单飞（in-flight 去重），避免卡片重渲染打爆上游。
+
+---
+
+### 4.4 本插件实际的路由表（能力驱动，0.3.0 起）
+
+路由**不是手写的**：`src/core/routes.ts` 按供应商的能力声明生成，能力为假时该路由
+**根本不注册**（不是注册后返 404/文案）。所以下面这张表是"声明 ⇒ URL"的对照，而不是一份
+需要同步维护的清单。
+
+插件级（一条，所有供应商共用）：
+
+| 方法 | 路径 | 载荷 |
+| --- | --- | --- |
+| `GET` | `/plugins/dsh-connect-desktop/status` | `{ ok, csrfToken, vendors: VendorStatusView[] }` |
+
+供应商命名空间 `/plugins/dsh-connect-desktop/<vendorId>/<suffix>`：
+
+| suffix | 方法 | 门槛（能力声明） |
+| --- | --- | --- |
+| `diagnostics` | `GET` | `diagnostics: true` |
+| `diagnostics/probe` | `POST` | `diagnostics: true` 且实现了 `probeEndpoints` |
+| `recheck` | `POST` | 有身份概念（`accounts`/`login`/`diagnostics` 任一） |
+| `credits` | `GET`（`?force=1` 绕过缓存） | `credits.kind !== 'none'` |
+| `catalog` | `GET` | `catalog.selection` |
+| `refresh` / `save` | `POST` | `catalog.selection` |
+| `accounts` | `GET` | `accounts !== 'none'` |
+| `accounts/active` | `GET`/`POST` | `accounts !== 'none'` |
+| `accounts/remove` | `POST` | `accounts !== 'none'` |
+| `accounts/rename` | `POST` | `accounts === 'multi'` 且实现了 rename |
+| `accounts/adopt` | `POST` | `adopt: true` 且实现了 adopt |
+| `accounts/export` / `accounts/import` | `POST` | `transfer: true` |
+| `pool` | `GET`/`POST` | `pool: true` |
+| `auth/state` | `GET` | `login` 含真实方式 |
+| `auth/send-code` | `POST` | `login` 含 `sms-code` |
+| `auth/login` | `POST` | `login` 含该方式 |
+| `auth/logout` | `POST` | `login` 含真实方式 |
+
+守卫管线（`src/core/http.ts`，**全插件一份**），顺序固定：
+
+1. 方法不在 `methods` 内 → `405 method_not_allowed`；
+2. `Host` 不指向本机监听地址 → `403 host_not_allowed`（DNS rebinding 防护）；
+3. `Origin` 存在且非本机 → `403 origin_not_allowed`；
+4. 仅对 mutating 且非 `GET`：`content-type` 必须是 `application/json`（否则 `415`），
+   且 `x-dsh-connect-csrf` 必须等于 `/status` 返回的 `csrfToken`（否则 `403 csrf_invalid`）；
+5. 请求体上限 64 KiB（`MAX_BODY_BYTES`）；
+6. 处理函数抛错 → `500 { ok:false, error:{ code:'internal', message } }`，绝不断连。
+
+两点与旧版不同，且**没有兼容层**：
+
+- CSRF 头只有一个名字 `x-dsh-connect-csrf`。旧的 `x-loomy-csrf` / `x-raccoon-csrf` 是同一机制的
+  两份实现（同一进程、同一 origin，不构成隔离），已删除。
+- 业务失败一律是 **HTTP 200 + `{ ok:false, error:{ code, message } }`**（CSRF/方法/媒体类型这类
+  协议级拒绝才用 4xx）。客户端据此把上游原文展示给用户，而不是显示"加载失败"。
+
+出处：`src/core/http.ts`、`src/core/routes.ts`、`src/core/registry.ts`；
+可执行断言：`tests/host/routes.test.mjs`、`tests/host/vendor-contract.test.mjs`。
 
 ---
 
@@ -674,7 +752,7 @@ window.__ModuleLoader__.load({
 
 ```ts
 const CLIENT_BANNER = `window.__ModuleLoader__.load({
-	id: "dsh-connect-loomy",
+	id: "dsh-connect-desktop",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -702,7 +780,7 @@ import { NS, en, zh } from './locale.js'
 export const inject = ['slots', 'locale']
 
 export function apply(ctx: Context): void {
-  ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-connect-loomy: locale')
+  ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-connect-desktop: locale')
 }
 ```
 
@@ -738,7 +816,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'   // ← settin
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 
-const NS = 'settings.loomy'
+const NS = 'settings.dsh-connect-desktop'
 
 export const inject = ['slots', 'locale']
 
@@ -805,7 +883,7 @@ export function apply(ctx: Context): void {
 const tagId = '@deepseek-ai/dsh-client-ui-settings-web-search/WebSearchCard.module.css'
 if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css="${tagId}"]`) === null) {
   const tag = document.createElement('style')
-  tag.dataset.plugin = 'dsh-connect-loomy'
+  tag.dataset.plugin = 'dsh-connect-desktop'
   tag.dataset.pluginCss = tagId
   tag.textContent = css
   document.head.appendChild(tag)
@@ -824,7 +902,7 @@ if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin
 
 ```jsonc
 {
-  "name": "dsh-connect-loomy",
+  "name": "dsh-connect-desktop",
   "displayName": "DSH Connect Loomy",
   "version": "0.1.0",
   "license": "MIT",
@@ -868,8 +946,8 @@ peerDependencies 全部钉 `0.2.2-rc.1`（与宿主一致），`@deepseek-ai/cor
 ```yaml
 # $REPO/cordis.patch.yml
 - insert:
-    - id: dsh-connect-loomy
-      name: dsh-connect-loomy
+    - id: dsh-connect-desktop
+      name: dsh-connect-desktop
 ```
 
 家族三个包（workbuddy / trae / router-loomy）完全同构：`.refs/workbuddy-manifest/cordis.patch.yml:1-5`、`.refs/trae-manifest/cordis.patch.yml:1-4`、`.refs/router-loomy/cordis.patch.yml:1-6`。
@@ -884,7 +962,7 @@ peerDependencies 全部钉 `0.2.2-rc.1`（与宿主一致），`@deepseek-ai/cor
 // $REPO/tsdown.config.ts（完整文件已落地）
 export default defineConfig([
   {
-    name: 'dsh-connect-loomy:host',
+    name: 'dsh-connect-desktop:host',
     entry: { index: 'src/index.ts' },
     outDir: 'lib', format: 'esm', platform: 'node', target: 'node22',
     fixedExtension: false,
@@ -894,7 +972,7 @@ export default defineConfig([
     clean: false,
   },
   {
-    name: 'dsh-connect-loomy:client',
+    name: 'dsh-connect-desktop:client',
     entry: { client: 'src/client/index.ts' },
     outDir: 'lib', format: 'cjs', platform: 'browser', target: 'es2022',
     fixedExtension: false,
@@ -1014,7 +1092,7 @@ export default defineConfig([
 `tests/smoke.test.mjs` 已断言：
 
 - host 入口导出 `name='connect-loomy'`、`inject` 含 `llm`、`Config({})` 得到默认值。
-- client bundle 以 `window.__ModuleLoader__.load({` 开头、id 正确、factory 返回 `{apply, inject}`、`apply` 会 `ctx.effect(() => ctx.locale.register('settings.loomy', {en, zh}))` 且 en/zh 键集合一致。
+- client bundle 以 `window.__ModuleLoader__.load({` 开头、id 正确、factory 返回 `{apply, inject}`、`apply` 会 `ctx.effect(() => ctx.locale.register('settings.dsh-connect-desktop', {en, zh}))` 且 en/zh 键集合一致。
 
 ### 7.2 如何断言 provider 行为而不打真上游
 
@@ -1070,7 +1148,7 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 | 必带请求头 | `traceparent`（缺失挂死）、`chatid`、`msgid`、`loomy-version`、`invokeorigin`；`Authorization: Bearer <session>` 由 pi-ai 的 apiKey 自动带 | `.refs/RECON.md`；`prepareHeaders` 注入（§3.3） |
 | 平台接口（目录/积分） | `token: <session>` 头，**不是 Bearer**；因此目录与积分走 host 自己的 `fetch`，不经过 pi-ai | `.refs/RECON.md` |
 | 图片模型 | 不注册为 chat（无 `capabilities`） | `.refs/RECON.md` |
-| 积分概览 | 只读 `GET /api/v1/points/records?pageNo=1&pageSize=N&recordType=all`，host 路由 `/plugins/dsh-connect-loomy/usage`，client 卡片读 | `.refs/RECON.md`；§4.3 |
+| 积分概览 | 只读 `GET /api/v1/points/records?pageNo=1&pageSize=N&recordType=all`，host 路由 `/plugins/dsh-connect-desktop/loomy/credits`，client 卡片读 | `.refs/RECON.md`；§4.3 |
 
 ---
 
@@ -1092,10 +1170,10 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 
    ```bash
    # 推荐：走 dsh 自己的插件安装入口（内部就是 pnpm，写 loomy-dev 的 package.json）
-   dsh plugin --profile loomy-dev add file:/Users/benny/Documents/dsh-connect-loomy
+   dsh plugin --profile loomy-dev add file:<本仓库路径>
 
    # 或者手工：在 ~/.dsh/profiles/loomy-dev 下
-   pnpm add file:/Users/benny/Documents/dsh-connect-loomy
+   pnpm add file:<本仓库路径>
    ```
 
 3. 在 `~/.dsh/profiles/loomy-dev/package.json` 里注册 bundle（若第 2 步没自动加）：
@@ -1103,13 +1181,13 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
    ```jsonc
    {
      "dependencies": {
-       "dsh-connect-loomy": "file:/Users/benny/Documents/dsh-connect-loomy"
+       "dsh-connect-desktop": "file:<本仓库路径>"
      },
      "dsh": {
        "profile": {
          "bundles": [
            // …模板原有的 bundle…
-           "dsh-connect-loomy"
+           "dsh-connect-desktop"
          ]
        }
      }
@@ -1121,10 +1199,10 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 4. **只做组合校验，不启动服务**：
 
    ```bash
-   dsh --profile loomy-dev --dump-config | grep -n -A2 -B2 dsh-connect-loomy
+   dsh --profile loomy-dev --dump-config | grep -n -A2 -B2 dsh-connect-desktop
    ```
 
-   能看到 `dsh-connect-loomy` 条目即说明 `cordis.patch.yml` 被正确读取、包也能解析。
+   能看到 `dsh-connect-desktop` 条目即说明 `cordis.patch.yml` 被正确读取、包也能解析。
    （只做组合校验时用 `--dump-config`，不会监听端口。）
 
 5. 启动隔离实例（用另一个端口，避免与 3080 冲突；具体端口 flag 以 `dsh --profile loomy-dev web --help` 为准）：
@@ -1136,7 +1214,7 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
    启动日志里应出现（INFO 级别；`apply` 里用的是 `ctx.logger.info`）：
 
    ```
-   dsh-connect-loomy: mounted (enabled=true, baseURL=https://loomyad.xunfei.cn/api/v1)
+   dsh-connect-desktop: mounted (enabled=true, baseURL=https://loomyad.xunfei.cn/api/v1)
    ```
 
 6. 在浏览器打开隔离实例的 URL，检查：
@@ -1199,7 +1277,7 @@ pi-ai/1.3.0                       200
 lib/index.js         # host 入口（ESM，import '@deepseek-ai/schemastery'）
 lib/index.d.ts       # types
 lib/index.js.map
-lib/client.js        # window.__ModuleLoader__.load({ id: "dsh-connect-loomy", ... })
+lib/client.js        # window.__ModuleLoader__.load({ id: "dsh-connect-desktop", ... })
 lib/client.js.map
 ```
 
@@ -1207,7 +1285,7 @@ lib/client.js.map
 
 ```js
 window.__ModuleLoader__.load({
-	id: "dsh-connect-loomy",
+	id: "dsh-connect-desktop",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -1241,11 +1319,11 @@ $REPO
 ├── tsconfig.json           # host：ES2023 + node types，不含 DOM
 ├── tsconfig.client.json    # client：DOM + JSX + resolveJsonModule
 ├── tsdown.config.ts        # 双入口：ESM host + CJS client（loader wrapper）
-├── cordis.patch.yml        # insert dsh-connect-loomy
+├── cordis.patch.yml        # insert dsh-connect-desktop
 ├── locale/{en,zh}.json     # 包元数据（插件市场）
 ├── src/index.ts            # host apply（name/inject/Config，暂无业务）
 ├── src/client/index.ts     # browser apply（注册 locale，暂无卡片）
-├── src/client/locale.ts    # settings.loomy 词典 + LocaleNamespaceMap 增强
+├── src/client/locale.ts    # settings.dsh-connect-desktop 词典 + LocaleNamespaceMap 增强
 ├── tests/smoke.test.mjs    # host 契约 + client bundle 形状/注册断言
 ├── docs/dsh-plugin-contract.md
 ├── README.md               # 快速开始 + 挂载步骤

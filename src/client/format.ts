@@ -1,21 +1,20 @@
 /**
- * Presentation helpers: deterministic formatting and the copyable diagnostics
- * report.
+ * Deterministic presentation helpers.
  *
- * Determinism matters here: the jsdom tests assert the rendered rate, context,
- * max-output and timestamps, so the formatters avoid locale-dependent
- * `toLocaleString` output. Dates use the browser's local clock (the only thing
- * a user can act on) but always in a fixed `YYYY-MM-DD HH:mm` shape.
+ * Determinism matters: the jsdom suite asserts rendered rates, context windows
+ * and timestamps, so nothing here uses locale-dependent `toLocaleString`. Dates
+ * keep the `YYYY-MM-DD HH:mm` shape in the browser's own clock — the only time
+ * a user can act on.
  *
- * @module dsh-connect-loomy/client/format
+ * `formatCredit` is the reason this module survived the capability refactor: a
+ * balance that the host did not report must render as `—`, never as `0`, and
+ * that rule needs to be expressed once rather than per panel.
+ *
+ * @module dsh-connect-desktop/client/format
  */
 
-import type { LoomyDiagnostics, LoomyStatus } from './api.js'
-import { ROUTES } from './api.js'
-import type { LoomyLocaleKey } from './locale.js'
-
-/** Translates one key of this plugin's dictionary. */
-export type TranslateLoomy = (key: LoomyLocaleKey, params?: Record<string, unknown>) => string
+import type { CreditField, CreditsCapability, CreditsView } from '../shared/views.js'
+import type { CardT } from './components/types.js'
 
 /** Thousands-separated integer; `—` for missing/non-finite values. */
 export function formatCount(value: number | null | undefined): string {
@@ -23,6 +22,17 @@ export function formatCount(value: number | null | undefined): string {
   const sign = value < 0 ? '-' : ''
   const digits = Math.round(Math.abs(value)).toString()
   return sign + digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+/**
+ * One credit figure, and whether it is actually known.
+ *
+ * The `missing` flag is what lets `CreditsBody` style a hole differently from a
+ * truthful zero, instead of guessing from the formatted string.
+ */
+export function formatCredit(value: number | null | undefined): { text: string; missing: boolean } {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return { text: '—', missing: true }
+  return { text: formatCount(value), missing: false }
 }
 
 /** A points multiplier as the UI writes it: `×2.0`, `×0.8`, `×0.0`. */
@@ -47,11 +57,34 @@ export function formatDateTime(value: number | null | undefined): string {
   )
 }
 
+/**
+ * 凭据来源的中文说法。
+ *
+ * 抽出来共用，是因为诊断页曾经直接渲染 `sourceOrigin`，中文界面里冒出 `desktop`
+ * / `plugin` 这种英文标识符；而账号页对同一个枚举做了映射。同一个事实必须只有一套说法。
+ */
+export function originLabel(
+  origin: 'plugin' | 'desktop' | 'env' | 'none' | undefined,
+  t: (key: never) => string,
+): string {
+  const label = (key: string): string => (t as unknown as (value: string) => string)(key)
+  switch (origin) {
+    case 'plugin':
+      return label('account.sourcePlugin')
+    case 'desktop':
+      return label('account.sourceDesktop')
+    case 'env':
+      return label('account.sourceEnv')
+    default:
+      return label('account.sourceNone')
+  }
+}
+
 /** Join reasoning efforts and mark the upstream default. */
 export function formatEfforts(
   efforts: readonly string[],
   defaultEffort: string | undefined,
-  t: TranslateLoomy,
+  t: CardT,
 ): string {
   if (efforts.length === 0) return t('models.efforts.none')
   const joined = efforts.join(' · ')
@@ -59,87 +92,58 @@ export function formatEfforts(
   return `${joined} (${t('models.efforts.default', { effort: defaultEffort })})`
 }
 
-/** Inputs to the copyable report; absent halves render as "none". */
-export interface DiagnosticsReportInput {
-  status: LoomyStatus | null
-  diagnostics: LoomyDiagnostics | null
-  /** Live counters (catalog refresh may have moved them past `/status`). */
-  catalog: { total: number; enabled: number } | null
-  /** Epoch milliseconds; pass `Date.now()` at click time. */
-  generatedAt: number
+/**
+ * 这张额度视图要不要画流水表。
+ *
+ * 抽成纯函数有两个原因：`kind` 与"有没有流水"是**两个**维度（Loomy 既有 3 个
+ * 余额桶又有 `/points/records`），把判断散在 JSX 里就会重演"有余额就没流水"的
+ * 功能丢失；其次它可以脱离 DOM 单测。
+ */
+export function showsLedger(capability: CreditsCapability): boolean {
+  if (capability.kind === 'ledger') return true
+  return capability.kind === 'balance' && capability.ledger === true
+}
+
+/** The fields a credits surface renders, or `null` when it renders no grid. */
+export function creditFields(capability: CreditsCapability): readonly CreditField[] | null {
+  return capability.kind === 'balance' ? capability.fields : null
 }
 
 /**
- * Build the plain-text block the diagnostics tab copies. Only typed, already
- * masked fields enter it: no session, no full phone number, no CSRF token.
+ * The headline figure of a balance surface: the field whose role is `available`.
+ *
+ * The role, not the key, is the contract — a vendor may call its bucket
+ * `remaining` or `points_left` and still be the number the composer badge shows.
  */
-export function formatDiagnosticsReport(input: DiagnosticsReportInput, t: TranslateLoomy): string {
-  const { status, diagnostics, catalog } = input
-  const lines: string[] = []
+export function headlineField(capability: CreditsCapability): CreditField | undefined {
+  if (capability.kind !== 'balance') return undefined
+  return capability.fields.find((field) => field.role === 'available') ?? capability.fields[0]
+}
 
-  lines.push(t('diagnostics.report.title'))
-  lines.push(`${t('diagnostics.report.generatedAt')}: ${formatDateTime(input.generatedAt)}`)
-  lines.push(
-    `${t('diagnostics.report.route')}: ${ROUTES.status}, ${ROUTES.diagnostics}, ${ROUTES.credits}, ` +
-      `${ROUTES.refresh}, ${ROUTES.save}`,
-  )
-  lines.push('')
+/**
+ * 一个账号的主数字。
+ *
+ * 抽屉逐行显示额度时必须按 **accountId** 配对：多账号共用一个 provider route 时，
+ * 按 route 配对会让每一行都显示同一个数字（旧抽屉的真实缺陷）。账号这一行读失败、
+ * 或这家没有这个桶时返回 `undefined`，由 UI 渲染 `—` 而不是 0。
+ */
+export function perAccountAmount(
+  view: CreditsView | null,
+  accountId: string,
+  key: string | undefined,
+): number | undefined {
+  if (view === null || key === undefined) return undefined
+  const row = (view.perAccount ?? []).find((entry) => entry.accountId === accountId)
+  if (row === undefined || row.error !== undefined) return undefined
+  const value = row.fields[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
 
-  lines.push(`${t('diagnostics.report.credentialPath')}:`)
-  if (status === null) {
-    lines.push(`- ${t('diagnostics.report.unknown')}`)
-  } else {
-    const conclusion = status.credential.found
-      ? t('account.credentialFound', { path: status.credential.sourcePath })
-      : t('account.credentialMissing', { path: status.credential.sourcePath })
-    lines.push(`- ${conclusion}`)
-  }
-  lines.push('')
-
-  lines.push(`${t('diagnostics.report.probes')}:`)
-  if (diagnostics === null || diagnostics.probes.length === 0) {
-    lines.push(`- ${t('diagnostics.report.none')}`)
-  } else {
-    for (const probe of diagnostics.probes) {
-      const state = probe.ok ? t('diagnostics.probe.ok') : t('diagnostics.probe.fail')
-      lines.push(`- ${probe.path} [${state}]${probe.reason.length > 0 ? ` ${probe.reason}` : ''}`)
-    }
-  }
-  lines.push('')
-
-  lines.push(`${t('diagnostics.report.upstream')}:`)
-  if (diagnostics === null) {
-    lines.push(`- ${t('diagnostics.report.unknown')}`)
-  } else {
-    lines.push(`- ${t('diagnostics.upstream.baseUrl')}: ${diagnostics.upstream.baseUrl}`)
-    lines.push(`- ${t('diagnostics.upstream.models')}: ${diagnostics.upstream.modelsUrl}`)
-    lines.push(`- ${t('diagnostics.upstream.points')}: ${diagnostics.upstream.pointsUrl}`)
-  }
-  lines.push('')
-
-  const account = diagnostics?.account ?? status?.account ?? null
-  lines.push(`${t('diagnostics.report.account')}: ${account === null ? t('diagnostics.report.none') : account.phone}`)
-
-  const counters = catalog ?? diagnostics?.catalog ?? status?.catalog ?? null
-  lines.push(
-    `${t('diagnostics.report.catalog')}: ${
-      counters === null
-        ? t('diagnostics.report.unknown')
-        : t('diagnostics.catalog.counts', { total: counters.total, enabled: counters.enabled })
-    }`,
-  )
-  lines.push('')
-
-  lines.push(`${t('diagnostics.report.lastError')}:`)
-  const lastError = diagnostics?.lastError ?? status?.lastError
-  if (lastError === undefined) {
-    lines.push(`- ${t('diagnostics.report.none')}`)
-  } else {
-    lines.push(`- ${t('diagnostics.lastError.path')}: ${lastError.path}`)
-    lines.push(`- ${t('diagnostics.lastError.code')}: ${lastError.code}`)
-    lines.push(`- ${t('diagnostics.lastError.at')}: ${formatDateTime(lastError.at)}`)
-    lines.push(`- ${t('diagnostics.lastError.message')}: ${lastError.message}`)
-  }
-
-  return lines.join('\n')
+/** The headline credit figure for a view, or `undefined` when the vendor has no balance. */
+export function headlineAmount(capability: CreditsCapability, view: CreditsView | null): number | undefined {
+  if (view === null) return undefined
+  const field = headlineField(capability)
+  if (field === undefined) return undefined
+  const value = view.fields[field.key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }

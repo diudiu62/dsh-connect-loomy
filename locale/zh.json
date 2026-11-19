@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "dsh-connect-loomy",
-    "description": "将本机已登录的 Loomy（讯飞办公助手）聊天模型接入 DeepSeek Harness，并提供设置卡片与只读积分概览。"
+    "title": "dsh-connect-desktop",
+    "description": "DSH Connect Desktop：把本机已登录的桌面客户端（Loomy 讯飞办公助手、商汤小浣熊）模型接入 DeepSeek Harness，并提供设置卡片与只读积分概览。"
   }
 }

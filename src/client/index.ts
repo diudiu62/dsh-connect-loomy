@@ -1,11 +1,11 @@
 /**
- * dsh-connect-loomy — browser half.
+ * dsh-connect-desktop — browser half.
  *
  * Runs inside the DSH web client's module loader (`lib/client.js` is a
  * `window.__ModuleLoader__.load({...})` CJS factory, see
  * `docs/dsh-plugin-contract.md` §5). It contributes exactly one thing to the
- * host UI: a tab inside **Settings → Plugins** (`settings.plugins.tab`) that
- * renders the Loomy account / models / diagnostics card.
+ * host UI: a settings section that renders the **shared** account / models /
+ * diagnostics card for every vendor (see `components/Card.tsx`).
  *
  * `inject` stays `['locale']` on purpose: the slot registry is requested with
  * `ctx.inject(['slots'], …)`, which is the cordis idiom for "run this once the
@@ -15,9 +15,10 @@
  * registers.
  *
  * The browser half holds no credentials: every upstream fact arrives through
- * `/plugins/dsh-connect-loomy/*` and the card only renders masked fields.
+ * `/plugins/dsh-connect-desktop/*`, and the only secret that exists — the
+ * session token — never leaves the host.
  *
- * @module dsh-connect-loomy/client
+ * @module dsh-connect-desktop/client
  */
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only imports: they apply the `ctx.locale` / `ctx.slots` module
@@ -30,23 +31,62 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // credit readout to. Type-only: erased at build time.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { LoomyComposerPill } from './ComposerPill.js'
+import { DesktopModelsIcon } from './components/BrandIcon.js'
 import { LoomySettingsCard } from './components/Card.js'
-import type { LoomyT } from './components/types.js'
+import type { CardT } from './components/types.js'
 import { NS, en, zh } from './locale.js'
 
 /** Browser services this plugin needs before `apply` runs. */
 export const inject = ['locale']
 
-/** Settings-tab identity inside the Plugins section. */
-export const SETTINGS_TAB_ID = 'loomy'
+/**
+ * Settings-tab identity inside the Settings sidebar.
+ *
+ * 不带供应商名：这张卡片服务所有供应商，改名只会让"为什么这里写着 loomy"
+ * 成为下一个人的疑问。它必须与 `settings.section.icon` 的 id 一致（外壳按 id
+ * 配对图标与分区），所以只能从这一个常量派生。
+ */
+export const SETTINGS_TAB_ID = 'desktop-models'
 
 /** Bumped when the client half's shape changes; printed at mount. */
-export { normalizeImportDocument } from './api.js'
+export { normalizeImportDocument } from './transport.js'
 
-export const CLIENT_BUILD_MARKER = 'settings-section+pill-near-model-v3+login-v4+multi-account-v5+pool-v14+ui-v33'
+/**
+ * Style-injection surface, exported for the jsdom suite.
+ *
+ * `ensureStyles` is the one place a hot reload can silently pair new markup
+ * with a stale sheet, which is a layout bug with no console output — so the
+ * test needs to call it directly and inspect the resulting tag.
+ */
+export { ensureStyles, STYLE_REVISION } from './styles.js'
+
+/**
+ * Test-facing pure exports.
+ *
+ * `lib/client.js` is a `window.__ModuleLoader__` factory, so a Node test cannot
+ * import an internal module directly; the bundle's own exports are the only
+ * reachable surface. Everything here is a **pure function** — no React, no DOM,
+ * no fetch — so pinning it costs nothing at runtime and keeps the capability
+ * rules testable without a browser.
+ */
+export { hasAccountSurface, resolveTab, tabsFor } from './capability/tabs.js'
+export { selectedProviderOf, vendorForRoute } from './ComposerPill.js'
+export { CSRF_HEADER, requestVendor, fetchStatus } from './transport.js'
+export { formatCredit, headlineField, perAccountAmount, showsLedger } from './format.js'
+export { clampShift } from './capability/clamp.js'
+
+/**
+ * Build marker, printed once at load.
+ *
+ * 它是"浏览器跑的是哪版"的唯一答案：client bundle 只在 DSH 启动时被读，所以改了
+ * 代码必须重启 DSH 才生效。每一项对应一次结构性重构，排查时可以对着这里判断
+ * 当前进程加载的是不是本仓库的构建产物。
+ */
+export const CLIENT_BUILD_MARKER =
+  'dsh-connect-desktop+multi-vendor-v1+capability-tabs+shared-panels+composer-drawer+recheck+live-probe'
 
 /** Slot-entry identity of the composer credit readout. */
-export const COMPOSER_PILL_ID = 'dsh-connect-loomy-composer-pill'
+export const COMPOSER_PILL_ID = 'dsh-connect-desktop-composer-pill'
 
 /**
  * Register the settings tab against a context that provides `slots`.
@@ -55,7 +95,7 @@ export const COMPOSER_PILL_ID = 'dsh-connect-loomy-composer-pill'
  * implementation. Registration failures are contained here: the host settings
  * page must keep working even if this plugin's tab cannot mount.
  */
-function registerSettingsTab(ctx: Context, t: LoomyT): void {
+function registerSettingsTab(ctx: Context, t: CardT): void {
   // `Partial` keeps this defensive read honest for harness compositions that
   // provide no slot registry at all.
   const slots = (ctx as Partial<Context>).slots
@@ -80,7 +120,43 @@ function registerSettingsTab(ctx: Context, t: LoomyT): void {
     )
   } catch (error) {
     // Never rethrow: a failed tab must not block the surrounding settings page.
-    console.error('[dsh-connect-loomy] settings tab registration failed (settings page unaffected):', error)
+    console.error('[dsh-connect-desktop] settings tab registration failed (settings page unaffected):', error)
+  }
+}
+
+/**
+ * Register the brand glyph for this section's navigation row.
+ *
+ * `settings.section.icon` is addressed **by id**: the shell looks up an icon
+ * whose registration id equals the section id, and unmatched ids never render.
+ * So `id` here must stay `SETTINGS_TAB_ID` — a "nicer" id would silently fall
+ * back to the generic gear.
+ *
+ * The shell keeps its own glyph when nothing is registered, which is why this
+ * is a separate, independently failing registration: losing the icon must never
+ * cost the section itself.
+ */
+function registerSettingsIcon(ctx: Context): void {
+  const slots = (ctx as Partial<Context>).slots
+  if (slots === undefined) return
+  try {
+    slots.inject('settings.section.icon', () =>
+      slots.register(
+        {
+          name: 'settings.section.icon',
+          // Must equal the section id above, or the shell never pairs them.
+          id: SETTINGS_TAB_ID,
+          // The icon's own `label` is not displayed by the shell, but the slot
+          // contract still takes one; keep it the diagnostics name.
+          label: 'Desktop models icon',
+          locale: NS,
+        },
+        DesktopModelsIcon,
+      ),
+    )
+  } catch (error) {
+    // The section must survive a missing icon: the shell's gear is the fallback.
+    console.error('[dsh-connect-desktop] settings icon registration failed (default glyph stays):', error)
   }
 }
 
@@ -97,7 +173,7 @@ function registerSettingsTab(ctx: Context, t: LoomyT): void {
  * Failures are contained for the same reason as the settings tab: a slot this
  * plugin cannot mount must not disturb the composer it lives in.
  */
-function registerComposerPill(ctx: Context, t: LoomyT): void {
+function registerComposerPill(ctx: Context, t: CardT): void {
   const slots = (ctx as Partial<Context>).slots
   if (slots === undefined) return
   try {
@@ -125,7 +201,7 @@ function registerComposerPill(ctx: Context, t: LoomyT): void {
       ),
     )
   } catch (error) {
-    console.error('[dsh-connect-loomy] composer readout registration failed (composer unaffected):', error)
+    console.error('[dsh-connect-desktop] composer readout registration failed (composer unaffected):', error)
   }
 }
 
@@ -137,7 +213,7 @@ function registerComposerPill(ctx: Context, t: LoomyT): void {
 export function apply(ctx: Context): void {
   // `ctx.effect` ties the registration to this plugin's fiber, so a hot reload
   // removes the dictionaries instead of throwing on a duplicate namespace.
-  ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-connect-loomy: locale')
+  ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-connect-desktop: locale')
   const t = ctx.locale.bind(NS)
 
   // One line at mount, so "which build is the browser running?" is answerable
@@ -145,7 +221,7 @@ export function apply(ctx: Context): void {
   // `lib/client.js` does nothing until DSH itself restarts, and a browser
   // refresh alone can leave a stale bundle running with no visible symptom.
   console.info(
-    `[dsh-connect-loomy] client half loaded (${CLIENT_BUILD_MARKER}): settings.section + composer readout`,
+    `[dsh-connect-desktop] client half loaded (${CLIENT_BUILD_MARKER}): settings.section + composer readout`,
   )
 
   // Prefer the cordis service-gated path: `slots` may arrive after this plugin
@@ -155,10 +231,12 @@ export function apply(ctx: Context): void {
   if (typeof ctx.inject === 'function') {
     ctx.inject(['slots'], (scoped) => {
       registerSettingsTab(scoped, t)
+      registerSettingsIcon(scoped)
       registerComposerPill(scoped, t)
     })
     return
   }
   registerSettingsTab(ctx, t)
+  registerSettingsIcon(ctx)
   registerComposerPill(ctx, t)
 }

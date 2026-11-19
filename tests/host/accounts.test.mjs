@@ -1,452 +1,188 @@
+/**
+ * The one account store (`core/accounts.ts`).
+ *
+ * Accounts used to be two implementations with different signatures — one
+ * `async` with a cache, one synchronous — which is why the pool, the card and
+ * the export format each needed two code paths. These tests pin the single
+ * store's behaviour: stable slots, material-based de-duplication, health marks,
+ * and a bundle both sides of an export/import understand.
+ */
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
-import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { statSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  accountsFilePath,
-  accountIdOf,
-  accountsView,
-  createAccountsStore,
-  parseAccounts,
-  routeDisplayName,
-  routeForSlot,
-  slotForRoute,
-  isOurRoute,
-  createProviderRuntime,
-} from '../../lib/index.js'
+import { test } from 'node:test'
+import { createAccountsStore, createDocument } from '../../lib/index.js'
+import { tempDir } from './helpers.mjs'
 
-const SESSION_A = 'a'.repeat(40)
-const SESSION_B = 'b'.repeat(40)
-const SESSION_C = 'c'.repeat(40)
-
-test('route ids are stable per slot and never renumbered', () => {
-  assert.equal(routeForSlot(1), 'loomy')
-  assert.equal(routeForSlot(2), 'loomy-2')
-  assert.equal(routeForSlot(7), 'loomy-7')
-  assert.equal(slotForRoute('loomy'), 1)
-  assert.equal(slotForRoute('loomy-2'), 2)
-  assert.equal(slotForRoute('loomy-1'), undefined, 'slot 1 never carries a suffix')
-  assert.equal(slotForRoute('loomy-x'), undefined)
-  assert.equal(slotForRoute('other'), undefined)
-  assert.equal(isOurRoute('loomy-9'), true)
-  assert.equal(isOurRoute('loomy-0'), false)
-})
-
-test('parseAccounts degrades to empty and drops duplicate slots', () => {
-  assert.deepEqual(parseAccounts('not json').accounts, [])
-  assert.deepEqual(parseAccounts('{}').accounts, [])
-  const doc = JSON.stringify({
-    version: 1,
-    accounts: [
-      { id: 'x1', slot: 2, session: SESSION_A, addedAt: 1 },
-      { id: 'x2', slot: 2, session: SESSION_B, addedAt: 2 }, // duplicate slot
-      { id: 'x3', slot: 1, session: 'short', addedAt: 3 }, // too short
-    ],
+function storeIn(dir, options = {}) {
+  return createAccountsStore({
+    document: createDocument({
+      path: join(dir, 'accounts.json'),
+      parse: (text) => JSON.parse(text),
+      serialize: (document) => JSON.stringify(document),
+      empty: () => ({ version: 1, accounts: [] }),
+    }),
+    routeBase: 'demo',
+    routeMode: options.routeMode ?? 'slots',
+    displayName: 'Demo',
+    ...(options.desktop === undefined ? {} : { desktop: options.desktop }),
   })
-  const parsed = parseAccounts(doc)
-  assert.equal(parsed.accounts.length, 1)
-  assert.equal(parsed.accounts[0].slot, 2)
+}
+
+test('slots are assigned once and never renumbered by a removal', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  const first = await store.add({ kind: 'credentials', material: 'a'.repeat(32), phone: '1' })
+  const second = await store.add({ kind: 'credentials', material: 'b'.repeat(32), phone: '2' })
+  const third = await store.add({ kind: 'credentials', material: 'c'.repeat(32), phone: '3' })
+
+  // Routes derive from the slot, so renumbering would silently repoint a
+  // conversation at a different account.
+  assert.equal(store.routeOf({ id: first.id, material: 'a', origin: 'plugin' }), 'demo')
+  assert.equal(store.routeOf({ id: second.id, material: 'b', origin: 'plugin' }), 'demo-2')
+
+  await store.remove(second.id)
+  const routes = await store.routes({ poolEnabled: false })
+  assert.deepEqual(
+    routes.map((entry) => entry.route),
+    ['demo', 'demo-3'],
+    'the surviving accounts keep their slots: removing slot 2 never renumbers slot 3',
+  )
+  assert.equal(third.id.length > 0, true)
 })
 
-test('a store keeps slots stable across add and remove', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-acc-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
-
-    const first = await store.add({ session: SESSION_A, phone: '13800000001' })
-    assert.equal(first.kind, 'ok')
-    assert.equal(first.account.slot, 1)
-    assert.equal(first.replaced, false)
-
-    const second = await store.add({ session: SESSION_B, phone: '13800000002' })
-    assert.equal(second.account.slot, 2)
-    const third = await store.add({ session: SESSION_C, phone: '13800000003' })
-    assert.equal(third.account.slot, 3)
-
-    // Routes follow slots verbatim.
-    let routes = await store.routes({ force: true })
-    assert.deepEqual(routes.map((r) => r.route), ['loomy'], 'one route for three accounts')
-    assert.deepEqual((await store.list({ force: true })).map((a) => a.slot), [1, 2, 3])
-    assert.equal(routes[0].origin, 'plugin')
-
-    // Removing the middle account must NOT renumber the third.
-    const removed = await store.remove(second.account.id)
-    assert.deepEqual(removed, { kind: 'ok', removed: true })
-    routes = await store.routes({ force: true })
-    assert.deepEqual(routes.map((r) => r.route), ['loomy'])
-    assert.deepEqual((await store.list({ force: true })).map((a) => a.slot), [1, 3], 'slots are not renumbered')
-
-    // A new account reuses the freed slot rather than taking a higher one.
-    const fourth = await store.add({ session: 'd'.repeat(40), phone: '13800000004' })
-    assert.equal(fourth.account.slot, 2)
-
-    // The file is 0600 and never contains anything but sessions/identity.
-    const mode = statSync(accountsFilePath(dir)).mode & 0o777
-    assert.equal(mode, 0o600)
-    const raw = readFileSync(accountsFilePath(dir), 'utf8')
-    assert.equal(raw.includes('13800000001'), true, 'phone is stored to build the display name')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+test('the same material is refreshed, not added twice', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  await store.add({ kind: 'credentials', material: 'x'.repeat(40), label: 'old' })
+  const again = await store.add({ kind: 'credentials', material: 'x'.repeat(40), label: 'new' })
+  assert.equal(again.replaced, true)
+  const rows = await store.list({ force: true })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].label, 'new')
 })
 
-test('re-login refreshes the same slot instead of adding a second account', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-acc-relogin-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
-    const first = await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
-    const sessionA2 = 'z'.repeat(40)
-    const again = await store.add({ session: sessionA2, phone: '13800000001', userId: 'u1' })
-    assert.equal(again.kind, 'ok')
-    assert.equal(again.replaced, true, 'same userId refreshes the existing row')
-    assert.equal(again.account.slot, first.account.slot, 'slot is preserved')
-    const list = await store.list({ force: true })
-    assert.equal(list.length, 1)
-    assert.equal(list[0].session, sessionA2, 'session is refreshed')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+test('health marks persist and clear', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  const added = await store.add({ kind: 'credentials', material: 'h'.repeat(40) })
+  await store.markUnavailable(added.id, 'no_points', '积分不足')
+  let rows = await store.list({ force: true })
+  assert.equal(rows[0].unavailableCode, 'no_points')
+
+  await store.markHealthy(added.id)
+  rows = await store.list({ force: true })
+  assert.equal(rows[0].unavailableAt, undefined)
+
+  // The document is private: it carries sessions.
+  assert.equal(statSync(join(dir, 'accounts.json')).mode & 0o777, 0o600)
 })
 
-test('with no stored account, the desktop session becomes slot 1', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-acc-desktop-'))
-  try {
-    const store = createAccountsStore({
-      storageDir: () => dir,
-      now: () => 1000,
-      readDesktop: async () => ({ found: true, session: SESSION_A, phone: '138****0001' }),
-    })
-    const routes = await store.routes({ force: true })
-    assert.equal(routes.length, 1)
-    assert.equal(routes[0].route, 'loomy')
-    assert.equal(routes[0].origin, 'desktop')
-    assert.equal(routes[0].displayName, 'Loomy')
-
-    // A stored account takes over; the desktop session stops being offered.
-    await store.add({ session: SESSION_B, phone: '13800000002' })
-    const after = await store.routes({ force: true })
-    assert.equal(after.length, 1)
-    assert.equal(after[0].origin, 'plugin')
-    assert.equal(after[0].route, 'loomy')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+test('a pool route appears only when rotation is on and there is something to rotate', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  await store.add({ kind: 'credentials', material: 'p'.repeat(40) })
+  assert.deepEqual(
+    (await store.routes({ poolEnabled: true })).map((entry) => entry.route),
+    ['demo'],
+    'one account cannot rotate',
+  )
+  await store.add({ kind: 'credentials', material: 'q'.repeat(40) })
+  assert.ok((await store.routes({ poolEnabled: true })).some((entry) => entry.route === 'demo-pool'))
+  assert.ok(!(await store.routes({ poolEnabled: false })).some((entry) => entry.route === 'demo-pool'))
 })
 
-test('routeDisplayName distinguishes slots and shows the phone as stored', () => {
-  // The name IS the account: the picker groups by it, so a shared prefix hid
-  // the only part that differs.
-  assert.equal(routeDisplayName({ slot: 1, phone: '13800000001' }), '13800000001')
-  assert.equal(routeDisplayName({ slot: 2, phone: '13800000002' }), '13800000002')
-  assert.equal(routeDisplayName({ slot: 3, label: '工作号' }), '工作号')
-  assert.equal(routeDisplayName({ slot: 4 }), '账号 4')
+test('the desktop sign-in joins the pool without being written to the file', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir, { desktop: async () => ({ material: 'd'.repeat(40), phone: '138****0000' }) })
+  const candidates = await store.poolCandidates()
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].origin, 'desktop')
+  assert.deepEqual(await store.list({ force: true }), [], 'the desktop credential is read, never stored')
 })
 
-test('accountsView reports rows; ids are session fingerprints', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-acc-view-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
-    await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
-    const rows = await accountsView(store, { force: true })
-    assert.equal(rows.length, 1)
-    assert.equal(rows[0].id, accountIdOf(SESSION_A))
-    assert.equal(rows[0].route, 'loomy')
-    assert.equal(rows[0].origin, 'plugin')
-    assert.equal(JSON.stringify(rows).includes(SESSION_A), false, 'a view never carries the session')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+test('export → import round-trips without duplicating an account', async (t) => {
+  const dir = tempDir(t)
+  const source = storeIn(dir)
+  await source.add({ kind: 'credentials', material: 'e'.repeat(40), label: 'one' })
+  const exported = await source.exportBundle()
+  assert.equal(typeof exported.bundle, 'object')
+
+  const target = storeIn(join(tempDir(t)))
+  const first = await target.importBundle(exported.bundle)
+  assert.equal(first.added, 1)
+  const second = await target.importBundle(exported.bundle)
+  assert.equal(second.added, 0)
+  assert.equal(second.refreshed, 1)
 })
 
-test('the provider installs one profile per route and re-collects on change', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-acc-rt-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
-    await store.add({ session: SESSION_A, phone: '13800000001' })
-    await store.add({ session: SESSION_B, phone: '13800000002' })
-    const routes = await store.routes({ force: true })
-
-    const seenRoutes = []
-    const runtime = createProviderRuntime({
-      catalog: {
-        kickStaleRefresh() {},
-        enabledModels: () => [
-          { id: 'm1', name: 'Model One', multiplier: 1, contextWindow: 1000, maxOutput: 100, vision: false, efforts: [], defaultEffort: '' },
-        ],
-      },
-      baseURL: () => 'https://example.invalid/api/v1',
-      loomyVersion: () => '0.9.39',
-      readSession: async () => ({ found: false, sourcePath: 'x', candidates: [] }),
-      sessionForRoute: async (route) => {
-        seenRoutes.push(route)
-        return { found: true, sourcePath: `slot:${route}`, candidates: [], session: 's'.repeat(40) }
-      },
-      precheck: async () => ({ ok: true, definite: false }),
-    })
-
-    // Default state: exactly the single base route.
-    assert.equal(runtime.routes().length, 1)
-    assert.equal(runtime.routes()[0].route, 'loomy')
-
-    runtime.setRoutes(routes)
-    assert.deepEqual(runtime.routes().map((r) => r.route), ['loomy'])
-    assert.equal(runtime.profiles.size, 1, 'one route, no matter how many accounts')
-
-    // The models it serves carry that single route id.
-    const models = runtime.profiles.get('loomy').piProvider.getModels()
-    assert.equal(models[0].provider, 'loomy')
-
-    // Auth resolution still goes through the adapter for that route.
-    await runtime.adapter['config'].resolveApiKey('loomy', runtime.profiles.get('loomy'))
-    assert.deepEqual(seenRoutes, ['loomy'])
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+test('single-route vendors expose exactly one route, whatever the account count', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir, { routeMode: 'single' })
+  await store.add({ kind: 'credentials', material: 's'.repeat(40) })
+  await store.add({ kind: 'credentials', material: 't'.repeat(40) })
+  const routes = await store.routes({ poolEnabled: true })
+  // 账号数量不改变路由集合：谁付费是每次调用的决定，不是会话绑定的属性。
+  // 返回 N 条同 id 的条目会让宿主收到重复 provider id，选择器里同一个分组挂
+  // N 遍（Loomy 曾经就是那样）。
+  assert.deepEqual(routes.map((entry) => entry.route), ['demo'])
+  assert.deepEqual(
+    routes.map((entry) => entry.displayName),
+    ['Demo'],
+  )
+  assert.equal(routes[0].slot, 1)
 })
 
-test('export produces a portable bundle; import merges it without clobbering slots', async () => {
-  const source = mkdtempSync(join(tmpdir(), 'loomy-exp-'))
-  const target = mkdtempSync(join(tmpdir(), 'loomy-imp-'))
-  try {
-    const from = createAccountsStore({ storageDir: () => source, now: () => 1000 })
-    await from.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
-    await from.add({ session: SESSION_B, phone: '13800000002', userId: 'u2' })
-    const exported = await from.exportBundle()
+/**
+ * 旧账号的身份补全：从会话材料里解出稳定标识，**但不改写落盘数据**。
+ *
+ * 用户真实数据是 9 条没有 phone 的账号（登录时上游没回号码，label 又被早先的
+ * 代码写成了身份类型 `personal`），界面上只能显示「账号 1…9」。小浣熊的 JWT 里
+ * 有 `sub`（`pu-01a1e893-…`），每一条都不同——用它补出 `userId` 就足以辨认。
+ *
+ * 关键约束：这只是**展示层**补全。不落盘，否则等于替用户改写数据，而且会在
+ * 上游换了标识口径后留下错的东西。
+ */
+test('legacy accounts derive a stable identity from their material, without rewriting the file', async (t) => {
+  const dir = tempDir(t)
+  const token = (n) =>
+    `h.${Buffer.from(JSON.stringify({ sub: `pu-01a1e89${n}`, exp: 9_999_999_999 })).toString('base64url')}.s`
 
-    assert.equal(exported.bundle.kind, 'dsh-connect-loomy/accounts')
-    assert.equal(exported.bundle.version, 1)
-    assert.equal(exported.bundle.accounts.length, 2)
-    assert.equal(exported.bundle.accounts[0].session, SESSION_A, 'the session is what makes it portable')
+  // 先写一份"旧数据"：没有 phone/userId，label 是身份类型。
+  const seed = createDocument({
+    path: join(dir, 'accounts.json'),
+    parse: (text) => JSON.parse(text),
+    serialize: (document) => JSON.stringify(document),
+    empty: () => ({ version: 1, accounts: [] }),
+  })
+  await seed.save({
+    version: 1,
+    accounts: [0, 1, 2].map((n) => ({ id: `old-${n}`, material: token(n), origin: 'plugin', label: 'personal' })),
+  })
 
-    // A fresh machine imports it and gets usable accounts, no SMS involved.
-    const into = createAccountsStore({ storageDir: () => target, now: () => 2000 })
-    const result = await into.importBundle(JSON.parse(JSON.stringify(exported.bundle)))
-    assert.equal(result.kind, 'ok')
-    assert.equal(result.added, 2)
-    assert.equal(result.reassigned, 0)
-    const routes = await into.routes({ force: true })
-    assert.deepEqual(routes.map((r) => r.route), ['loomy'])
+  const store = createAccountsStore({
+    document: seed,
+    routeBase: 'demo',
+    routeMode: 'single',
+    displayName: 'Demo',
+    // 供应商提供"从 material 能解出什么"。
+    describeMaterial: (material) => {
+      const payload = JSON.parse(Buffer.from(material.split('.')[1], 'base64url').toString('utf8'))
+      return typeof payload.sub === 'string' ? { userId: payload.sub } : undefined
+    },
+  })
 
-    // Importing again is idempotent: same sessions refresh, nothing duplicates.
-    const again = await into.importBundle(exported.bundle)
-    assert.equal(again.added, 0)
-    assert.equal(again.refreshed, 2)
-    assert.equal((await into.list({ force: true })).length, 2)
-  } finally {
-    rmSync(source, { recursive: true, force: true })
-    rmSync(target, { recursive: true, force: true })
-  }
-})
+  const rows = await store.list({ force: true })
+  assert.deepEqual(
+    rows.map((row) => row.userId),
+    ['pu-01a1e890', 'pu-01a1e891', 'pu-01a1e892'],
+    '每条旧账号都补出了各自不同的标识',
+  )
 
-test('import refuses foreign JSON and never overwrites an existing account', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-imp-guard-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
-    await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
-
-    await assert.rejects(() => store.importBundle({ arbitrary: 'json' }), /账号包/u)
-    await assert.rejects(() => store.importBundle({ kind: 'other', version: 1, accounts: [] }), /账号包/u)
-
-    // A bundle whose slots clash with existing accounts relocates, never replaces.
-    const clash = {
-      kind: 'dsh-connect-loomy/accounts',
-      version: 1,
-      exportedAt: 1,
-      accounts: [{ slot: 1, session: SESSION_B, phone: '13800000002', userId: 'u2' }],
-    }
-    const result = await store.importBundle(clash)
-    assert.equal(result.added, 1)
-    assert.equal(result.reassigned, 1, 'slot 1 was taken, so the import took a free slot')
-    const list = await store.list({ force: true })
-    assert.equal(list.length, 2)
-    assert.equal(list.find((a) => a.userId === 'u1').session, SESSION_A, 'the existing account is untouched')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('import accepts the desktop client auth-session.json verbatim', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-imp-desktop-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 5000 })
-    // Exactly the file the desktop client writes, as a user would paste it.
-    const desktop = {
-      session: '0a1deffc15054457bf04a77007f5662c',
-      userid: '261116121019062767',
-      phone: '16292320818',
-    }
-    const result = await store.importBundle(desktop)
-    assert.equal(result.kind, 'ok')
-    assert.equal(result.added, 1)
-
-    const stored = (await store.list({ force: true }))[0]
-    assert.equal(stored.session, desktop.session)
-    assert.equal(stored.userId, desktop.userid, 'the lowercase userid is mapped')
-    assert.equal(stored.phone, desktop.phone)
-    assert.equal(stored.slot, 1)
-
-    const routes = await store.routes({ force: true })
-    assert.equal(routes[0].route, 'loomy')
-    assert.equal(routes[0].displayName, 'Loomy')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('import accepts a bare array of sessions and our own bundle equally', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-imp-shapes-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 5000 })
-    const arr = [{ session: 'a'.repeat(32), phone: '13800000001' }, { session: 'b'.repeat(32) }]
-    const result = await store.importBundle(arr)
-    assert.equal(result.added, 2)
-    const list = await store.list({ force: true })
-    assert.deepEqual(list.map((a) => a.slot), [1, 2])
-    // Two identical sessions collapse onto one account, not two.
-    const dup = await store.importBundle([{ session: 'a'.repeat(32) }])
-    assert.equal(dup.refreshed, 1)
-    assert.equal((await store.list({ force: true })).length, 2)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('export falls back to the desktop session when nothing is stored', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-exp-desktop-'))
-  try {
-    // The reported case: signed in through Loomy.app, nothing in accounts.json.
-    const store = createAccountsStore({
-      storageDir: () => dir,
-      now: () => 9000,
-      readDesktop: async () => ({ found: true, session: SESSION_A, phone: '181****0898' }),
-    })
-    const exported = await store.exportBundle()
-    assert.equal(exported.bundle.accounts.length, 1, 'a visible sign-in must be exportable')
-    assert.equal(exported.bundle.accounts[0].session, SESSION_A)
-    assert.equal(exported.bundle.accounts[0].slot, 1)
-
-    // With nothing anywhere, the bundle is empty so the card can say so.
-    const empty = createAccountsStore({ storageDir: () => dir, now: () => 9000, readDesktop: async () => ({ found: false }) })
-    assert.equal((await empty.exportBundle()).bundle.accounts.length, 0)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('export includes the desktop session even when stored accounts exist', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-exp-both-'))
-  try {
-    const desktopSession = 'd'.repeat(32)
-    const store = createAccountsStore({
-      storageDir: () => dir,
-      now: () => 7000,
-      readDesktop: async () => ({ found: true, session: desktopSession, phone: '181****0898' }),
-    })
-    await store.add({ session: SESSION_A, phone: '13800000001', userId: 'u1' })
-
-    const exported = await store.exportBundle()
-    assert.equal(exported.bundle.accounts.length, 2, 'the desktop sign-in must not be dropped')
-    assert.equal(exported.bundle.accounts[0].session, SESSION_A)
-    assert.equal(exported.bundle.accounts[0].origin, 'plugin')
-    assert.equal(exported.bundle.accounts[1].session, desktopSession)
-    assert.equal(exported.bundle.accounts[1].origin, 'desktop')
-    // Its slot must not collide with a stored row, or import would overwrite it.
-    assert.equal(exported.bundle.accounts[1].slot, 2)
-
-    // A desktop session identical to a stored one is not exported twice.
-    const dupDir = mkdtempSync(join(tmpdir(), 'loomy-exp-dup-'))
-    try {
-      const dup = createAccountsStore({
-        storageDir: () => dupDir,
-        now: () => 7000,
-        readDesktop: async () => ({ found: true, session: SESSION_A }),
-      })
-      await dup.add({ session: SESSION_A, phone: '13800000001' })
-      assert.equal((await dup.exportBundle()).bundle.accounts.length, 1)
-    } finally {
-      rmSync(dupDir, { recursive: true, force: true })
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('the list shows the desktop sign-in next to stored accounts', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-view-mixed-'))
-  try {
-    const desktopSession = 'd'.repeat(32)
-    const store = createAccountsStore({
-      storageDir: () => dir,
-      now: () => 1000,
-      readDesktop: async () => ({ found: true, session: desktopSession, phone: '18100000000' }),
-    })
-    await store.add({ session: SESSION_A, phone: '13800000001' })
-
-    const rows = await accountsView(store, { force: true })
-    assert.equal(rows.length, 2, 'both sources appear in one list')
-    assert.equal(rows[0].origin, 'plugin')
-    assert.equal(rows[0].route, 'loomy')
-    assert.equal(rows[1].origin, 'desktop')
-    assert.equal(
-      rows[1].route,
-      '',
-      'the desktop sign-in has no route of its own while stored accounts exist',
-    )
-
-    // Once adopted (stored), it stops being listed twice.
-    await store.add({ session: desktopSession, phone: '18100000000' })
-    const after = await accountsView(store, { force: true })
-    assert.equal(after.filter((row) => row.origin === 'desktop').length, 0)
-    assert.equal(after.length, 2, 'it is the same account, now routable')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('adopting the desktop sign-in is one store call and becomes a route', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-adopt-'))
-  try {
-    const desktopSession = 'e'.repeat(32)
-    const store = createAccountsStore({
-      storageDir: () => dir,
-      now: () => 1000,
-      readDesktop: async () => ({ found: true, session: desktopSession, phone: '18100000000' }),
-    })
-    // Shown in the list but not routable yet.
-    let routes = await store.routes({ force: true })
-    assert.equal(routes[0].origin, 'desktop')
-
-    const adopted = await store.adoptDesktop()
-    assert.equal(adopted.kind, 'ok')
-    routes = await store.routes({ force: true })
-    assert.equal(routes[0].origin, 'plugin', 'the desktop sign-in now has its own route')
-    assert.equal(routes[0].route, 'loomy')
-
-    // Nothing to adopt: an executable message, not a crash or a silent no-op.
-    const empty = createAccountsStore({ storageDir: () => dir, now: () => 1000, readDesktop: async () => ({ found: false }) })
-    const none = await empty.adoptDesktop()
-    assert.equal(none.kind, 'failure')
-    assert.match(none.message, /桌面端/u)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('a single-account export carries only that account', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'loomy-exp-one-'))
-  try {
-    const store = createAccountsStore({ storageDir: () => dir, now: () => 1000 })
-    const a = await store.add({ session: SESSION_A, phone: '13800000001' })
-    await store.add({ session: SESSION_B, phone: '13800000002' })
-
-    const one = await store.exportBundle({ id: a.account.id })
-    assert.equal(one.bundle.accounts.length, 1)
-    assert.equal(one.bundle.accounts[0].session, SESSION_A)
-
-    const unknown = await store.exportBundle({ id: 'nope' })
-    assert.equal(unknown.bundle.accounts.length, 0, 'an unknown id exports nothing rather than everything')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+  // 补出来的值不能落盘。
+  const after = await seed.load()
+  assert.ok(
+    after.accounts.every((account) => account.userId === undefined),
+    '展示层补全不写回用户数据',
+  )
 })

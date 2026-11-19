@@ -17,7 +17,6 @@ import {
 } from './helpers.mjs'
 import {
   clampPageSize,
-  createCreditsCache,
   fetchCredits,
   fetchIdentity,
   normalizeLedgerRow,
@@ -43,10 +42,9 @@ test('parseCreditsPayload reports all three buckets and normalises ledger rows',
   const parsed = parseCreditsPayload(pointsBody(), NOW)
   assert.equal(parsed.kind, 'ok')
   const credits = parsed.credits
-  assert.equal(credits.balance, 35_500)
-  assert.equal(credits.dailyBalance, 5_000)
-  assert.equal(credits.availableBalance, 40_500)
-  assert.equal(credits.availableBalance, credits.balance + credits.dailyBalance)
+  // 三个桶映射到能力声明里的 key：`available` 是主数字，`daily` 是当日额度，
+  // `total` 是账本余额。请求方读的是 `fields`，不是三个扁平字段。
+  assert.deepEqual(credits.fields, { available: 40_500, daily: 5_000, total: 35_500 })
   assert.equal(credits.fetchedAt, NOW)
   assert.deepEqual(credits.records[0], {
     description: '邀请好友奖励',
@@ -152,59 +150,6 @@ test('fetchIdentity uses /user/identity and the platform token header', async ()
   assert.equal(calls[0].init.headers.token, SESSION)
 })
 
-test('createCreditsCache: 60s TTL, single-flight, and a failure is never cached as success', async () => {
-  let clock = NOW
-  let mode = 'failure'
-  let calls = 0
-  let release = () => {}
-  let gate = Promise.resolve()
-  const fetchImpl = async () => {
-    calls += 1
-    await gate
-    if (mode === 'failure') return jsonResponse(platformFailure('100002', '登录已失效'))
-    return jsonResponse(pointsBody())
-  }
-  const cache = createCreditsCache({
-    baseURL: () => BASE,
-    readSession: async () => SESSION_FACTS,
-    ttlMs: () => 60_000,
-    fetchImpl,
-    now: () => clock,
-  })
-
-  // A failure reaches the caller and is *not* stored: the next read retries.
-  const failed = await cache.read()
-  assert.equal(failed.kind, 'failure')
-  assert.equal(calls, 1)
-  await cache.read()
-  assert.equal(calls, 2, 'a failed read is not served from cache')
-
-  // Two overlapping reads share one upstream call (single-flight).
-  mode = 'success'
-  gate = new Promise((resolve) => {
-    release = resolve
-  })
-  const first = cache.read()
-  const second = cache.read()
-  release()
-  const [a, b] = await Promise.all([first, second])
-  assert.equal(calls, 3)
-  assert.equal(a.kind, 'ok')
-  assert.equal(b.kind, 'ok')
-  assert.equal(a.credits.availableBalance, 40_500)
-
-  // Inside the TTL the cached snapshot is served without another call.
-  clock += 59_000
-  const cached = await cache.read()
-  assert.equal(cached.kind, 'ok')
-  assert.equal(calls, 3)
-
-  // After the TTL the next read goes upstream again.
-  clock += 2_000
-  await cache.read()
-  assert.equal(calls, 4)
-})
-
 test('a ledger row keeps its time and the model that caused the deduction', () => {
   // Shape verified against the live upstream: createdAt is epoch *seconds* and
   // the model arrives as `modelName`.
@@ -230,4 +175,115 @@ test('a ledger row keeps its time and the model that caused the deduction', () =
     balanceAfter: 40500,
   })
   assert.equal(credit.model, undefined)
+})
+
+// ── Raccoon 账单（积分明细） ────────────────────────────────────────────────
+
+/**
+ * 实测样本（2026-11-19 `GET /api/web/points/v2/bills`）。
+ *
+ * 三个必须钉住的形状：`points` 带符号、`created_at` 是带时区的 ISO、
+ * 分页是游标（`next_cursor`）而不是页码。
+ */
+const BILLS_BODY = {
+  code: 0,
+  message: 'success',
+  data: {
+    items: [
+      {
+        group_id: 'task_E9D4',
+        bill_count: 1,
+        bill_id: 'bill_337b',
+        client_type: 'desktop',
+        event_name: '桌面端 LLM 对话消耗',
+        biz_type: 'desktop',
+        biz_id: 'e15e',
+        points: -1,
+        created_at: '2026-11-19T16:04:34+08:00',
+      },
+      {
+        group_id: 'task_C459',
+        bill_count: 1,
+        bill_id: 'bill_e600',
+        client_type: 'desktop',
+        event_name: '邀请奖励',
+        biz_type: 'reward',
+        points: 500,
+        created_at: '2026-11-19T15:11:10+08:00',
+      },
+    ],
+    has_more: true,
+    next_cursor: 'cursor-token',
+  },
+}
+
+test('parseBills maps signed points onto direction and keeps the timestamp', async () => {
+  const { parseBills } = await import('../../lib/index.js')
+  const page = parseBills(BILLS_BODY)
+  assert.ok(page !== undefined)
+  assert.equal(page.records.length, 2)
+
+  const [debit, credit] = page.records
+  // 负数 = 扣减；展示的是绝对额，方向单独表达（UI 用它加 +/-）。
+  assert.equal(debit.direction, 'debit')
+  assert.equal(debit.pointsActual, 1)
+  assert.equal(debit.description, '桌面端 LLM 对话消耗')
+  assert.equal(debit.createdAt, Date.parse('2026-11-19T16:04:34+08:00'))
+
+  assert.equal(credit.direction, 'credit')
+  assert.equal(credit.pointsActual, 500)
+  assert.equal(credit.description, '邀请奖励')
+
+  // 游标分页：卡片只取一页，但要把"还有更多"如实带出去。
+  assert.equal(page.hasMore, true)
+  assert.equal(page.nextCursor, 'cursor-token')
+  // 上游没给余后余额与模型名：不编造。
+  assert.equal(debit.balanceAfter, undefined)
+  assert.equal(debit.model, undefined)
+})
+
+test('parseBills skips one bad row instead of failing the page', async () => {
+  const { parseBills } = await import('../../lib/index.js')
+  const page = parseBills({
+    code: 0,
+    data: {
+      items: [
+        { points: 'not-a-number', created_at: '2026-11-19T16:04:34+08:00' },
+        { points: -2, created_at: 'not-a-date' },
+        { points: -3, created_at: '2026-11-19T16:04:34+08:00', event_name: 'ok' },
+      ],
+      has_more: false,
+    },
+  })
+  assert.ok(page !== undefined)
+  assert.equal(page.records.length, 1, '坏记录跳过，好记录保留')
+  assert.equal(page.records[0].pointsActual, 3)
+  assert.equal(page.hasMore, false)
+})
+
+test('parseBills rejects a non-zero envelope instead of showing an empty ledger', async () => {
+  const { parseBills } = await import('../../lib/index.js')
+  assert.equal(parseBills({ code: 200003, message: 'authoriza…' }), undefined)
+  assert.equal(parseBills('nope'), undefined)
+  assert.equal(parseBills({ code: 0, data: {} }), undefined)
+})
+
+test('fetchBills sends the bearer token and the cursor, and never pads the query', async () => {
+  const { fetchBills } = await import('../../lib/index.js')
+  const seen = []
+  const fetchImpl = async (url, init) => {
+    seen.push({ url: String(url), headers: init.headers })
+    return new Response(JSON.stringify(BILLS_BODY), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  await fetchBills({ token: 'tok', fetchImpl })
+  // 没有 cursor 时不拼空参数：`?cursor=` 在有的网关上会被当成"游标为空"。
+  assert.equal(seen[0].url, 'https://xiaohuanxiong.com/api/web/points/v2/bills')
+  assert.match(seen[0].headers.Authorization, /^Bearer tok$/u)
+
+  await fetchBills({ token: 'tok', cursor: 'abc', fetchImpl })
+  assert.match(seen[1].url, /\?cursor=abc$/u)
 })

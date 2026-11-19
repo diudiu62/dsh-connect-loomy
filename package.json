@@ -1,8 +1,8 @@
 {
-  "name": "dsh-connect-loomy",
-  "displayName": "DSH Connect Loomy",
-  "description": "把本机登录的 Loomy（讯飞办公助手）模型接入 DeepSeek Harness 模型选择器，并提供设置卡片与只读积分概览。",
-  "version": "0.1.2",
+  "name": "dsh-connect-desktop",
+  "displayName": "DSH Connect Desktop · Loomy / 小浣熊",
+  "description": "把本机已登录的桌面客户端（Loomy 讯飞办公助手、商汤小浣熊等）模型接入 DeepSeek Harness，提供共享的设置卡片、账号抽屉与只读积分概览。新增供应商只需实现协议。",
+  "version": "0.3.0",
   "author": {
     "name": "diudiu62",
     "url": "https://github.com/diudiu62"
@@ -12,8 +12,12 @@
     "dsh-plugin",
     "deepseek-harness",
     "loomy",
+    "raccoon",
+    "sensetime",
     "iflytek",
-    "model-provider"
+    "desktop-client",
+    "model-provider",
+    "multi-vendor"
   ],
   "type": "module",
   "engines": {
@@ -100,10 +104,14 @@
     "build": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && tsdown",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
     "test": "node --test \"tests/**/*.test.mjs\"",
-    "check": "pnpm run typecheck && pnpm run build && pnpm run test",
+    "check": "pnpm run typecheck && pnpm run audit && pnpm run build && pnpm run test",
     "pretest": "pnpm run build",
     "prepack": "pnpm run build",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "audit": "node scripts/audit-architecture.mjs",
+    "audit:layout": "node scripts/measure-layout.mjs --check-layout",
+    "audit:contrast": "node scripts/measure-layout.mjs --check-contrast",
+    "audit:visual": "npm run audit:layout && npm run audit:contrast"
   },
   "dsh": {
     "bundle": {
@@ -121,15 +129,15 @@
     }
   },
   "bin": {
-    "dsh-connect-loomy": "lib/bin.js"
+    "dsh-connect-desktop": "lib/bin.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/diudiu62/dsh-connect-loomy.git"
+    "url": "git+https://github.com/diudiu62/dsh-connect-desktop.git"
   },
-  "homepage": "https://github.com/diudiu62/dsh-connect-loomy#readme",
+  "homepage": "https://github.com/diudiu62/dsh-connect-desktop#readme",
   "bugs": {
-    "url": "https://github.com/diudiu62/dsh-connect-loomy/issues"
+    "url": "https://github.com/diudiu62/dsh-connect-desktop/issues"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",

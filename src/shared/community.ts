@@ -2,7 +2,7 @@
  * Where users reach the author and each other.
  *
  * This module is the **single** place for community contacts: the settings
- * card's footer, `dsh-connect-loomy --help` and the README quote it, so a group
+ * card's footer, `dsh-connect-desktop --help` and the README quote it, so a group
  * number changes here once instead of drifting across three files.
  *
  * `[QQ_GROUP]` / `[WECHAT_ID]` / `[EMAIL]` are deliberate placeholders: they are
@@ -13,7 +13,7 @@
  *
  * The GitHub links are the always-available channel; they are never filtered.
  *
- * @module dsh-connect-loomy/shared/community
+ * @module dsh-connect-desktop/shared/community
  */
 
 /** Project home. */

@@ -63,7 +63,7 @@ test('maskUserId keeps only the first and last four characters', () => {
   assert.equal(maskUserId(undefined), undefined)
 })
 
-test('readAuthSession parses the real document shape and masks the account', async (t) => {
+test('readAuthSession parses the real document shape and keeps the account readable', async (t) => {
   const dir = tempDir(t)
   const path = writeAuthFile(dir)
   const snapshot = await readAuth([candidate(path)])
@@ -71,8 +71,9 @@ test('readAuthSession parses the real document shape and masks the account', asy
   assert.equal(snapshot.found, true)
   assert.equal(snapshot.sourcePath, path)
   assert.equal(snapshot.session, SESSION, 'the raw session is available in memory')
-  assert.equal(snapshot.phone, '138****5678')
-  assert.equal(snapshot.userId, '1234**********5678')
+  // 账号视图不脱敏（产品决定）：本地卡片要能让用户核对自己登的是哪个号。
+  assert.equal(snapshot.phone, RAW_PHONE)
+  assert.equal(snapshot.userId, RAW_USER_ID)
   assert.equal(snapshot.loginAt, 1_794_574_693_000)
   assert.equal(snapshot.candidates[0].state, 'ok')
   // A non-reversible fingerprint scopes caches; it must not be the token.
@@ -82,20 +83,26 @@ test('readAuthSession parses the real document shape and masks the account', asy
 
   const account = accountViewOf(snapshot)
   assert.deepEqual(account, {
-    phone: '138****5678',
+    phone: RAW_PHONE,
     loginAt: 1_794_574_693_000,
-    userId: '1234**********5678',
+    userId: RAW_USER_ID,
   })
-  assert.deepEqual(credentialViewOf(snapshot), { sourcePath: path, found: true })
+  const credential = credentialViewOf(snapshot)
+  assert.equal(credential.found, true)
+  assert.equal(credential.sourcePath, path)
+  // 视图现在带来源与候选列表：卡片和诊断读的是同一份事实，不能再只回答"找到没找到"。
+  assert.equal(credential.sourceOrigin, 'desktop')
+  assert.ok(credential.candidates.length > 0)
   assert.deepEqual(nextStepsFor(snapshot), [])
 
-  // The public views must not serialise the raw secret or PII.
+  // 账号信息按产品决定原样展示；**唯一**仍然绝对不能出门的是会话本身。
   for (const view of [account, credentialViewOf(snapshot), nextStepsFor(snapshot)]) {
     const text = JSON.stringify(view)
     assert.ok(!text.includes(SESSION), 'session must not reach a public view')
-    assert.ok(!text.includes(RAW_PHONE), 'full phone must not reach a public view')
-    assert.ok(!text.includes(RAW_USER_ID), 'full user id must not reach a public view')
   }
+  // 脱敏能力仍然存在，只是用途收窄到日志/上游错误文本。
+  assert.equal(maskPhone(RAW_PHONE), '138****5678')
+  assert.equal(maskUserId(RAW_USER_ID), '1234**********5678')
 })
 
 test('updatedAt is accepted both as seconds and milliseconds', async (t) => {
@@ -119,7 +126,10 @@ test('a missing file is a signed-out state with executable next steps', async (t
   assert.ok(snapshot.problem.includes(path), 'the inspected path is named')
   assert.match(snapshot.problem, /启动 Loomy 客户端/u)
   assert.equal(accountViewOf(snapshot), null)
-  assert.deepEqual(credentialViewOf(snapshot), { sourcePath: path, found: false })
+  const credential = credentialViewOf(snapshot)
+  assert.equal(credential.found, false)
+  assert.equal(credential.sourcePath, path)
+  assert.equal(credential.sourceOrigin, 'none')
   assert.ok(nextStepsFor(snapshot).length >= 2)
   assert.equal(snapshot.candidates[0].exists, false)
   assert.equal(snapshot.candidates[0].state, 'missing')
@@ -167,7 +177,7 @@ test('candidates are inspected in order and the first valid one wins', async (t)
 
   assert.equal(snapshot.found, true)
   assert.equal(snapshot.sourcePath, valid)
-  assert.equal(snapshot.phone, '139****1111')
+  assert.equal(snapshot.phone, '13900001111')
   assert.deepEqual(
     snapshot.candidates.map((entry) => entry.state),
     ['invalid_json', 'ok'],
@@ -180,21 +190,21 @@ test('createAuthStore caches for the TTL and invalidate() forces a re-read', asy
   let clock = 0
   const store = createStore({ candidates: [candidate(path)], now: () => clock, ttlMs: () => 5_000 })
 
-  assert.equal((await store.read()).phone, '138****5678')
+  assert.equal((await store.read()).phone, RAW_PHONE)
 
   // A desktop re-login rewrites the file; inside the TTL the old snapshot is
   // served, which keeps one model request from re-reading the file repeatedly.
   writeAuthFile(dir, authDocument({ phone: '13900001111', session: 'f'.repeat(32) }))
-  assert.equal((await store.read()).phone, '138****5678')
+  assert.equal((await store.read()).phone, RAW_PHONE)
 
   clock = 6_000
   const refreshed = await store.read()
-  assert.equal(refreshed.phone, '139****1111')
+  assert.equal(refreshed.phone, '13900001111')
   assert.equal(refreshed.session, 'f'.repeat(32))
 
   writeAuthFile(dir, authDocument({ phone: '13700002222', session: 'e'.repeat(32) }))
   store.invalidate()
-  assert.equal((await store.read()).phone, '137****2222')
+  assert.equal((await store.read()).phone, '13700002222')
 })
 
 test('redactSensitive removes token-like fragments from verbatim upstream text', () => {
@@ -239,4 +249,68 @@ test('an env path that does not exist fails instead of falling back to the deskt
   assert.equal(snapshot.session, undefined)
   assert.deepEqual(snapshot.candidates.map((entry) => entry.path), [missing])
   assert.equal(accountViewOf(snapshot), null)
+})
+
+/**
+ * 登录后要把真实手机号存下来。
+ *
+ * 用户报过"小浣熊的账号都显示账号 1/2/3"。根因：登录响应只有 token 和
+ * `office_identity`，JWT 里也只有 `sub`——**手机号只在 `user_info` 里**。
+ * 不查它，账号表就没有号码。
+ */
+test('raccoon login stores the phone returned by user_info', async () => {
+  const token = `h.${Buffer.from(JSON.stringify({ sub: 'pu-0001', exp: 9_999_999_999 })).toString('base64url')}.s`
+  const seen = []
+  const fetchImpl = async (input) => {
+    const url = String(input)
+    seen.push(url)
+    if (url.includes('login_with_sms')) {
+      return new Response(JSON.stringify({ code: 0, data: { access_token: token, office_identity: 'personal' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.includes('user_info')) {
+      return new Response(
+        JSON.stringify({ code: 0, data: { phone: '18122750898', name: 'RaccoonJoseph', id: 8039981 } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+
+  const { createRaccoonModule, createVendorDeps } = await import('../../lib/index.js')
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'rc-ui-'))
+
+  // auth-flow 直接用全局 fetch（它不接收依赖注入），所以这里替换全局。
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = fetchImpl
+  try {
+    const module = createRaccoonModule()
+    const runtime = await module.create(
+      createVendorDeps({
+        descriptor: module.descriptor,
+        config: () => ({ ...module.descriptor.config.defaults }),
+        logger: { info() {}, warn() {}, error() {} },
+        storageDir: dir,
+      }),
+    )
+
+  const result = await runtime.login.login({ phone: '13800001234', code: '123456', method: 'sms-code' })
+  assert.equal(result.ok, true)
+  assert.ok(seen.some((url) => url.includes('user_info')), '登录后必须查一次 user_info')
+
+  const rows = await runtime.accounts.list({ force: true })
+  const stored = rows.find((row) => row.origin === 'plugin')
+  // user_info 返回的号码优先于用户输入的那个（它才是账号真实绑定的号码）。
+  assert.equal(stored?.phone, '18122750898')
+  // **平台昵称不写进 label**：label 是"用户自己起的名字"，被自动昵称占用后账号行
+  // 就永远显示 RaccoonJoseph 而不是手机号——用户要的是号码。
+  assert.equal(stored?.label, undefined)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
