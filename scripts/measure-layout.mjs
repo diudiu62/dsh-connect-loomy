@@ -12,9 +12,12 @@
  * 用法：
  *   node scripts/measure-layout.mjs                 # 700/600/500 三档
  *   node scripts/measure-layout.mjs --width 640     # 指定宽度
+ *
+ * 配色不是这里解析的：`--dsw-*` 的字面颜色来自 `scripts/theme-tokens.mjs`
+ * （本机装了 DSH 就读主题包，否则读提交的快照；两者都没有就报错，不静默降级）。
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -33,50 +36,41 @@ function chromePath() {
 }
 
 /**
- * 宿主的 alias token 解析成字面颜色。
+ * 宿主的 alias token 解析成字面颜色（实现在 `scripts/theme-tokens.mjs`）。
  *
- * `mode: 'dark'` 取 `body[data-ds-dark-theme]{…}` 里的覆盖值，其余沿用浅色。
- * 卡片所有颜色都走 `--dsw-*` token，但"走 token"不等于"暗色下能读"。
+ * 为什么搬出去：这里原来那份在拿不到主题包时 `return ''`，于是暗色渲染变成"深色
+ * 底 + 浅色兜底字"，24 条 1.15/2.4 的假失败。让"缺 token"静默降级，门禁就把环境
+ * 问题报成了设计问题。现在解析只有一份、缺 token 直接抛错、CI 走提交的快照。
  */
-function hostTokens(mode) {
-  const checkout =
-    process.env['DSH_CHECKOUT'] ?? '/Users/benny/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh'
-  const bundle = join(checkout, 'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js')
-  if (!existsSync(bundle)) return ''
-  const source = readFileSync(bundle, 'utf8')
-  const staticColoursIn = (text) => {
-    const map = new Map()
-    for (const match of text.matchAll(/(--dsw-static-[a-z0-9-]+):(#[0-9a-fA-F]{3,8})/gu)) {
-      if (!map.has(match[1])) map.set(match[1], match[2])
-    }
-    return map
-  }
+const { hostTokens, loadThemeTokens } = await import(join(ROOT, 'scripts/theme-tokens.mjs'))
 
-  // 暗色的 static 覆盖
-  const darkStart = source.indexOf('body[data-ds-dark-theme]{')
-  const lightStatic = staticColoursIn(darkStart === -1 ? source : source.slice(0, darkStart))
-  const darkStatic = darkStart === -1 ? new Map() : staticColoursIn(source.slice(darkStart))
-  const statics = mode === 'dark' ? new Map([...lightStatic, ...darkStatic]) : lightStatic
-
-  // alias 映射**每个 key 有两份**：浅色一份、暗色一份（暗色把 bg-base 指向深色阶）。
-  // 按 key 去重会永远取到浅色那份 —— 那一刻"暗色 token"就静默失效了。
-  const aliases = new Map()
-  for (const match of source.matchAll(/(--dsw-alias-[a-z0-9-]+):var\((--dsw-static-[a-z0-9-]+)\)/gu)) {
-    const list = aliases.get(match[1])
-    if (list === undefined) aliases.set(match[1], [match[2]])
-    else list.push(match[2])
+/**
+ * 配色自检：两套 token 必须真的不同，且卡片依赖的那几个 alias 都在。
+ *
+ * 这条守的是本文件上一版踩过的坑：token 缺失时静默返回空串，渲染出一个"深底浅字
+ * 的两不像"，然后把 24 条假失败当成设计问题。缺配色不是测量结果，是测量失败。
+ */
+function assertPalette() {
+  const { light, dark, origin } = loadThemeTokens()
+  const required = [
+    '--dsw-alias-label-primary',
+    '--dsw-alias-label-secondary',
+    '--dsw-alias-label-tertiary',
+    '--dsw-alias-bg-base',
+    '--dsw-alias-bg-layer-2',
+    '--dsw-alias-state-business-primary',
+  ]
+  const missing = required.filter((key) => light[key] === undefined || dark[key] === undefined)
+  if (missing.length > 0) throw new Error(`配色缺少 alias：${missing.join(', ')}（来源 ${origin.detail}）`)
+  if (light['--dsw-alias-bg-base'] === dark['--dsw-alias-bg-base']) {
+    throw new Error(`浅色与暗色的 bg-base 相同（${light['--dsw-alias-bg-base']}）—— 暗色 token 没有生效`)
   }
-
-  const declarations = []
-  for (const [alias, targets] of aliases) {
-    const target = mode === 'dark' ? targets[targets.length - 1] : targets[0]
-    const colour = statics.get(target)
-    if (colour !== undefined) declarations.push(`${alias}:${colour};`)
-  }
-  if (declarations.length === 0) return ''
-  return mode === 'dark'
-    ? `body[data-ds-dark-theme]{${declarations.join('')}}`
-    : `:root{${declarations.join('')}}`
+  const version = origin.version === null ? '' : ` (${origin.version})`
+  process.stdout.write(`tokens: ${origin.kind}${version} — ${origin.detail}\n`)
+  process.stdout.write(
+    `palette: light bg=${light['--dsw-alias-bg-base']} fg=${light['--dsw-alias-label-primary']} · ` +
+      `dark bg=${dark['--dsw-alias-bg-base']} fg=${dark['--dsw-alias-label-primary']}\n`,
+  )
 }
 
 /** 在页面里跑的测量代码：把结果写进 <pre id="measure">。 */
@@ -423,7 +417,10 @@ if (args.includes('--check-layout')) {
 }
 
 if (args.includes('--check-contrast')) {
+  // 先确认配色是真的：缺 token 的渲染只能量出假数字。
+  assertPalette()
   const failures = []
+  const seen = []
   for (const theme of ['light', 'dark']) {
     for (const tab of ['accounts', 'models', 'diagnostics', 'config']) {
       const html = await renderHtml(600, tab, theme)
@@ -431,12 +428,18 @@ if (args.includes('--check-contrast')) {
       for (const [element, value] of Object.entries(contrast)) {
         // `missing` 表示这个 tab 没有该元素（例如账号页没有事实行），不算失败。
         if (typeof value !== 'number') continue
+        seen.push(`${theme}/${tab}/${element}`)
         if (value < MIN_CONTRAST) failures.push(`${theme}/${tab}/${element}=${value}`)
       }
     }
   }
+  // 一个数都没量到 = 选择器全部落空（类名改过），这时"ok"是最危险的结论。
+  if (seen.length === 0) {
+    process.stderr.write('contrast 门禁没有量到任何元素 —— 选择器与 markup 不匹配，结论不可信\n')
+    process.exit(1)
+  }
   if (failures.length === 0) {
-    process.stdout.write(`contrast ok: every measured element ≥ ${MIN_CONTRAST}:1\n`)
+    process.stdout.write(`contrast ok: ${seen.length} 个量测点全部 ≥ ${MIN_CONTRAST}:1（两种主题）\n`)
     process.exit(0)
   }
   process.stderr.write(`contrast below ${MIN_CONTRAST}:1 —\n  ${failures.join('\n  ')}\n`)

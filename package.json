@@ -111,7 +111,9 @@
     "audit": "node scripts/audit-architecture.mjs",
     "audit:layout": "node scripts/measure-layout.mjs --check-layout",
     "audit:contrast": "node scripts/measure-layout.mjs --check-contrast",
-    "audit:visual": "npm run audit:layout && npm run audit:contrast"
+    "audit:tokens": "node scripts/theme-tokens.mjs --check",
+    "audit:visual": "npm run audit:tokens && npm run audit:layout && npm run audit:contrast",
+    "tokens": "node scripts/theme-tokens.mjs --update"
   },
   "dsh": {
     "bundle": {

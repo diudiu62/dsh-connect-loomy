@@ -20,7 +20,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,54 +42,13 @@ function chromePath() {
 }
 
 /**
- * 宿主的 alias token 解析成字面颜色。
+ * 宿主设计 token 来自 `scripts/theme-tokens.mjs`（唯一实现，快照兜底）。
  *
- * `mode: 'light'` 取第一套（`:root`），`'dark'` 取 `body[data-ds-dark-theme]` 里的
- * 覆盖值。之所以要两套：卡片所有颜色都走 `--dsw-*` token，但"走 token"不等于
- * "暗色下能读"——必须真的在暗色里渲染一次。
+ * 搬出去的原因：这份副本拿不到主题包时 `return ''`，于是暗色截图实际是深底
+ * 加浅色兜底字，图和真实界面不是一回事；同样的静默降级还让对比度门禁在 CI 上
+ * 误报了一片 1.15/2.4。缺 token 现在直接抛错。
  */
-function hostTokens(mode = 'light') {
-  const checkout =
-    process.env['DSH_CHECKOUT'] ?? '/Users/benny/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh'
-  const bundle = join(checkout, 'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js')
-  if (!existsSync(bundle)) return ''
-  const source = readFileSync(bundle, 'utf8')
-
-  /** 某一个主题块里的 `--dsw-static-*` 定义。 */
-  const staticColoursIn = (text) => {
-    const map = new Map()
-    for (const match of text.matchAll(/(--dsw-static-[a-z0-9-]+):(#[0-9a-fA-F]{3,8})/gu)) {
-      if (!map.has(match[1])) map.set(match[1], match[2])
-    }
-    return map
-  }
-
-  // 暗色的 static 覆盖
-  const darkStart = source.indexOf('body[data-ds-dark-theme]{')
-  const lightStatic = staticColoursIn(darkStart === -1 ? source : source.slice(0, darkStart))
-  const darkStatic = darkStart === -1 ? new Map() : staticColoursIn(source.slice(darkStart))
-  const statics = mode === 'dark' ? new Map([...lightStatic, ...darkStatic]) : lightStatic
-
-  // alias 映射**每个 key 有两份**：浅色一份、暗色一份（暗色把 bg-base 指向深色阶）。
-  // 按 key 去重会永远取到浅色那份 —— 那一刻"暗色 token"就静默失效了。
-  const aliases = new Map()
-  for (const match of source.matchAll(/(--dsw-alias-[a-z0-9-]+):var\((--dsw-static-[a-z0-9-]+)\)/gu)) {
-    const list = aliases.get(match[1])
-    if (list === undefined) aliases.set(match[1], [match[2]])
-    else list.push(match[2])
-  }
-
-  const declarations = []
-  for (const [alias, targets] of aliases) {
-    const target = mode === 'dark' ? targets[targets.length - 1] : targets[0]
-    const colour = statics.get(target)
-    if (colour !== undefined) declarations.push(`${alias}:${colour};`)
-  }
-  if (declarations.length === 0) return ''
-  return mode === 'dark'
-    ? `body[data-ds-dark-theme]{${declarations.join('')}}`
-    : `:root{${declarations.join('')}}`
-}
+const { hostTokens } = await import(join(here, 'theme-tokens.mjs'))
 
 /* Fixtures: invented numbers only. */
 const PHONE_A = '13800000001'

@@ -466,6 +466,7 @@ schema 里的 `description`（"Loomy 平台 API 基地址"）才是他要找的�
 | 类型 / 架构 / 构建 / 测试 | `pnpm run check` | `.github/workflows/ci.yml` 的 `check` job |
 | 任何宽度都不横向溢出 | `pnpm run audit:layout` | `layout` job |
 | 两种主题下文字对比度 ≥ 4.5:1 | `pnpm run audit:contrast` | `layout` job |
+| 配色快照与主题包一致 | `pnpm run audit:tokens` | `check` job（`tests/theme-tokens.test.mjs`） |
 | 全部视觉门禁 | `pnpm run audit:visual` | 上面两步 |
 
 `check` job 是纯 Node（快），`layout` job 需要真实 Chrome（慢）——所以拆开：布局检查
@@ -509,3 +510,43 @@ node scripts/measure-layout.mjs --check-contrast     # 门禁：低于 4.5:1 退
 暗色的实现要点（写脚本时踩过）：宿主主题包里 **alias 映射有两份**（浅色一份、
 `body[data-ds-dark-theme]` 一份，暗色把 `bg-base` 指向深色阶）。按 key 去重会永远
 取到浅色那份，于是"暗色 token"静默失效、对比度和浅色一模一样。
+
+### 7.5.1 配色从哪来：`scripts/theme-tokens.mjs`
+
+渲染（截图、量布局）用的 `--dsw-alias-*` 字面颜色全部由 `scripts/theme-tokens.mjs`
+解析，**只有这一份实现**。解析优先级：
+
+1. `DSH_THEME_BUNDLE=<…/dsh-client-ui-theme/lib/client.js>` 显式指定；
+2. `DSH_CHECKOUT` 指向的 DSH 安装；
+3. 仓库自己的 `node_modules`；
+4. nvm / 全局 npm 里装的 DSH（优先当前 Node 版本）；
+5. 提交在仓库里的快照 `scripts/theme-tokens.json`。
+
+CI 里没有 DSH 安装，走第 5 步。**这一步踩过一次真实的坑**：上一版的两个脚本各自
+抄了一份 `hostTokens()`，拿不到主题包时 `return ''`，于是暗色渲染变成"深色底 +
+浅色兜底字"，对比度门禁在 CI 上稳定红出 24 条 `1.15` / `2.4` —— 全是环境缺件的
+假失败，和卡片本身毫无关系。现在的规则：
+
+- 缺 token 直接**抛错**，不再静默降级成空配色；
+- `--check-contrast` 开跑前先自检配色（必需 alias 在不在、深浅两份是否真的不同），
+  并把 `tokens: bundle|snapshot (版本)` 打进输出，红的时候能一眼看出量的是哪套色；
+- 一个量测点都没量到也算失败 —— 选择器全部落空时"ok"是最危险的结论。
+
+解析时有个容易漏的点：alias 的值有**四种**写法 —— 字面 hex（含 `#0000001a` 这种带
+alpha 的，**全部 border 都是它**）、`var(--dsw-static-*)`、`var(--dsw-alias-*)`、以及
+`color-mix(...)`。只认第二种时 114 个 alias 里只解析出 72 个，`border-l1..l4` 整族丢失，
+渲染页于是退回 `var(--dsw-alias-border-l2, rgba(15,23,42,.12))` 的浅色兜底 ——
+暗色下边框等于没有。`tests/theme-tokens.test.mjs` 用"alias 数量 ≥ 105"和"border 家族必须
+在"两条断言把这个坑钉住。
+
+主题包升级后重生成快照：
+
+```bash
+pnpm run tokens        # = node scripts/theme-tokens.mjs --update
+pnpm run audit:tokens  # 快照与本地主题包是否一致
+node scripts/theme-tokens.mjs --show   # 逐个 alias 打印 浅色 / 暗色
+```
+
+`tests/theme-tokens.test.mjs` 把可离线判定的部分钉在 `pnpm test` 里：快照有浅色暗色
+两套、卡片依赖的 alias 都在、成对的前景/背景在两种主题下都 ≥ 4.5:1、以及本机装了
+主题包时快照必须与它一致（否则门禁量的是上一次升级前的颜色）。
