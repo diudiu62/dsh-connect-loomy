@@ -151,6 +151,20 @@ export interface CreditsView {
    * UI 会在明细上方显示一句"余额暂时读不到"。
    */
   partial?: 'balance_unavailable'
+  /**
+   * 余额为什么读不到（上游原话）。
+   *
+   * 只标 `partial` 而不给原因，界面只能说"读不到"，用户无法判断是限流、
+   * 还是账号过期、还是插件坏了——这三件事的下一步动作完全不同。
+   */
+  partialReason?: string
+  /**
+   * 这个数字是**兜底来源**，不是完整的余额桶。
+   *
+   * `setting_info` 只给「可用积分」一个数：daily/reward/topup 的拆分与过期时钟
+   * 都没有。界面必须说明来源，否则用户会把一个数当成六桶齐全。
+   */
+  degraded?: 'setting_info'
 }
 
 /** One account row in the settings card (never carries a session). */
@@ -164,8 +178,16 @@ export interface AccountRowView {
   userId?: string
   origin: 'plugin' | 'desktop'
   addedAt?: number
-  /** True while the pool skips it. */
+  /** True while the pool skips it (permanent failures stay true). */
   unavailable: boolean
+  /**
+   * 为什么被跳过。
+   *
+   * `auth` 是登录态/密钥失效（等下去也不会好，要去重新登录），`points` 是额度
+   * 用光（充值后恢复），`temporary` 是限流/网络抖动（冷却结束自动回到池里）。
+   * 界面对三种给不同的标记——否则"轮换已跳过"会盖住"这个账号的密钥已经无效"。
+   */
+  unavailableKind?: 'auth' | 'points' | 'temporary'
   unavailableAt?: number
   unavailableCode?: string
   unavailableMessage?: string
@@ -304,6 +326,13 @@ export interface VendorStatusView {
     routes: string[]
     /** 上一次注册尝试的失败原因（如果是被拒绝的）。 */
     error?: string
+    /**
+     * 卡片要不要给「重新注册」按钮。
+     *
+     * 只有"注册被拒"才为 true；"被禁用/没登录/没有路由/双挂载"这类原因点了也没用，
+     * 修复动作在别处，按钮只会在那里变成误导。
+     */
+    retryable?: boolean
   }
   nextSteps?: string[]
   lastError?: UpstreamErrorView
@@ -379,6 +408,17 @@ export interface VendorDiagnosticsView {
   catalog: { total: number; enabled: number; refreshedAt: number | null }
   accounts: { total: number; healthy: number } | null
   lastError?: UpstreamErrorView
+}
+
+/** `POST /<vendor>/register` —— 「重新注册」按钮的载荷。 */
+export interface ProviderRegisterView {
+  ok: true
+  /** `null` 表示这套 surface 不追踪注册状态；真机上总是布尔值。 */
+  registered: boolean | null
+  /** 注册成功时挂上的 provider 路由；失败时保留失败前的那一份记录。 */
+  routes: string[]
+  /** 仍失败时的原因（宿主的英文原文已在这里翻成可执行文案）。 */
+  error?: string
 }
 
 /** `POST /<vendor>/refresh` */

@@ -104,6 +104,23 @@ function readFailure(body: unknown): { code: string; message: string } | undefin
  * flow, and rendering "the network died" for it would be a lie.
  */
 export async function requestVendor<T>(init: VendorRequestInit): Promise<TransportResult<T>> {
+  const result = await sendVendor<T>(init)
+  /*
+   * 令牌在 DSH 重启后轮换，而页面可能还是重启前打开的：宿主用 403
+   * `csrf_invalid` 回答，说明手里这枚已经过期。取一次 `/status` 里的新令牌
+   * 重发一次，用户不必为此刷新页面。只重试一次，且只在 POST 上（GET 不带令牌）。
+   */
+  if (result.kind !== 'failed' || result.code !== 'csrf_invalid') return result
+  if ((init.method ?? 'GET') !== 'POST') return result
+  const fresh = await fetchStatus(init.signal === undefined ? {} : { signal: init.signal })
+  if (fresh.kind !== 'ok') return result
+  const token = fresh.value.csrfToken
+  if (typeof token !== 'string' || token.length === 0 || token === init.csrf) return result
+  return sendVendor<T>({ ...init, csrf: token })
+}
+
+/** One POST/GET attempt; `requestVendor` wraps it with the CSRF self-heal. */
+async function sendVendor<T>(init: VendorRequestInit): Promise<TransportResult<T>> {
   const method = init.method ?? 'GET'
   const csrf = typeof init.csrf === 'string' && init.csrf.length > 0 ? init.csrf : null
   if (method === 'POST' && csrf === null) {
@@ -226,11 +243,17 @@ export function normalizeImportDocument(value: unknown): unknown {
   const asRecord = (candidate: unknown): candidate is Record<string, unknown> =>
     typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
 
-  /** One entry: our camelCase plus the desktop file's lowercase spelling. */
+  /**
+   * One entry: our camelCase plus the desktop file's lowercase spelling —
+   * 小浣熊客户端的 `auth.json` 用的是 `access_token`，直接粘它也要能归一。
+   */
   const toAccount = (item: unknown): Record<string, unknown> | undefined => {
     if (!asRecord(item)) return undefined
-    const session = item['session']
-    if (typeof session !== 'string' || session.length < 16 || /\s/u.test(session)) return undefined
+    const session = [item['session'], item['access_token'], item['accessToken'], item['token']].find(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length >= 16 && !/\s/u.test(candidate.trim()),
+    )
+    if (session === undefined) return undefined
+    const material = session.trim()
     const rawPhone = typeof item['phone'] === 'string' && item['phone'].length > 0 ? item['phone'] : undefined
     const masked = rawPhone !== undefined && rawPhone.includes('*')
     const userIdRaw = item['userId'] ?? item['userid']
@@ -238,7 +261,7 @@ export function normalizeImportDocument(value: unknown): unknown {
     const rawSlot = item['slot']
     return {
       ...(typeof rawSlot === 'number' && Number.isInteger(rawSlot) && rawSlot >= 1 ? { slot: rawSlot } : {}),
-      session,
+      session: material,
       ...(rawPhone === undefined || masked ? {} : { phone: rawPhone }),
       ...(userId === undefined ? {} : { userId }),
       ...(masked ? { label: rawPhone as string } : {}),

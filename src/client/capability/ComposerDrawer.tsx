@@ -18,8 +18,9 @@ import { useClampToViewport } from './clamp.js'
 import type { AccountsView, CreditsView, PoolStateView, VendorStatusView } from '../../shared/views.js'
 import { IconButton } from '../components/common.js'
 import type { CardT } from '../components/types.js'
-import { formatCredit, headlineField, perAccountAmount } from '../format.js'
+import { formatCredit, headlineField } from '../format.js'
 import { requestVendor } from '../transport.js'
+import { accountEntryAmount, useAccountCredits, type AccountCreditEntry } from './useAccountCredits.js'
 
 export interface ComposerDrawerProps {
   t: CardT
@@ -33,6 +34,18 @@ export interface ComposerDrawerProps {
   /** 触发它的徽标：点它不算"点外面"（开合由它自己负责）。 */
   triggerRef?: React.RefObject<HTMLElement>
 }
+
+/**
+ * 一个原因一个说法。
+ *
+ * 键名集中在这里而不是散在 JSX 里：账号页用的是同一套档案（`accounts.benched*`），
+ * 两处的词必须能对上，否则抽屉说"登录已失效"、设置页说"轮换已跳过"。
+ */
+export const BENCHED_LABEL = {
+  auth: 'drawer.benchedAuth',
+  points: 'drawer.benchedPoints',
+  temporary: 'drawer.benched',
+} as const
 
 export function ComposerDrawer({
   t,
@@ -69,6 +82,12 @@ export function ComposerDrawer({
       try {
         const [accountsResult, creditsResult, poolResult] = await Promise.all([
           requestVendor<AccountsView>({ vendorId: vendor.id, suffix: 'accounts' }),
+          /*
+           * 这里**只读总额**（`accounts=1` 由逐账号懒加载负责，见 needRefresh）。
+           *
+           * 早先是 `accounts=1` 一次拿全：90 个账号要 5 秒以上，抽屉在那段时间里
+           * 是一列空的 `—`。现在逐账号走 `credits/account`，一行一条、随到随填。
+           */
           requestVendor<CreditsView>({
             vendorId: vendor.id,
             suffix: 'credits',
@@ -209,6 +228,36 @@ export function ComposerDrawer({
   }
 
   const rows = accounts?.accounts ?? []
+  /*
+   * 逐账号额度懒加载：账号行先画出来，数字一行一行到货。
+   * 账号集合没变（内容相同）时不会重复请求；宿主侧还有 60 秒 per-account memo。
+   */
+  const { entries: perAccountCredits } = useAccountCredits({
+    vendorId: vendor.id,
+    accountIds: rows.map((row) => row.id),
+    enabled: vendor.capabilities.credits.kind !== 'none',
+  })
+  /*
+   * 合计也用**已经到货的**逐行结果自己累加，而不是等宿主一次性算完。
+   *
+   * 这就是"读到一个更新一个"：每行数字回来，合计跟着涨，进度跟着走。宿主那条
+   * `credits?accounts=1` 仍是权威口径（CLI 与胶囊用），但它要等全部账号，不能
+   * 拿来做这个数字。
+   */
+  const headlineKey = headlineField(vendor.capabilities.credits)?.key
+  const arrived = rows.map((row) => perAccountCredits[row.id]).filter((entry) => entry !== undefined)
+  const readableRows = arrived.filter((entry) => entry.error === undefined)
+  const totalRead = rows.length === 0 ? 0 : arrived.length
+  const totalAmount =
+    readableRows.length === 0
+      ? undefined
+      : readableRows.reduce(
+          (sum, entry) =>
+            sum + (headlineKey !== undefined && typeof entry.fields[headlineKey] === 'number'
+              ? entry.fields[headlineKey]
+              : 0),
+          0,
+        )
   const rotating = accounts?.rotating === true
   // 轮换时 activeId 不代表"刚花了谁的钱"，用 lastUsedId 标出真实的那一笔。
   const lastUsedId = accounts?.lastUsedId
@@ -267,6 +316,33 @@ export function ComposerDrawer({
           {t('drawer.creditsFailed', { message: creditsError })}
         </div>
       )}
+      {/*
+        余额被限流、明细还能读：整列 `—` 必须有一句解释。
+        没有这句时，"积分不见了"和"账号坏了"在界面上完全一样。
+      */}
+      {credits?.degraded === 'setting_info' ? (
+        <div className="dcss-hint" data-dcss-cap="drawer-credits-degraded">
+          {t('drawer.degraded')}
+        </div>
+      ) : null}
+      {credits?.partial === 'balance_unavailable' ? (
+        <div className="dcss-drawer-error" role="status" data-dcss-cap="drawer-credits-partial">
+          {t('drawer.partial', { message: credits.partialReason ?? 'HTTP 403' })}
+        </div>
+      ) : null}
+      {rows.length === 0 ? null : (
+        <div className="dcss-drawer-total" data-dcss-cap="drawer-total">
+          <span className="dcss-drawer-total-label">{t('drawer.totalLabel')}</span>
+          <strong className="dcss-drawer-total-amount">
+            {totalAmount === undefined ? '…' : formatCredit(totalAmount).text}
+          </strong>
+          {totalRead < rows.length ? (
+            <span className="dcss-drawer-total-progress" data-dcss-cap="drawer-progress">
+              {t('drawer.progress', { done: totalRead, total: rows.length })}
+            </span>
+          ) : null}
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="dcss-drawer-label">
           {vendor.credential.found ? t('drawer.empty') : t('drawer.signedOut')}
@@ -274,8 +350,13 @@ export function ComposerDrawer({
       ) : (
         <div className="dcss-drawer-list">
           {rows.map((row, index) => {
-            const amount = perAccountAmount(credits, row.id, key)
-            const mine = credits?.perAccount?.find((entry) => entry.accountId === row.id)
+            /*
+             * 三种状态要分开：还没到货（`…`）、读到了（数字）、读失败（`—`）。
+             * 懒加载之后"没到货"会持续几百毫秒，把它画成 `—` 等于宣告失败。
+             */
+            const entry: AccountCreditEntry | undefined = perAccountCredits[row.id]
+            const pending = entry === undefined
+            const amount = accountEntryAmount(entry, key)
             const formatted = formatCredit(amount ?? null)
             const isActive = !rotating && accounts?.activeId === row.id
             return (
@@ -296,11 +377,28 @@ export function ComposerDrawer({
                   */}
                   <span
                     className="dcss-drawer-credits"
-                    title={mine?.error ?? creditsError ?? t('drawer.creditsMissing')}
+                    data-dcss-cap={pending ? 'row-pending' : entry?.error === undefined ? 'row-amount' : 'row-error'}
+                    title={entry?.error ?? creditsError ?? t('drawer.creditsMissing')}
                   >
-                    {mine?.error === undefined ? formatted.text : '—'}
+                    {pending ? '…' : entry?.error === undefined ? formatted.text : '—'}
                   </span>
-                  {row.unavailable ? <span className="dcss-drawer-badge">{t('drawer.benched')}</span> : null}
+                  {/*
+                    三种"被跳过"必须三种说法：401/密钥无效要去重新登录，额度不足要
+                    充值，限流等一会儿就好。共用一个"轮换已跳过"时，用户唯一能做的
+                    动作（重新登录）被这句话藏起来了。
+                  */}
+                  {row.unavailable ? (
+                    <span
+                      className={
+                        row.unavailableKind === 'auth'
+                          ? 'dcss-drawer-badge dcss-drawer-badge-bad'
+                          : 'dcss-drawer-badge'
+                      }
+                      title={row.unavailableMessage ?? undefined}
+                    >
+                      {t(BENCHED_LABEL[row.unavailableKind ?? 'temporary'])}
+                    </span>
+                  ) : null}
                   {row.id === lastUsedId && !row.unavailable ? (
                     <span className="dcss-drawer-lastused" title={t('accounts.lastUsedHint')}>
                       {t('accounts.lastUsed')}

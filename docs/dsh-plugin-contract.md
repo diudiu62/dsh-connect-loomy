@@ -666,6 +666,7 @@ if (!response.ok) throw new Error(`HTTP ${response.status}`)
 | `diagnostics` | `GET` | `diagnostics: true` |
 | `diagnostics/probe` | `POST` | `diagnostics: true` 且实现了 `probeEndpoints` |
 | `recheck` | `POST` | 有身份概念（`accounts`/`login`/`diagnostics` 任一） |
+| `register` | `POST` | surface 追踪 provider 注册状态（真机挂载必满足；CLI 没有） |
 | `credits` | `GET`（`?force=1` 绕过缓存） | `credits.kind !== 'none'` |
 | `catalog` | `GET` | `catalog.selection` |
 | `refresh` / `save` | `POST` | `catalog.selection` |
@@ -697,6 +698,14 @@ if (!response.ok) throw new Error(`HTTP ${response.status}`)
   两份实现（同一进程、同一 origin，不构成隔离），已删除。
 - 业务失败一律是 **HTTP 200 + `{ ok:false, error:{ code, message } }`**（CSRF/方法/媒体类型这类
   协议级拒绝才用 4xx）。客户端据此把上游原文展示给用户，而不是显示"加载失败"。
+
+`POST /<vendor>/register`（0.3.1 起）：卡片「重新注册」按钮的后端。注册被拒（provider
+名被别的插件占用、`INACTIVE_EFFECT`、句柄失效）之后，registry 的自动 reconcile 会
+被"签名没变"的幂等阀挡住，错误说明永远停在 `/status` 里——这条路由强制再走一遍
+注册（手动触发绕开幂等阀、清零回收退避、失效句柄降级为全新注册），并把注册后的
+`ProviderState` 原样回给卡片。`ProviderState.retryable` 标记哪些原因值得重试：
+"被禁用 / 没有登录态 / 没有路由 / 双挂载让位"为 `false`，卡片不渲染按钮——
+一个必然失败的按钮正是死控件。
 
 出处：`src/core/http.ts`、`src/core/routes.ts`、`src/core/registry.ts`；
 可执行断言：`tests/host/routes.test.mjs`、`tests/host/vendor-contract.test.mjs`。

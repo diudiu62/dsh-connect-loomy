@@ -151,6 +151,7 @@ export const ACME_DESCRIPTOR: VendorDescriptor = {
 | 账号存储（slot 路由 / 单路由、去重、健康标记、导出导入） | `core/accounts.ts#createAccountsStore` |
 | 目录缓存 + 选择 + 能力覆盖 + 落盘 | `core/catalog.ts#createCatalogStore` |
 | 积分缓存 + 单飞 + 逐账号合并 | `core/credits.ts#createCreditsStore` |
+| 零余额暂停 / 余额回来解除（`onRead` 里必须接这条） | `core/credits.ts#applyZeroPoints` |
 | 池挑选 + 冷却 + 失败分类 | `core/pool.ts#createAccountPool` |
 | 候选文件读取 + TTL + 过期判定 + 诊断报告 | `core/credential.ts#createCredentialDriver` |
 | 轮换开关 / 当前账号偏好 | `core/preferences.ts#createVendorPreferences` |
@@ -172,6 +173,10 @@ async resolveCredential(route: string) {
 
 签出时抛 `new LlmError(message, 'MISSING_CREDENTIAL')`，message 要可执行（"请打开 X 客户端登录后重试"），不要写"未知错误"。
 
+**全池被禁时的行为是契约的一部分**：轮换开启、所有账号都在冷却里时，返回"最早几点自动恢复"的可读错误（`pool.pick()` 的 `none-healthy` 结果带 `recoverAt`），**不要**挑一个被禁账号硬试——2026-11-23 小浣熊 8 个账号连环吃账号级风控 `200108`，诱因之一就是全池冷却还继续发（见 `docs/raccoon-upstream.md` §10）。错误 code 用 `POOL_COOLING`（`core/pool.ts`），**不要**用 `MISSING_CREDENTIAL`：冷却时用户是已登录的，选择器分组和卡片都该保持可见，code 与可见性不能互相矛盾。
+
+此外 `resolveCredential` 可以返回 `deviceId`（该账号自己的设备标识）：`prepareHeaders` 的第三个参数会原样收到，供逐账号设备头使用。
+
 ### 3.4 `chat`：只写协议差异
 
 ```ts
@@ -183,13 +188,19 @@ const chat: ChatDriver = {
   credentialName: 'Acme desktop session',
   // 每个路由的模型必须标上该路由 id，否则选择器分组和"这条会话用哪个账号"都会错
   toModel: (model, { baseUrl, route }) => ({ id: model.id, provider: route, api: 'openai-completions', /* … */ }),
-  prepareHeaders: (request, headers) => { headers.set('X-Client-Version', version()); return headers },
+  // 第三个参数是本次调用所选账号的上下文（accountId + deviceId），由 core 在
+  // 凭据解析之后现填；逐账号的设备标识从这里取，不要退回全局单值。
+  prepareHeaders: (request, headers, context) => {
+    headers.set('X-Client-Version', version())
+    if (context?.deviceId !== undefined) headers.set('X-Client-Device-ID', context.deviceId)
+    return headers
+  },
   // 可选：把"看起来像截断"的终止失败升级成可执行的"登录态失效"
   async explainAmbiguousFailure() { /* … */ },
 }
 ```
 
-`core/provider.ts` 已经负责：inert credential plane、`apiKey` 回传、profile 装配、图片预算、**两个** stream 入口的包装（`stream()` 与 `prepareCall().stream()`）、并发归属、内容才算成功、未输出才重试。**不要再写这些。**
+`core/provider.ts` 已经负责：inert credential plane、`apiKey` 回传、profile 装配、图片预算、**两个** stream 入口的包装（`stream()` 与 `prepareCall().stream()`）、并发归属、内容才算成功、未输出才重试、**每账号并发闸门**（`VendorRuntime.concurrency()` 声明上限；≤0 = 不限；官方客户端几路并发就声明几——小浣熊是 2）。**不要再写这些。**
 
 ---
 
@@ -202,6 +213,7 @@ const chat: ChatDriver = {
 | `diagnostics` | `diagnostics: true` |
 | `diagnostics/probe` | `diagnostics: true` 且实现了 `probeEndpoints` |
 | `recheck` | 有身份概念（`accounts`/`login`/`diagnostics` 任一） |
+| `register` | surface 追踪 provider 注册状态（registry 挂载自动满足；CLI 没有） |
 | `config` | `GET`/`POST`，宿主提供 settings 服务时（CLI 没有，所以不注册） |
 | `credits` | `credits.kind !== 'none'` |
 | `catalog` / `refresh` / `save` | `catalog.selection` |
@@ -336,7 +348,9 @@ assert.deepEqual(adapters, [['acme']])
 
 - [ ] `src/vendors/<id>/constants.ts`：冻结 id、显示名、accent、配置 schema/defaults、额度桶
 - [ ] `src/vendors/<id>/index.ts`：descriptor + `create()`，六个 driver 按能力声明到位
-- [ ] `resolveCredential` 是唯一决策点，返回 `accountId`
+- [ ] `resolveCredential` 是唯一决策点，返回 `accountId`（有必要时带 `deviceId`）
+- [ ] `concurrency()` 声明了该上游能容忍的每账号并发（没有证据就 `undefined`，core 不设闸）
+- [ ] 桌面端身份（如果有）也返回 `accountId: 'desktop'` 并在 `accounts.markUnavailable/markHealthy` 里接 `core/pool.ts` 的 `createDesktopBench`——不能持久化 ≠ 不能记着
 - [ ] `chat.toModel` 给每个路由打上该路由 id
 - [ ] `src/index.ts` 的 `mountVendors()` 加一行
 - [ ] 三类测试：路由生成、provider 注册、协议纯函数

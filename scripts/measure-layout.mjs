@@ -189,6 +189,46 @@ const MEASURE = `
         overflowsRight: rect.right > window.innerWidth + 1,
       }
     })(),
+    // 浮层（portal 到 body 的模态面板）：必须完整落在视口内。
+    //
+    // 用户报的真实事故：浮层曾以"视口中心"居中，但它的祖先带着 transform，
+    // fixed 退化为以那一行输入框为包含块，下半截落到视口外，要滚页面才看得到。
+    // 这条量的是"边界到视口边的距离"，任何一边为负就是越界。
+    sheet: (() => {
+      const el = document.querySelector('.dcss-sheet')
+      if (el === null) return null
+      const rect = el.getBoundingClientRect()
+      const inside = (value, limit) => Math.round(value) >= 0 && Math.round(value) <= limit
+      return {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        overflowsTop: rect.top < 0,
+        overflowsBottom: rect.bottom > window.innerHeight + 1,
+        overflowsLeft: rect.left < 0,
+        overflowsRight: rect.right > window.innerWidth + 1,
+        fullyVisible:
+          inside(rect.top, window.innerHeight) &&
+          inside(rect.left, window.innerWidth) &&
+          rect.bottom <= window.innerHeight + 1 &&
+          rect.right <= window.innerWidth + 1,
+        /*
+         * 控件必须继承面板的字号。
+         *
+         * 面板里的按钮/输入框都写 font:inherit——那是对的，但只有在容器提供了
+         * 字号时才成立。浮层曾没有字号，于是里面所有按钮渲染成浏览器默认 16px，
+         * 在 13px 的正文旁边像放大了两号（用户报的"按钮样式不对"）。
+         */
+        fontSize: Math.round(parseFloat(getComputedStyle(el).fontSize) * 100) / 100,
+        controlSizes: [...new Set(
+          [...el.querySelectorAll('.dcss-button')]
+            .map((node) => Math.round(parseFloat(getComputedStyle(node).fontSize) * 100) / 100),
+        )],
+      }
+    })(),
     // 溢出时找出具体是谁：只报容器名等于让人猜。
     overflowDetail: [...document.querySelectorAll('.dcss-card *')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0)
@@ -284,6 +324,54 @@ async function renderHtml(width, view, mode = 'light') {
         await new Promise((resolve) => setTimeout(resolve, 120))
         // 抽屉向上、向左展开，所以给它左侧与下方的空间。
         markup = `<div style="padding:250px 0 0 300px">${container.innerHTML}</div>`
+        // 浮层 portal 到 body：单独抓它（含定位层），放到页里供 sheet 度量。
+        const sheet = document.querySelector('.dcss-sheet-layer')
+        if (sheet !== null) markup += sheet.outerHTML
+      },
+      { useProjection: () => ({ next: { provider: 'loomy' } }) },
+    )
+  } else if (view === 'sheet-account' || view === 'sheet-config') {
+    // 抽屉 → ⚙ 打开浮层：portal 的 DOM 不在容器里，从 document 抓。
+    const tab = view === 'sheet-account' ? 'account' : 'config'
+    let sheetMarkup = ''
+    await renderCard(
+      composerEntry,
+      t,
+      async ({ container }) => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        const pill = document.querySelector('.dcss-pill')
+        pill?.dispatchEvent(new (globalThis.window.MouseEvent)('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        const gear = document.querySelector('[data-dcss-cap="drawer-open-config"]')
+        gear?.dispatchEvent(new (globalThis.window.MouseEvent)('click', { bubbles: true }))
+        for (let attempt = 0; attempt < 40 && document.querySelector(`[role="tab"][aria-selected="true"]`)?.textContent?.trim() !== ({ account: '账号', config: '配置' })[tab]; attempt += 1) {
+          const target = [...document.querySelectorAll('[role="tab"]')].find(
+            (element) => element.textContent?.trim() === ({ account: '账号', config: '配置' })[tab],
+          )
+          target?.dispatchEvent(new (globalThis.window.MouseEvent)('click', { bubbles: true }))
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        /*
+         * 输入框那一坨单独包一层 `transform` —— 这不是装饰，是**复现宿主的
+         * 布局条件**：composer 行与弹出动画大量使用 transform/filter，而它们会
+         * 把 `position: fixed` 的包含块从视口换成自己。浮层曾经住在这一层里，
+         * 于是以 60px 高的一行为中心居中、下半截出视口，用户要滚页面才看得全。
+         * 现在浮层 portal 到 body，所以这段 DOM 只负责摆徽标与抽屉，
+         * `.dcss-sheet` 是它的兄弟节点——门禁量的正是这个相对关系。
+         */
+        const sheet = document.querySelector('.dcss-sheet-layer')
+        sheetMarkup = sheet === null ? '' : sheet.outerHTML
+        /*
+         * 两点说明，免得后来人把这段当成"随手拼的 HTML"：
+         *
+         * 1. 徽标与抽屉放在带内边距的容器里，是为了让抽屉有展开空间；
+         * 2. 浮层单独拼一份到顶层，因为**它本来就生在 body 上**（portal）。
+         *    "浮层必须是 composer 子树的兄弟、而不是后代"这条结构约束由
+         *    `tests/client/drawer.test.mjs` 钉住——静态 HTML 没法证明 DOM 归属，
+         *    只能用几何量它是否完整落在视口内。
+         */
+        markup = `<div style="padding:200px 0 0 300px">${container.innerHTML}</div>` + sheetMarkup
       },
       { useProjection: () => ({ next: { provider: 'loomy' } }) },
     )
@@ -342,7 +430,9 @@ function measure(html) {
         '--disable-gpu',
         `--user-data-dir=${profile}`,
         '--no-sandbox',
-        '--window-size=1200,2400',
+        // 高度可被 DCSS_MEASURE_WINDOW 覆盖：浮层门禁需要矮视口才能复现
+        // “下半截出视口”的事故场景（2400px 的高窗量不出这个）。
+        `--window-size=${process.env.DCSS_MEASURE_WINDOW ?? '1200,2400'}`,
         '--virtual-time-budget=2500',
         '--dump-dom',
         `file://${temp}`,
@@ -408,8 +498,69 @@ if (args.includes('--check-layout')) {
       }
     }
   }
+  // 浮层：抽屉点开 ⚙ 后的完整面板，portal 在 body 上，必须整个落在视口内。
+  // 用户报的事故就是它下半截出了视口；这条把"看得全"变成可回归的门禁。
+  // 两档视口：高窗（内容再长也装得下，量不出问题）与矮窗 520px——正是
+  // "浮层高度 > 视口"的事故场景，flex + max-height 必须把它压回视口内。
+  /** 面板正文的设计字号；与 `.dcss-card` 同源（`styles.ts` 的排版上下文）。 */
+  const PANEL_FONT_PX = 13
+  const SHEET_VIEWPORTS = [
+    { height: 2400, label: '高窗' },
+    { height: 520, label: '矮窗520' },
+  ]
+  for (const view of ['sheet-account', 'sheet-config']) {
+    for (const viewport of SHEET_VIEWPORTS) {
+      process.env.DCSS_MEASURE_WINDOW = `900,${viewport.height}`
+      const html = await renderHtml(900, view, 'light')
+      const result = measure(html)
+      if (result.sheet === null) {
+        problems.push(`${view}/${viewport.label}: 浮层没有渲染出来（portal 目标或打开路径变了）`)
+        continue
+      }
+      /*
+       * 字号一致性：浮层里每个控件都必须是面板字号。
+       *
+       * 这条守的是真实事故：浮层漏了排版上下文，所有按钮/输入框退回 16px，
+       * 而正文是 13px——看起来"样式不对"，但既没有溢出也没有报错。
+       */
+      /*
+       * 字号基准是**设计值**，不是"浮层根节点当前算出来的值"。
+       *
+       * 后者没意义：漏了排版上下文时，根节点与按钮会一起退回浏览器默认 16px，
+       * 两者"相等"，检查就永远过。面板正文的设计字号是 13px（与设置卡片同源），
+       * 任何超过它的按钮都是上下文丢失——那正是这次的事故。
+       */
+      if (result.sheet.fontSize !== PANEL_FONT_PX) {
+        problems.push(
+          `${view}/${viewport.label}: 面板字号 ${result.sheet.fontSize}px ≠ ${PANEL_FONT_PX}px（浮层缺少排版上下文）`,
+        )
+      }
+      const buttonSizes = result.sheet.controlSizes ?? []
+      const oversized = buttonSizes.filter((size) => size > PANEL_FONT_PX)
+      if (oversized.length > 0) {
+        problems.push(
+          `${view}/${viewport.label}: 按钮字号 ${oversized.join(' / ')}px > ${PANEL_FONT_PX}px（控件没有继承面板字号）`,
+        )
+      }
+      if (!result.sheet.fullyVisible) {
+        const s2 = result.sheet
+        problems.push(
+          `${view}/${viewport.label}: 浮层越界 — ` +
+            [
+              s2.overflowsTop ? `top=${s2.top}` : null,
+              s2.overflowsBottom ? `bottom=${s2.bottom}` : null,
+              s2.overflowsLeft ? `left=${s2.left}` : null,
+              s2.overflowsRight ? `right=${s2.right}` : null,
+            ]
+              .filter(Boolean)
+              .join(' ') +
+            `（${s2.width}×${s2.height}）`,
+        )
+      }
+    }
+  }
   if (problems.length === 0) {
-    process.stdout.write(`layout ok: ${WIDTHS.length} 宽度 × ${TABS.length} tab，无溢出\n`)
+    process.stdout.write(`layout ok: ${WIDTHS.length} 宽度 × ${TABS.length} tab + 浮层两页×两视口，无溢出\n`)
     process.exit(0)
   }
   process.stderr.write(`layout regression —\n  ${problems.join('\n  ')}\n`)

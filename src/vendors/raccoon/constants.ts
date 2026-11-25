@@ -25,11 +25,54 @@ export const DEFAULT_RACCOON_BASE_URL = 'https://xiaohuanxiong.com/api/web/llm/v
 /** 只读积分余额接口。 */
 export const DEFAULT_RACCOON_POINTS_URL = 'https://xiaohuanxiong.com/api/web/points/v1/balance'
 
-/** `X-Client-Platform` 的取值，桌面端就是这么发的。 */
-export const RACCOON_CLIENT_PLATFORM = 'desktop'
+/**
+ * 设置摘要接口——**余额的备用来源**。
+ *
+ * `points/v1/balance` 会对账号做路径级风控（实测 HTTP 403、空 body、nginx
+ * `X-TT-System-Error: 3`），而同一个 token 打 `office/v3/setting_info` 是 200，
+ * 响应里就有 `available_points`——官方客户端的缓存里正是这条。所以余额读不到时
+ * 退一步拿这个数字：只有「可用」一个桶，但比整块 `—` 有用得多。
+ */
+export const DEFAULT_RACCOON_SETTING_INFO_URL = 'https://xiaohuanxiong.com/api/web/office/v3/setting_info'
 
-/** `X-Client-Version` 兜底值（实测的 app 版本，2026-11-10）。 */
-export const DEFAULT_RACCOON_CLIENT_VERSION = '2.0.0'
+/**
+ * `X-Client-Platform` 的取值，按桌面端主进程的映射来
+ * （asar `desktopDeviceIdentity.js`：darwin → `desktop-macos`，win32 →
+ * `desktop-windows`，linux → `desktop-linux`）。
+ *
+ * 旧常量 `'desktop'` 是 2.0.0 时代渲染层 UA 解析不到时的兜底值；把本机装着的
+ * 1.2.0 客户端拆开后，主进程发给网关的从来都是带平台的值。风控按这个头聚类，
+ * 发对值才不会自成一档。
+ */
+export function raccoonClientPlatform(platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'darwin') return 'desktop-macos'
+  if (platform === 'win32') return 'desktop-windows'
+  if (platform === 'linux') return 'desktop-linux'
+  return 'desktop'
+}
+
+/**
+ * `X-Client-Version` 的兜底值 = 本机安装的桌面客户端版本
+ * （asar `package.json` 的 `version`，2026-11-23 实测 `1.2.0`，与
+ * `Info.plist` 的 `CFBundleShortVersionString` 一致）。
+ *
+ * 运行时优先读真实安装的客户端（`app-version.ts`），读不到才落回这里；
+ * 用户配置的 `clientVersion` 又优先于检测值。
+ */
+export const DEFAULT_RACCOON_CLIENT_VERSION = '1.2.0'
+
+/**
+ * `X-Client-Name`：asar `package.json` 的 `clientName`（产品标识，不是包名）。
+ * 桌面端主进程每次请求都会带；缺了它，流量在风控眼里就少一个官方特征。
+ */
+export const RACCOON_CLIENT_NAME = 'raccoon-work'
+
+/**
+ * `X-Client-Page`：桌面端没有页面上下文的调用发 `background`
+ * （asar `requestHeaders.js` 的 `normalizeClientPage` 兜底值）。插件的调用
+ * 全部是后台调用，照发。
+ */
+export const RACCOON_CLIENT_PAGE = 'background'
 
 /** 目录里缺 `params.context_window` 时的兜底上下文档位。 */
 export const RACCOON_FALLBACK_CONTEXT = 128_000

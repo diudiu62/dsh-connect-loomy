@@ -34,6 +34,8 @@ export type CardLocaleKey =
   | 'card.statusError'
   | 'card.noCapabilities'
   | 'card.providerMissing'
+  | 'card.reregister'
+  | 'card.registering'
   | 'tabs.aria'
   | 'tabs.config'
   | 'tabs.account'
@@ -52,6 +54,7 @@ export type CardLocaleKey =
   | 'config.group.cache'
   | 'config.group.credits'
   | 'config.group.models'
+  | 'config.group.limits'
   | 'config.overridden'
   | 'config.reset'
   | 'config.save'
@@ -96,6 +99,8 @@ export type CardLocaleKey =
   | 'accounts.choose'
   | 'accounts.active'
   | 'accounts.benched'
+  | 'accounts.benchedAuth'
+  | 'accounts.benchedPoints'
   | 'accounts.rename'
   | 'accounts.more'
   | 'accounts.lastUsed'
@@ -142,6 +147,7 @@ export type CardLocaleKey =
   | 'credits.failed'
   | 'credits.fetchedAt'
   | 'credits.balanceUnavailable'
+  | 'credits.degraded'
   | 'credits.total'
   | 'credits.perAccount'
   | 'credits.perAccountMissing'
@@ -301,16 +307,25 @@ export type CardLocaleKey =
   | 'drawer.refreshHint'
   | 'drawer.refreshing'
   | 'drawer.benched'
+  | 'drawer.benchedAuth'
+  | 'drawer.benchedPoints'
   | 'drawer.accountFallback'
   | 'drawer.signedOut'
   | 'drawer.desktopHint'
   | 'drawer.creditsMissing'
   | 'drawer.creditsFailed'
+  | 'drawer.partial'
+  | 'drawer.degraded'
+  | 'drawer.totalLabel'
+  | 'drawer.progress'
   // ── composer pill ────────────────────────────────────────────────────────
   | 'composer.pill'
   | 'composer.pillBare'
   | 'composer.pillTitle'
+  | 'composer.pillTitlePartial'
   | 'composer.pillPending'
+  | 'composer.pillFailed'
+  | 'composer.pillPartial'
   // ── shared vocabulary ────────────────────────────────────────────────────
   | 'common.loading'
   | 'common.refresh'
@@ -352,6 +367,8 @@ export const en: Record<CardLocaleKey, string> = {
   'tab.label': 'Desktop',
   'card.title': 'DSH Connect Desktop',
   'card.providerMissing': 'This client is not registered in the model picker yet — the reason is below.',
+  'card.reregister': 'Register again',
+  'card.registering': 'Registering…',
   'card.subtitle': 'Models from the desktop clients signed in on this machine, plus a read-only credits overview.',
   'card.empty.title': 'No desktop client detected',
   'card.empty.body':
@@ -402,6 +419,8 @@ export const en: Record<CardLocaleKey, string> = {
   'accounts.choose': 'Use this account',
   'accounts.active': 'in use',
   'accounts.benched': 'skipped by rotation',
+  'accounts.benchedAuth': 'sign-in expired',
+  'accounts.benchedPoints': 'out of points',
   'accounts.rename': 'Rename',
   'accounts.more': 'More actions',
   'accounts.lastUsed': 'last success',
@@ -448,6 +467,8 @@ export const en: Record<CardLocaleKey, string> = {
   'credits.failed': 'Could not read credits: {message}',
   'credits.balanceUnavailable':
     'The balance endpoint is rate-limited right now (HTTP 403), so the totals are hidden — the ledger below is live.',
+  'credits.degraded':
+    'Only the available total is shown — it comes from the settings summary, because the per-bucket endpoint is rate-limited. Daily / reward / top-up breakdown is unavailable.',
   'credits.fetchedAt': 'Read at {time}',
   'credits.total': 'Total (all accounts)',
   'credits.perAccount': 'Per account',
@@ -545,6 +566,7 @@ export const en: Record<CardLocaleKey, string> = {
   'config.group.cache': 'Cache',
   'config.group.credits': 'Points',
   'config.group.models': 'Models & capabilities',
+  'config.group.limits': 'Rate limits',
   'config.overridden': 'changed',
   'config.reset': 'Reset to default',
   'config.save': 'Save',
@@ -630,16 +652,26 @@ export const en: Record<CardLocaleKey, string> = {
   'drawer.refreshHint': 'Re-read the balances from the vendor (bypasses the cache).',
   'drawer.refreshing': 'Reading…',
   'drawer.benched': 'skipped by rotation',
+  'drawer.benchedAuth': 'sign-in expired',
+  'drawer.benchedPoints': 'out of points',
   'drawer.accountFallback': 'Account {index}',
   'drawer.signedOut': 'Not signed in. Open the desktop client and sign in once.',
   'drawer.desktopHint': 'Owned by the desktop client — sign out there to remove it.',
   'drawer.creditsMissing': 'No points figure for this account yet — press the refresh button to read it.',
   'drawer.creditsFailed': 'Points could not be read: {message} — press the refresh button to retry.',
+  'drawer.partial': 'The balance endpoint is rate limited ({message}), so the per-account figures are missing; the ledger still loads.',
+  'drawer.degraded': 'Only the available total is shown (from the settings summary): the per-bucket endpoint is rate limited.',
+  'drawer.totalLabel': 'Total',
+  'drawer.progress': '{done}/{total} read',
   // Composer pill
   'composer.pill': '{vendor} · {amount} pts',
-  'composer.pillBare': '{vendor}',
-  'composer.pillTitle': '{vendor} credits — available {available}. Click to refresh.',
-  'composer.pillPending': '{vendor} credits are still loading. Click to refresh.',
+  'composer.pillBare': '—',
+  'composer.pillTitle': '{vendor} credits — {available} in total across accounts. Click for the per-account list.',
+  'composer.pillTitlePartial':
+    '{vendor} credits — {available} counted across readable accounts ({unreadable} unreadable; open the drawer to see which).',
+  'composer.pillPending': '{vendor} credits are still loading — click to open the drawer and retry.',
+  'composer.pillFailed': '{vendor} credits could not be read: {message} — click to open the drawer and retry.',
+  'composer.pillPartial': '{vendor} balance endpoint is rate limited right now — no total available. Click for the ledger.',
   // Shared
   'common.loading': 'Loading…',
   'common.refresh': 'Refresh',
@@ -673,6 +705,8 @@ export const zh: Record<CardLocaleKey, string> = {
   'tab.label': '桌面模型',
   'card.title': 'DSH Connect Desktop',
   'card.providerMissing': '这家客户端还没有注册进模型选择器——原因见下。',
+  'card.reregister': '重新注册',
+  'card.registering': '正在重新注册…',
   'card.subtitle': '把本机已登录桌面客户端的模型接入模型选择器，并提供只读积分概览。',
   'card.empty.title': '未检测到桌面客户端',
   'card.empty.body': '在下面的某个桌面客户端里登录一次，回到这里点「重新检测」。在找到凭证之前，卡片不渲染其他内容。',
@@ -719,6 +753,8 @@ export const zh: Record<CardLocaleKey, string> = {
   'accounts.choose': '使用此账号',
   'accounts.active': '使用中',
   'accounts.benched': '轮换已跳过',
+  'accounts.benchedAuth': '登录已失效',
+  'accounts.benchedPoints': '积分不足',
   'accounts.rename': '重命名',
   'accounts.more': '更多操作',
   'accounts.lastUsed': '上次成功',
@@ -762,6 +798,8 @@ export const zh: Record<CardLocaleKey, string> = {
   'credits.unavailable': '宿主未提供积分路由。',
   'credits.failed': '积分读取失败：{message}',
   'credits.balanceUnavailable': '余额接口暂时被限流（HTTP 403），所以不显示总额；下面的明细是实时数据。',
+  'credits.degraded':
+    '这里只有「可用积分」——余额桶接口被限流，这个数字来自设置摘要；每日/奖励/充值的拆分暂时读不到。',
   'credits.fetchedAt': '读取于 {time}',
   'credits.total': '合计（全部账号）',
   'credits.perAccount': '按账号',
@@ -856,6 +894,7 @@ export const zh: Record<CardLocaleKey, string> = {
   'config.group.cache': '缓存',
   'config.group.credits': '积分',
   'config.group.models': '模型与能力',
+  'config.group.limits': '限流保护',
   'config.overridden': '已修改',
   'config.reset': '恢复默认',
   'config.save': '保存',
@@ -939,15 +978,29 @@ export const zh: Record<CardLocaleKey, string> = {
   'drawer.refreshHint': '重新从上游读取余额（绕过缓存）。',
   'drawer.refreshing': '读取中…',
   'drawer.benched': '轮换已跳过',
+  'drawer.benchedAuth': '登录已失效',
+  'drawer.benchedPoints': '积分不足',
   'drawer.accountFallback': '账号 {index}',
   'drawer.signedOut': '未登录。请打开桌面客户端登录一次。',
   'drawer.desktopHint': '由桌面客户端持有——要移除请在客户端里退出登录。',
   'drawer.creditsMissing': '这个账号还没有积分读数——点右上角的刷新按钮读取。',
   'drawer.creditsFailed': '积分读取失败：{message}——可点右上角的刷新按钮重试。',
+  'drawer.partial': '余额接口暂时被限流（{message}），逐账号数字读不到；流水明细仍可看。',
+  'drawer.degraded': '只有「可用积分」（来自设置摘要）：余额桶接口被限流，每日/奖励/充值拆分读不到。',
+  'drawer.totalLabel': '合计',
+  'drawer.progress': '已读 {done}/{total}',
   'composer.pill': '{vendor} · {amount} 积分',
-  'composer.pillBare': '{vendor}',
-  'composer.pillTitle': '{vendor} 积分——可用 {available}。点击刷新。',
-  'composer.pillPending': '{vendor} 积分仍在加载。点击刷新。',
+  /*
+   * 缺数字时显示 `—`，不显示供应商名：名字已经在左边了，重复一遍等于把
+   * "读不到"伪装成"这块本来就只有一个名字"。`—` 与卡片、抽屉里的缺失同义。
+   */
+  'composer.pillBare': '—',
+  'composer.pillTitle': '{vendor} 积分——所有账号合计 {available}。点击查看每个账号。',
+  'composer.pillTitlePartial':
+    '{vendor} 积分——能读到的账号合计 {available}（{unreadable} 个账号读不到，打开抽屉看是哪一个）。',
+  'composer.pillPending': '{vendor} 积分仍在读取——点击可打开抽屉重试。',
+  'composer.pillFailed': '{vendor} 积分读取失败：{message}——点击可打开抽屉重试。',
+  'composer.pillPartial': '{vendor} 余额接口暂时被限流，读不到总额；明细仍是实时数据。点击打开抽屉。',
   'common.loading': '加载中…',
   'common.refresh': '刷新',
   'common.refreshing': '刷新中…',

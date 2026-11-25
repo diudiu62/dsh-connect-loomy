@@ -15,6 +15,7 @@ import React from 'react'
 import {
   buildStatus,
   button,
+  buttonsByText,
   click,
   flush,
   defaultRoutes,
@@ -665,5 +666,102 @@ test('config fields are grouped by the vendor declaration', async () => {
     const row = container.querySelector('[data-dcss-config="baseURL"]')
     assert.ok(row?.querySelector('.dcss-field-title')?.textContent === '接口地址', '说明文字是主标题')
     assert.ok(row?.querySelector('.dcss-field-name')?.textContent === 'baseURL', '键名是副标题')
+  })
+})
+
+/**
+ * 「重新注册」：provider 未注册提示旁边的按钮，真的把 POST 发到 /register。
+ *
+ * 用户上报的现场：卡片写着「这家客户端还没有注册进模型选择器——原因见下。
+ * cannot create effect on inactive context」，且没有任何东西会再试一次。按钮的
+ * 价值在于"不用重启 DSH"：POST 命中宿主后，/status 里的原因要真的换掉。
+ */
+const PROVIDER_UNREGISTERED = {
+  id: 'loomy',
+  displayName: 'Loomy',
+  accent: '#2E6BE6',
+  available: true,
+  capabilities: FULL,
+  credential: { found: true, sourceOrigin: 'desktop', sourcePath: '/x/auth.json', candidates: [] },
+  account: { phone: '138****0000' },
+  catalog: { total: 3, enabled: 2, refreshedAt: 1794575000000 },
+  enabledModelIds: ['spark-x2.6'],
+  provider: { registered: false, routes: [], error: 'cannot create effect on inactive context', retryable: true },
+}
+
+test('the re-register button posts to /register and the notice clears after the reload', async () => {
+  await resetDom()
+  let registered = false
+  const statusOnce = () => ({
+    ok: true,
+    csrfToken: 'csrf-test-token',
+    vendors: [
+      registered
+        ? { ...PROVIDER_UNREGISTERED, provider: { registered: true, routes: ['loomy'] } }
+        : PROVIDER_UNREGISTERED,
+    ],
+  })
+  const routes = defaultRoutes({
+    '/plugins/dsh-connect-desktop/status': () => new Response(JSON.stringify(statusOnce()), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+    '/plugins/dsh-connect-desktop/loomy/register': () => {
+      registered = true
+      return new Response(JSON.stringify({ ok: true, registered: true, routes: ['loomy'] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await withCard(routes, async ({ container, calls }) => {
+    assert.ok(container.textContent.includes('cannot create effect on inactive context'), '现场原因原文可见')
+    // retryable ⇒ 按钮存在；按下它。
+    await click(button(container, t('card.reregister')))
+    const registerCall = calls.find((call) => call.url.endsWith('/loomy/register'))
+    assert.ok(registerCall !== undefined, '必须真的 POST 到 /register')
+    assert.equal(registerCall.method, 'POST')
+    assert.equal(registerCall.headers['x-dsh-connect-csrf'], 'csrf-test-token')
+    // /status 被静默重读，通知随之消失。
+    assert.ok(
+      (container.textContent ?? '').includes(t('card.providerMissing')) === false,
+      '注册成功后提示要消失',
+    )
+  })
+})
+
+test('the re-register button reports a failed request instead of looking dead', async () => {
+  await resetDom()
+  const routes = defaultRoutes({
+    '/plugins/dsh-connect-desktop/status': { body: buildStatus({ capabilities: FULL, vendorOverrides: { provider: { registered: false, routes: [], error: '占位', retryable: true } } }) },
+    // 路由不存在（宿主还是旧版）：404。
+    '/plugins/dsh-connect-desktop/loomy/register': { status: 404, body: { ok: false, error: { code: 'not_found', message: 'no route' } } },
+  })
+
+  await withCard(routes, async ({ container }) => {
+    await click(button(container, t('card.reregister')))
+    assert.ok(
+      (container.textContent ?? '').includes(t('errors.unavailable')),
+      '请求没走通时必须有一句话，而不是按钮毫无反应',
+    )
+    assert.ok((container.textContent ?? '').includes('占位'), '原始失败原因仍然在屏上')
+  })
+})
+
+test('a non-retryable reason renders no re-register button', async () => {
+  await resetDom()
+  const routes = defaultRoutes({
+    '/plugins/dsh-connect-desktop/status': {
+      body: buildStatus({
+        capabilities: FULL,
+        vendorOverrides: { provider: { registered: false, routes: [], error: '没有可用登录态：未检测到登录态', retryable: false } },
+      }),
+    },
+  })
+
+  await withCard(routes, async ({ container }) => {
+    assert.ok(container.textContent.includes('没有可用登录态'), '原因可见')
+    assert.equal(buttonsByText(container, t('card.reregister')).length, 0, '重试也无用的原因不给按钮')
   })
 })

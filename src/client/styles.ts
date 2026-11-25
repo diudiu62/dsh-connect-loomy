@@ -29,16 +29,29 @@ export const CARD_CSS = `
  *   L4 列表微距  2px   （账号行、流水行之间）
  * 一个页面里出现五种垂直节奏，用户会觉得"每块都差一点点"却说不清差在哪。
  */
-.dcss-card {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  /* 容器查询的前提：卡片住在 600-700px 的列里，视口宽度永远命中不了窄屏媒体查询。 */
+/*
+ * 排版上下文：卡片和浮层装的是**同一批面板**，字号/行高/文字色/强调色必须是同一份。
+ *
+ * 控件（按钮、输入框、表格里的模型名）都用 font:inherit——这是对的，控件应当
+ * 跟随所在面板。代价是**容器必须提供那个上下文**：浮层早先只有背景与圆角、
+ * 没有字号，于是里面所有按钮/输入框退回浏览器默认 16px，在 13px 的正文旁边
+ * 像放大了两号（用户报的"按钮样式不对"）。
+ *
+ * container-type 也在这里：配置字段的窄屏单列规则走容器查询，容器不存在时
+ * 那条规则在浮层里永远不会生效。
+ */
+.dcss-card,
+.dcss-sheet {
   container-type: inline-size;
   color: var(--dsw-alias-label-primary, #1f2328);
   font-size: 13px;
   line-height: 1.55;
   --dcss-accent: var(--dsw-alias-state-business-primary, #2563eb);
+}
+.dcss-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 /* Header: text on the left, the community entry pinned to the top-right. */
 .dcss-header {
@@ -277,7 +290,17 @@ export const CARD_CSS = `
   padding-top: 8px;
   border-top: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.08));
 }
-.dcss-acct-cleanup > .dcss-hint { flex: 1 1 auto; min-width: 0; }
+.dcss-acct-cleanup > /*
+ * 错误提示里的一行操作（「重新注册」按钮等）：
+ * 提示框是 flex 列布局，操作行贴着文案排、与左侧文字留一个字距。
+ */
+.dcss-notice-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dcss-hint { flex: 1 1 auto; min-width: 0; }
 .dcss-acct-hint {
   display: inline-flex;
   align-items: center;
@@ -670,6 +693,20 @@ export const CARD_CSS = `
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+/*
+ * 读不到额度：数字位是「—」，边框改成虚线。
+ *
+ * 只是"没有数字"太容易被当成"这家供应商本来就这样"；虚线在视觉上说明这是
+ * 一个未完成的读数（原因在 title 里，点开抽屉能看到原文与重试按钮）。
+ */
+.dcss-pill-missing {
+  border-style: dashed;
+  border-color: var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.28));
+}
+.dcss-pill-missing .dcss-pill-amount {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-weight: 500;
+}
 
 /*
  * 配置浮层：从聊天界面就近打开的那一份。
@@ -683,16 +720,38 @@ export const CARD_CSS = `
   z-index: 60;
   background: rgba(15, 23, 42, 0.35);
 }
-.dcss-sheet {
+/*
+ * 定位层：铺满视口、flex 居中、四边留 16px。
+ *
+ * 浮层原来用 top/left 50% 加 translate(-50%,-50%) 定位，高度却由内容决定：
+ * 内容一长就同时向上下两头溢出，底部那段只能滚动页面才看得到（用户报的现象）。
+ * 更糟的是，只要任何一个祖先带 transform / filter / contain，fixed 的包含块就
+ * 从视口退化成那个祖先——浮层以一行高的输入框为中心居中，下半截必然出视口。
+ * 所以浮层现在 portal 到 body（见 PanelSheet.tsx），并用"永远装得下"的写法：
+ * flex + max-height:100%，高度超出时被压回容器，由 .dcss-sheet-body 自己滚动。
+ *
+ * pointer-events:none 让定位层不挡住下面的遮罩：点空白处仍然关浮层。
+ */
+.dcss-sheet-layer {
   position: fixed;
+  inset: 0;
   z-index: 61;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+}
+.dcss-sheet {
+  position: relative;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
-  width: min(560px, calc(100vw - 32px));
-  max-height: min(78vh, 720px);
+  /* 620px：配置页是「标签 + 输入 + 默认值 + 恢复默认」四列，560px 会把
+     地址输入框里的 https://loomyad.xunfei.cn/api/v1 截断。 */
+  width: min(620px, 100%);
+  max-height: 100%;
+  min-height: 0;
   border: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.14));
   border-radius: 12px;
   background: var(--dsw-alias-bg-layer-1, #fff);
@@ -722,6 +781,16 @@ export const CARD_CSS = `
   min-height: 0;
   overflow: auto;
   padding: 14px;
+  /*
+   * 与 .dcss-card 同一个节奏（16px）。
+   *
+   * 面板是 fragment 直接吐多个块（身份摘要 / 账号段 / 轮换 / 积分 / 流水），
+   * 卡片里这些块靠 .dcss-card 的 gap 分组；浮层这边原来只有 padding，
+   * 于是「积分」标题紧贴着上面那个轮换开关，看上去像同一个控件的一部分。
+   */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 /* tab 条：与设置卡片同一套语义（role=tab + aria-selected），这里只是更紧凑。 */
 .dcss-sheet-tabs {
@@ -911,6 +980,41 @@ export const CARD_CSS = `
   font-size: 11px;
   line-height: 16px;
   white-space: nowrap;
+}
+/*
+ * 「登录已失效」比「轮换已跳过」重一档：前者要用户去重新登录，后者只要等。
+ * 临时跳过用中性底色（它是常态，不该在抽屉里抢注意力），登录失效保留红字并加
+ * 一道实线边框，扫一眼就能分出哪几行需要动作。
+ */
+.dcss-drawer-badge-bad {
+  border: 1px solid var(--dsw-alias-state-error-primary, #b91c1c);
+  font-weight: 600;
+}
+/*
+ * 抽屉顶部的合计：随逐行结果增长。
+ *
+ * 数字用等宽数位（tabular-nums）——它会一变再变，不等宽的话每来一个账号，
+ * 整行都会左右抖一下。
+ */
+.dcss-drawer-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(15, 23, 42, 0.08));
+}
+.dcss-drawer-total-label { color: var(--dsw-alias-label-tertiary, #6b7280); font-size: 11px; }
+.dcss-drawer-total-amount {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--dcss-accent);
+}
+.dcss-drawer-total-progress {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-variant-numeric: tabular-nums;
 }
 .dcss-drawer-check { flex: 0 0 auto; color: var(--dcss-accent); }
 .dcss-drawer-lastused {

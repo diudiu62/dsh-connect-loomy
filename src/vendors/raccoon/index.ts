@@ -40,8 +40,11 @@ import type {
 } from '../../vendor-sdk/contracts.js'
 import type { AuthLoginView, AuthLogoutView, AuthSendCodeView, AuthStateView } from '../../shared/views.js'
 import {
-  DEFAULT_POOL_COOLDOWN_MS,
+  POOL_COOLING_CODE,
+  classifyUnavailable,
   createAccountPool,
+  createDesktopBench,
+  isPermanentFailure,
 } from '../../core/pool.js'
 import {
   DESKTOP_ACCOUNT_ID,
@@ -52,7 +55,7 @@ import {
   type DesktopIdentity,
 } from '../../core/accounts.js'
 import { createCatalogStore } from '../../core/catalog.js'
-import { createCreditsStore } from '../../core/credits.js'
+import { applyZeroPoints, createCreditsStore } from '../../core/credits.js'
 import { createVendorPreferences } from '../../core/preferences.js'
 import { vendorStateStore } from '../../core/state.js'
 import {
@@ -64,7 +67,15 @@ import {
   type RaccoonAuthSnapshot,
 } from './auth.js'
 import { fetchCatalog } from './catalog.js'
-import { RACCOON_CREDIT_FIELDS, fetchBalance, fetchBills, toCreditsView } from './credits.js'
+import {
+  RACCOON_CREDIT_FIELDS,
+  fetchBalance,
+  fetchBills,
+  fetchSettingPoints,
+  settingInfoUrl,
+  toCreditsView,
+  wwwPointsUrl,
+} from './credits.js'
 import {
   DEFAULT_RACCOON_BASE_URL,
   DEFAULT_RACCOON_CATALOG_TTL_MS,
@@ -72,12 +83,14 @@ import {
   DEFAULT_RACCOON_CREDITS_TTL_MS,
   DEFAULT_RACCOON_NATION_CODE,
   DEFAULT_RACCOON_POINTS_URL,
+  RACCOON_CLIENT_NAME,
   RACCOON_DISPLAY_NAME,
   RACCOON_PROVIDER_ID,
   RACCOON_VENDOR_NAME,
 } from './constants.js'
 import { readDeviceId } from './device.js'
-import { safeErrorMessage } from '../../shared/text.js'
+import { readRaccoonAppVersion } from './app-version.js'
+import { safeErrorMessage, formatDateTime } from '../../shared/text.js'
 import { createRaccoonChatDriver } from './provider.js'
 import {
   encryptRaccoonPhone,
@@ -124,6 +137,11 @@ export const RACCOON_CONFIG_DEFAULTS = {
   creditsTtlMs: DEFAULT_RACCOON_CREDITS_TTL_MS,
   visionModelIds: [] as string[],
   textOnlyModelIds: [] as string[],
+  /**
+   * 每个账号同时打到上游的请求数上限。官方桌面客户端自限 2 路
+   * （asar `main.cjs` `upstreams.size >= 2 → 429`），照抄这个形态。
+   */
+  concurrency: 2,
 } as const
 
 /**
@@ -132,6 +150,7 @@ export const RACCOON_CONFIG_DEFAULTS = {
 export const RACCOON_CONFIG_GROUPS: ConfigGroupDeclaration[] = [
   { id: 'connection', labelKey: 'config.group.connection', keys: ['enabled', 'baseURL', 'pointsURL', 'clientVersion', 'orgCode', 'nationCode'] },
   { id: 'cache', labelKey: 'config.group.cache', keys: ['catalogTtlMs', 'creditsTtlMs'] },
+  { id: 'limits', labelKey: 'config.group.limits', keys: ['concurrency'] },
   { id: 'models', labelKey: 'config.group.models', keys: ['visionModelIds', 'textOnlyModelIds'] },
 ]
 
@@ -145,6 +164,7 @@ export const RACCOON_CONFIG_SCHEMA = z.object({
   nationCode: z.string().default(RACCOON_CONFIG_DEFAULTS.nationCode).description('登录用的国家码'),
   catalogTtlMs: z.natural().default(RACCOON_CONFIG_DEFAULTS.catalogTtlMs).description('模型目录缓存毫秒'),
   creditsTtlMs: z.natural().default(RACCOON_CONFIG_DEFAULTS.creditsTtlMs).description('积分余额缓存毫秒'),
+  concurrency: z.natural().default(RACCOON_CONFIG_DEFAULTS.concurrency).description('每个账号同时打到上游的请求数上限（官方客户端形态是 2；0 = 不限）'),
   visionModelIds: z.array(z.string()).default([...RACCOON_CONFIG_DEFAULTS.visionModelIds]).description('强制声明支持图片的模型 id'),
   textOnlyModelIds: z
     .array(z.string())
@@ -216,6 +236,8 @@ export interface RaccoonModuleOptions {
 interface ResolvedPick {
   material: string
   accountId?: string
+  /** 本次调用要带的设备标识（逐账号）；缺省就不带头。 */
+  deviceId?: string
   origin: 'plugin' | 'desktop'
   sourcePath: string
   identity?: CredentialIdentity
@@ -227,6 +249,15 @@ type PickResult =
   | { kind: 'credential'; credential: ResolvedPick }
   | { kind: 'expired'; material: string; sourcePath: string; expiresAt?: number; identity?: CredentialIdentity }
   | { kind: 'missing'; problem: string; candidates: CredentialCandidate[] }
+  /**
+   * 有登录态，但**整个账号池都在限流/额度冷却里**。
+   *
+   * 与 `missing` 的分工：`missing` 说"这个账号坏了，去修"；`cooling` 说"账号是
+   * 好的，但现在不能花"。`resolveCredential` 会把它变成可执行的调用失败；
+   * `credentials.read()`（选择器/卡片可见性）会退回无池路径回答"有没有登录"，
+   * 避免冷却期间把整组模型从选择器里摘掉。
+   */
+  | { kind: 'cooling'; problem: string; candidates: CredentialCandidate[] }
 
 /**
  * 创建小浣熊供应商模块。
@@ -247,7 +278,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
         const fallback = RACCOON_CONFIG_DEFAULTS[key]
         return typeof value === 'string' && value.trim().length > 0 ? value.trim() : String(fallback)
       }
-      const numberSetting = (key: 'catalogTtlMs' | 'creditsTtlMs'): number => {
+      const numberSetting = (key: 'catalogTtlMs' | 'creditsTtlMs' | 'concurrency'): number => {
         const value = rawSetting(key)
         return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : RACCOON_CONFIG_DEFAULTS[key]
       }
@@ -260,12 +291,22 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
 
       const baseURL = (): string => stringSetting('baseURL').replace(/\/+$/u, '')
       const pointsURL = (): string => stringSetting('pointsURL')
-      const clientVersion = (): string => stringSetting('clientVersion')
+      /**
+       * `X-Client-Version`：用户配置优先；没配置就读本机安装的客户端真实版本
+       * （app.asar → package.json），再读不到才落回常量兜底。版本号是风控给
+       * 流量归档的特征之一——发一个全网没人发的 `2.0.0` 等于自报家门。
+       */
+      const clientVersion = (): string => {
+        const raw = rawSetting('clientVersion')
+        if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim()
+        return readRaccoonAppVersion() ?? DEFAULT_RACCOON_CLIENT_VERSION
+      }
       const orgCode = (): string | undefined => {
         const value = stringSetting('orgCode')
         return value.length === 0 ? undefined : value
       }
       const encryptor = (): PhoneEncryptor => options.phoneEncryptor ?? encryptRaccoonPhone
+      /** 桌面端那份 device id（安装时生成一次）；仅作兜底。 */
       const deviceId = (): string | undefined => readDeviceId()
 
       // ── 持久化：状态文档 + 账号表（都走 core 的原子写入） ────────────────
@@ -280,18 +321,29 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
        * 也用过同样的内存账：一个把点数花光的桌面令牌会被反复挑中、反复失败。
        * 存在内存里的代价是重启后忘掉，对一个由 JWT 重新推导的提示值来说是对的。
        */
-      const desktopBench = new Map<string, number>()
+      /** 桌面令牌的内存 bench（core 共享实现：不能持久化，但必须记着）。 */
+      const desktopBench = createDesktopBench({ now })
 
       const desktopSnapshot = (): RaccoonAuthSnapshot => readAuth()
 
       /** 桌面端身份，作为池成员；过期/冷却中时**不出现**。 */
       const desktopAccount = async (): Promise<StoredAccount | undefined> => {
-        const benchedAt = desktopBench.get(DESKTOP_ACCOUNT_ID)
-        if (benchedAt !== undefined && now() - benchedAt < DEFAULT_POOL_COOLDOWN_MS) return undefined
+        /*
+         * 桌面令牌被 401 之后不该"等十分钟再试"：它只会在客户端重新登录时才变。
+         * 所以永久失效的标记同样适用冷却豁免（`permanent`）；限流走与存储账号
+         * 相同的指数窗口，连续命中自动加长。窗口在失败那一刻定死，检查只做比较。
+         */
+        if (desktopBench.status(DESKTOP_ACCOUNT_ID).benched) return undefined
         const snapshot = desktopSnapshot()
         if (!snapshot.found || snapshot.token === undefined) return undefined
         if (snapshot.expired === true) return undefined
-        return { id: DESKTOP_ACCOUNT_ID, material: snapshot.token, origin: 'desktop', label: DESKTOP_LABEL }
+        return {
+          id: DESKTOP_ACCOUNT_ID,
+          material: snapshot.token,
+          origin: 'desktop',
+          label: DESKTOP_LABEL,
+          ...(deviceId() === undefined ? {} : { deviceId: deviceId() as string }),
+        }
       }
 
       const accountDocument = deps.document('accounts.json', {
@@ -461,16 +513,16 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
 
         markUnavailable: async (id, code, message) => {
           if (id === DESKTOP_ACCOUNT_ID) {
-            desktopBench.set(id, now())
+            const verdict = desktopBench.markUnavailable(id, code, message)
             deps.logger.info(`dsh-connect-desktop: raccoon 桌面端登录态被暂停使用（${code}：${message}）`)
-            return
+            return verdict
           }
-          await store.markUnavailable(id, code, message)
+          return await store.markUnavailable(id, code, message)
         },
 
         markHealthy: async (id) => {
           if (id === DESKTOP_ACCOUNT_ID) {
-            desktopBench.delete(id)
+            desktopBench.markHealthy(id)
             return
           }
           await store.markHealthy(id)
@@ -488,7 +540,28 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
       })
 
       // ── 凭据：唯一的优先级决策点 ─────────────────────────────────────────
+      /**
+       * 这个账号该带哪个设备标识。
+       *
+       * 插件账号用自己的 uuid（`core/accounts.ts` 在落盘时生成）；桌面端身份用
+       * 客户端安装时生成的那一份。读不到（没装客户端）就不带头——与官方客户端
+       * 缺文件时的行为一致。
+       */
+      const deviceIdFor = (account: StoredAccount | undefined): string | undefined => {
+        // 没有账号上下文（聚合读取）：用桌面端那份。
+        if (account === undefined) return deviceId()
+        // 桌面端身份：它本来就是客户端那份。
+        if (account.origin === 'desktop') return deviceId()
+        /*
+         * 插件账号：只用自己的 uuid。还没补上（`list()` 迁移之前）就**不带头**，
+         * 绝不回退桌面端那份——九个账号共用一个设备指纹正是 2026-11-23 `200108`
+         * 的画像，回退等于把要拆的东西又黏回去。
+         */
+        return account.deviceId
+      }
+
       const fromStored = (account: StoredAccount): PickResult => {
+        const device = deviceIdFor(account)
         if (account.origin === 'desktop') {
           const snapshot = desktopSnapshot()
           const identity = authIdentity(snapshot)
@@ -499,6 +572,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
               accountId: DESKTOP_ACCOUNT_ID,
               origin: 'desktop',
               sourcePath: snapshot.sourcePath ?? '',
+              ...(device === undefined ? {} : { deviceId: device }),
               ...(identity === undefined ? {} : { identity }),
               ...(snapshot.expiresAt === undefined ? {} : { expiresAt: snapshot.expiresAt }),
             },
@@ -516,6 +590,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
             accountId: account.id,
             origin: 'plugin',
             sourcePath: store.path,
+            ...(device === undefined ? {} : { deviceId: device }),
             ...(Object.keys(identity).length === 0 ? {} : { identity }),
           },
         }
@@ -540,19 +615,102 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
       /** 最近一次推理调用实际使用的账号（轮换时用来回答"刚花了谁的钱"）。 */
       let lastPick: { accountId?: string; at: number } | undefined
 
+      /**
+       * 轮换关闭时，锁定的那个账号也照样尊重"暂停"。
+       *
+       * `pickWithoutPool` 不能改：它同时回答"现在有没有登录"（选择器分组、
+       * 卡片上的已登录状态都靠它），把冷却塞进去会让整池冷却变成"签出"。
+       * 所以暂停只拦**调用侧**——这条链是 `requireCredential`，那里要的是
+       * 一句能执行的话，而不是又一次注定失败的上游往返。
+       *
+       * 额度不足与限流分开说：前者要用户充值/等每日额度，后者等窗口，登录失效
+       * 才该去重新登录。三种状态在界面上共用一句话是旧毛病。
+       */
+      const pausedPick = async (picked: PickResult): Promise<PickResult> => {
+        if (picked.kind !== 'credential') return picked
+        const id = picked.credential.accountId
+        if (id === undefined) return picked
+        const account = id === DESKTOP_ACCOUNT_ID ? await desktopAccount() : await store.find(id)
+        if (account === undefined || !pool.isBenched(account)) return picked
+        const kind = classifyUnavailable(account.unavailableCode, account.unavailableMessage)
+        if (kind === 'auth') {
+          return {
+            kind: 'missing',
+            problem:
+              `当前锁定的小浣熊账号登录态已失效（${account.label ?? account.phone ?? account.id}），` +
+              `请重新登录后再试，或在账户页换一个账号。`,
+            candidates: authCandidateStates(),
+          }
+        }
+        const when =
+          account.unavailableUntil === undefined ? '' : `（最早 ${formatDateTime(account.unavailableUntil)} 自动恢复）`
+        return {
+          kind: 'cooling',
+          problem:
+            kind === 'points'
+              ? `当前锁定的小浣熊账号额度不足，已暂停使用${when}。充值或每日额度刷新后会自动回到轮换；也可以换一个账号。`
+              : `当前锁定的小浣熊账号正在限流冷却中${when}。等待恢复，或在账户页减少并发后重试。`,
+          candidates: authCandidateStates(),
+        }
+      }
+
       const pickCredential = async (): Promise<PickResult> => {
         if (await preferences.poolEnabled()) {
           const pick = await pool.pick()
           if (pick.kind === 'ok') return fromStored(pick.account)
           if (pick.kind === 'none-healthy' && pick.accounts.length > 0) {
-            // 全部被禁：重试最久没失败的那个，而不是直接失败。
-            const oldest = [...pick.accounts].sort(
-              (left, right) => (left.unavailableAt ?? 0) - (right.unavailableAt ?? 0),
-            )[0]
-            if (oldest !== undefined) return fromStored(oldest)
+            /*
+             * 全部被禁时**停止调用**，不再把"最久没失败"的账号送上去。
+             *
+             * 旧实现：全池冷却也照样硬发一次——2026-11-23 的实况是 8 个账号
+             * 连环吃 `200108`（账号级风控），每多打一次就把限制确认一遍、
+             * 阶梯窗口再升一级。现在：有可恢复账号就说清"最早几点回来"，
+             * 全是永久失效才给"去重新登录"的指引。
+             */
+            if (pick.recoverable.length > 0) {
+              const when =
+                pick.recoverAt !== null
+                  ? `（最早 ${formatDateTime(pick.recoverAt)} 自动恢复）`
+                  : ''
+              const who = pick.recoverable
+                .slice(0, 3)
+                .map((account) => account.label ?? account.phone ?? account.id)
+                .join('、')
+              const more = pick.recoverable.length > 3 ? ` 等 ${pick.recoverable.length} 个账号` : ''
+              return {
+                kind: 'cooling',
+                problem:
+                  `小浣熊的 ${who}${more} 都被上游限流/额度限制，暂时全部冷却中${when}。` +
+                  `已停止调用以避免加深风控限制；等待恢复、或在账户页减少并发/换模型后重试。`,
+                candidates: authCandidateStates(),
+              }
+            }
+            /*
+             * 剩下的全是永久失效：不猜、不重试，直接把"该去哪儿修"说出来。
+             * 这里报 `missing` 而不是静默失败，是因为调用方需要的是可执行的一句话。
+             */
+            return {
+              kind: 'missing',
+              problem:
+                `账号池里的 ${pick.permanent.length} 个小浣熊账号登录态都已失效（401/密钥无效）。` +
+                `请在「商汤小浣熊」客户端里重新登录，然后在账户页重新添加/导入这个账号。`,
+              candidates: authCandidateStates(),
+            }
           }
         }
 
+        // 轮换关闭 / 池里没有候选：兜底身份也要过一遍暂停检查。
+        return await pausedPick(await pickWithoutPool())
+      }
+
+      /**
+       * 不看池（或池没有候选）时的兜底身份：偏好选中的账号 → 桌面 `auth.json`。
+       *
+       * `credentials.read()` 在"全池冷却"时用它回答"有没有登录"，让选择器里的
+       * 分组保持可见（调用侧仍由 `resolveCredential` 说"现在不能花"）；
+       * `login.state()`/`logout()` 用它回答"现在这个登录态是谁"。
+       */
+      const pickWithoutPool = async (): Promise<PickResult> => {
         const activeId = await preferences.activeAccountId()
         if (activeId !== undefined) {
           const account = activeId === DESKTOP_ACCOUNT_ID ? await desktopAccount() : await store.find(activeId)
@@ -583,6 +741,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
             material: snapshot.token,
             origin: 'desktop',
             sourcePath: snapshot.sourcePath ?? '',
+            ...(deviceId() === undefined ? {} : { deviceId: deviceId() as string }),
             ...(identity === undefined ? {} : { identity }),
             ...(snapshot.expiresAt === undefined ? {} : { expiresAt: snapshot.expiresAt }),
           },
@@ -592,6 +751,11 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
       const requireCredential = async (): Promise<ResolvedPick> => {
         const picked = await pickCredential()
         if (picked.kind === 'credential') return picked.credential
+        if (picked.kind === 'cooling') {
+          // 冷却 ≠ 凭据缺失：code 说"登录是好的，但现在整池不能花"。
+          // POOL_COOLING 不在任何可重试清单里——重试只会重读同一个冷却状态。
+          throw new LlmError(picked.problem, POOL_COOLING_CODE)
+        }
         throw new LlmError(
           picked.kind === 'expired' ? EXPIRED_CREDENTIAL_MESSAGE : picked.problem,
           'MISSING_CREDENTIAL',
@@ -605,8 +769,18 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
           if (readOptions.force !== true && cachedState !== undefined && now() - cachedAt < CREDENTIAL_READ_TTL_MS) {
             return cachedState
           }
-          const picked = await pickCredential()
-          const candidates = picked.kind === 'missing' ? picked.candidates : authCandidateStates()
+          let picked = await pickCredential()
+          /*
+           * 全池冷却 ≠ 签出。可见性（选择器分组、卡片"已登录"）按
+           * `pickWithoutPool` 回答——有登录态就报已登录；调用侧的真实约束由
+           * `resolveCredential` 的冷却错误说明。没有可退的身份，冷却原因才
+           * 作为"签出"的原因展示。
+           */
+          if (picked.kind === 'cooling') {
+            const fallback = await pickWithoutPool()
+            if (fallback.kind === 'credential' || fallback.kind === 'expired') picked = fallback
+          }
+          const candidates = picked.kind === 'missing' || picked.kind === 'cooling' ? picked.candidates : authCandidateStates()
           let next: CredentialState
           if (picked.kind === 'credential') {
             const credential = picked.credential
@@ -649,13 +823,12 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
       const catalog = createCatalogStore({
         fetchModels: async () => {
           const credential = await requireCredential()
-          const device = deviceId()
           return fetchCatalog({
             baseURL: baseURL(),
             token: credential.material,
             ...(orgCode() === undefined ? {} : { orgCode: orgCode() }),
             clientVersion: clientVersion(),
-            ...(device === undefined ? {} : { deviceId: device }),
+            ...(credential.deviceId === undefined ? {} : { deviceId: credential.deviceId }),
           })
         },
         ttlMs: () => numberSetting('catalogTtlMs'),
@@ -676,16 +849,39 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
       })
 
       // ── 积分（6 个桶 → fields；缺失的桶不填 0） ──────────────────────────
-      const readBalance = async (token: string) => {
-        const device = deviceId()
-        return fetchBalance({
-          token,
-          pointsURL: pointsURL(),
-          ...(orgCode() === undefined ? {} : { orgCode: orgCode() }),
-          clientVersion: clientVersion(),
-          ...(device === undefined ? {} : { deviceId: device }),
-          now,
-        })
+      /**
+       * 余额的候选地址，按尝试顺序。
+       *
+       * 默认配置（裸域）下**先 `www.` 再裸域**：裸域 `points/v1/balance` 已被
+       * 网关整条拦死（403 + `X-TT-System-Error: 3`，拦在鉴权之前），`www.` 同一
+       * 路径 200。用户自己改过 `pointsURL` 时，尊重他写的地址优先，`www.` 只作兜底。
+       */
+      const balanceUrls = (): string[] => {
+        const configured = pointsURL()
+        const www = wwwPointsUrl(configured)
+        if (www === configured) return [configured]
+        return configured === DEFAULT_RACCOON_POINTS_URL ? [www, configured] : [configured, www]
+      }
+
+      const readBalance = async (token: string, device?: string) => {
+        const identity = device ?? deviceId()
+        let lastError: unknown
+        for (const url of balanceUrls()) {
+          try {
+            return await fetchBalance({
+              token,
+              pointsURL: url,
+              ...(orgCode() === undefined ? {} : { orgCode: orgCode() }),
+              clientVersion: clientVersion(),
+              ...(identity === undefined ? {} : { deviceId: identity }),
+              now,
+            })
+          } catch (error) {
+            // 403（路由被关）与网络失败都换下一个 origin，别让一次封锁抹掉余额。
+            lastError = error
+          }
+        }
+        throw lastError ?? new Error('小浣熊积分接口没有可用的地址')
       }
 
       /**
@@ -695,7 +891,10 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
        * 余额（失败必须抛，否则会把"读不到"伪装成"零余额"），再尽力取第一页账单。
        * 只取一页：游标翻页会把一次只读查询变成 N 次上游请求，而卡片只需要"最近几笔"。
        */
-      const readCreditsView = async (token: string, options: { withLedger?: boolean } = {}) => {
+      const readCreditsView = async (
+        token: string,
+        options: { withLedger?: boolean; deviceId?: string } = {},
+      ) => {
         /*
          * 余额与明细是**两个独立端点**，实测会各自失败：`balance` 被网关限流返回
          * 403 空 body 时，`bills` 仍然是 200。所以这里必须先各自尝试，再决定返回什么：
@@ -709,9 +908,46 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
         let view: import('../../shared/views.js').CreditsView | undefined
         let balanceError: unknown
         try {
-          view = toCreditsView(await readBalance(token))
+          view = toCreditsView(await readBalance(token, options.deviceId))
         } catch (error) {
           balanceError = error
+        }
+
+        /*
+         * 余额桶读不到时，先试**设置摘要**里的可用积分。
+         *
+         * 实测（2026-11-23）：`points/v1/balance` 对被插件用过的账号返回 403
+         * 空 body（nginx `X-TT-System-Error: 3`），而**同一个 token** 打
+         * `office/v3/setting_info` 是 200 且带 `available_points`——官方客户端
+         * 的缓存里正是这一条。拿到它，徽标与账号行就都还有数字，只是没有
+         * daily/reward/topup 的拆分（标 `degraded`，由界面说明来源）。
+         */
+        if (view === undefined) {
+          /*
+           * 设置摘要同样按 `[www, 裸域]` 两条 origin 试——裸域 `points` 路由被封锁
+           * 时，同一套网关策略可能波及别的路径；而 www 上这两条都是 200。
+           */
+          const settingUrls = [...new Set([settingInfoUrl(baseURL()), wwwPointsUrl(settingInfoUrl(baseURL()))])]
+          for (const url of settingUrls) {
+            try {
+              const points = await fetchSettingPoints({
+                token,
+                url,
+                ...(orgCode() === undefined ? {} : { orgCode: orgCode() }),
+                clientVersion: clientVersion(),
+                ...(deviceId() === undefined ? {} : { deviceId: deviceId() }),
+                now,
+              })
+              view = {
+                fields: { available: points.available },
+                fetchedAt: points.at,
+                degraded: 'setting_info',
+              }
+              break
+            } catch {
+              // 这个 origin 也不通：换下一个，最后由"仅明细"那条路决定报什么。
+            }
+          }
         }
 
         // 逐账号读取**不**取明细：那是 N 倍的账单请求，而明细只需要在总额层面
@@ -722,7 +958,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
           throw balanceError
         }
 
-        const device = deviceId()
+        const device = options.deviceId ?? deviceId()
         try {
           const page = await fetchBills({
             token,
@@ -741,6 +977,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
               fetchedAt: now(),
               records: page.records,
               partial: 'balance_unavailable',
+              partialReason: safeErrorMessage(balanceError),
             } satisfies import('../../shared/views.js').CreditsView
           }
           return page.records.length === 0 ? view : { ...view, records: page.records }
@@ -755,19 +992,54 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
       }
 
       const credits = createCreditsStore({
-        load: async () => readCreditsView((await requireCredential()).material, { withLedger: true }),
+        load: async () => {
+          const credential = await requireCredential()
+          return readCreditsView(credential.material, {
+            withLedger: true,
+            ...(credential.deviceId === undefined ? {} : { deviceId: credential.deviceId }),
+          })
+        },
         loadForAccount: async (account) => {
           if (account.material.length === 0) throw new Error('该账号没有可用的登录态')
-          return readCreditsView(account.material)
+          try {
+            const device = deviceIdFor(account)
+            return await readCreditsView(account.material, device === undefined ? {} : { deviceId: device })
+          } catch (error) {
+            /*
+             * 积分接口的 401 和聊天接口的 401 是同一件事：这把 token 已经无效。
+             * 把它记进账号状态，池就不会再挑它去烧一次必然失败的调用，抽屉里也
+             * 会从"轮换已跳过"变成"登录已失效"——那才是用户能执行的那句话。
+             *
+             * 只对 auth 类这么做：限流、网关 403 都不代表账号坏了，那些账号
+             * 冷却之后还得回来。
+             */
+            const message = safeErrorMessage(error)
+            if (isPermanentFailure(undefined, message)) {
+              await accounts.markUnavailable(account.id, 'CREDENTIAL_INVALID', message).catch(() => undefined)
+            }
+            throw error
+          }
         },
         ttlMs: () => numberSetting('creditsTtlMs'),
         now,
+        /*
+         * 零余额就暂停这个账号——与 Loomy 同一条规则（`core/credits.ts#applyZeroPoints`）。
+         *
+         * 这条钩子以前**没接**：小浣熊的零余额账号只能等真正打一次聊天、被上游
+         * 回一句 `积分不足` 才进冷却，等于每次都先烧掉一次失败调用。余额桶读数
+         * 就在手上（`available_points`），没有理由不用它。
+         *
+         * 余额桶被限流（`partial: 'balance_unavailable'`）时 `fields` 是空的，
+         * helper 会原样跳过——"读不到"不是"没钱"。
+         */
+        onRead: (view, account) => applyZeroPoints(view, account, accounts),
       })
 
       // ── 登录（协议在 auth-flow.ts） ──────────────────────────────────────
       const login: LoginDriver = {
         async state(): Promise<AuthStateView> {
-          const picked = await pickCredential()
+          // 登录状态页回答"现在这个登录态是谁"：不看池的冷却，看真实的身份来源。
+          const picked = await pickWithoutPool()
           const stored = await store.list()
           const pluginLoggedIn = stored.length > 0
           if (picked.kind === 'missing') {
@@ -833,8 +1105,12 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
         },
 
         async logout(): Promise<AuthLogoutView> {
-          const picked = await pickCredential()
-          if (picked.kind === 'missing') {
+          let picked = await pickCredential()
+          if (picked.kind === 'cooling') {
+            const fallback = await pickWithoutPool()
+            if (fallback.kind === 'credential' || fallback.kind === 'expired') picked = fallback
+          }
+          if (picked.kind === 'missing' || picked.kind === 'cooling') {
             return { ok: true, message: '当前没有小浣熊登录态，无需登出' }
           }
           const material = picked.kind === 'credential' ? picked.credential.material : picked.material
@@ -852,10 +1128,20 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
         },
       }
 
-      const chat = createRaccoonChatDriver({ clientVersion, deviceId })
+      const chat = createRaccoonChatDriver({
+        clientVersion,
+        // 本次调用所选账号自己的设备标识优先；没有账号上下文才用桌面端那份。
+        deviceId: (context) => context?.deviceId ?? deviceId(),
+      })
 
       return {
         descriptor: RACCOON_DESCRIPTOR,
+        /**
+         * 每账号并发上限：官方桌面客户端自限 2 路，照抄。
+         *
+         * 0（或负）表示不限。改了设置下一次调用就生效——闸门每次取号都现读。
+         */
+        concurrency: () => numberSetting('concurrency'),
         credentials,
         preferences,
         accounts,
@@ -886,6 +1172,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
             ]
           }
           const material = picked.credential.material
+          const probeDevice = picked.credential.deviceId
           const [catalog, balance] = await Promise.all([
             (async () => {
               try {
@@ -894,7 +1181,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
                   token: material,
                   ...(orgCode() === undefined ? {} : { orgCode: orgCode() as string }),
                   clientVersion: clientVersion(),
-                  ...(deviceId() === undefined ? {} : { deviceId: deviceId() as string }),
+                  ...(probeDevice === undefined ? {} : { deviceId: probeDevice }),
                 })
                 return { path: 'catalog', ok: true, reason: `ok（${models.length} 个模型）` }
               } catch (error) {
@@ -903,12 +1190,12 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
             })(),
             (async () => {
               try {
-                const value = await fetchBalance({
-                  token: material,
-                  ...(pointsURL() === undefined ? {} : { pointsURL: pointsURL() as string }),
-                  clientVersion: clientVersion(),
-                  ...(deviceId() === undefined ? {} : { deviceId: deviceId() as string }),
-                })
+                /*
+                 * 走与真实读取**同一条**候选链（www → 裸域）。早先这里直接打配置里
+                 * 的裸域，于是余额其实读得到的时候，诊断页照样报 403——探针必须复用
+                 * 生产路径，否则它测的是另一个东西。
+                 */
+                const value = await readBalance(material, probeDevice)
                 return { path: 'balance', ok: true, reason: `ok（可用 ${value.available ?? '—'}）` }
               } catch (error) {
                 return { path: 'balance', ok: false, reason: safeErrorMessage(error) }
@@ -934,6 +1221,7 @@ export function createRaccoonModule(options: RaccoonModuleOptions = {}): VendorM
           return {
             material: credential.material,
             ...(credential.accountId === undefined ? {} : { accountId: credential.accountId }),
+            ...(credential.deviceId === undefined ? {} : { deviceId: credential.deviceId }),
           }
         },
       }

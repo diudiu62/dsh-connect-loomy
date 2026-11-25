@@ -23,7 +23,6 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AccountRowView,
   AccountsView,
-  CreditsView,
   VendorCapabilities,
 } from '../../shared/views.js'
 import { formatCredit } from '../format.js'
@@ -31,6 +30,7 @@ import { requestVendor } from '../transport.js'
 import { Badge, CardButton, IconButton, Notice } from '../components/common.js'
 import { failureMessage, type CardT, type Loadable } from '../components/types.js'
 import { transportMessage } from './LoginForms.js'
+import type { AccountCreditEntry } from './useAccountCredits.js'
 
 export interface AccountRowsProps {
   t: CardT
@@ -38,13 +38,30 @@ export interface AccountRowsProps {
   csrf: string | null
   state: Loadable<AccountsView>
   capabilities: VendorCapabilities
-  /** Per-account figures for the inline column, when the vendor reports them. */
-  credits: CreditsView | null
+  /**
+   * 逐账号额度：**懒加载的结果**（`credits/account` 一条一条回来）。
+   *
+   * 没给到这一项时行内显示 `· …`（正在读），而不是 `· —`（读不到）——两者
+   * 在一列数字里必须能分开，否则"慢"看上去就是"坏"。
+   */
+  accountCredits?: Record<string, AccountCreditEntry>
   onChanged: () => void
 }
 
 /** Render every account as a compact row. */
-export function AccountRows({ t, vendorId, csrf, state, capabilities, credits, onChanged }: AccountRowsProps) {
+/**
+ * 账号行上的"被跳过"标记：三种原因三种说法。
+ *
+ * 与抽屉里的 `BENCHED_LABEL` 一一对应（那边是 `drawer.*`，这里是 `accounts.*`）：
+ * 同一个账号在两处必须给出同一个理由，否则用户会以为是两个不同的问题。
+ */
+const ACCOUNT_BENCHED_LABEL = {
+  auth: 'accounts.benchedAuth',
+  points: 'accounts.benchedPoints',
+  temporary: 'accounts.benched',
+} as const
+
+export function AccountRows({ t, vendorId, csrf, state, capabilities, accountCredits, onChanged }: AccountRowsProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [confirmCleanup, setConfirmCleanup] = useState(false)
@@ -131,7 +148,7 @@ export function AccountRows({ t, vendorId, csrf, state, capabilities, credits, o
           {rows.map((row, index) => {
             const identity = identityOf(row, index, t)
             const isActive = rotating !== true && view.activeId === row.id
-            const amount = inlineAmount(row, capabilities, credits)
+            const amount = inlineAmount(row, capabilities, accountCredits)
             const classes = ['dcss-acct-row']
             if (isActive) classes.push('dcss-acct-row-active')
             return (
@@ -157,7 +174,14 @@ export function AccountRows({ t, vendorId, csrf, state, capabilities, credits, o
                     {t('accounts.lastUsed')}
                   </Badge>
                 ) : null}
-                  {row.unavailable ? <Badge tone="danger">{t('accounts.benched')}</Badge> : null}
+                  {row.unavailable ? (
+                    <Badge
+                      tone={row.unavailableKind === 'temporary' ? 'neutral' : 'danger'}
+                      title={row.unavailableMessage ?? undefined}
+                    >
+                      {t(ACCOUNT_BENCHED_LABEL[row.unavailableKind ?? 'temporary'])}
+                    </Badge>
+                  ) : null}
                   {row.route.length === 0 ? <span className="dcss-label">{t('accounts.notRouted')}</span> : null}
                   {needsIdentityHint(row) ? (
                     <span className="dcss-acct-hint" title={t('accounts.identityMissingHint')}>
@@ -383,16 +407,15 @@ function needsIdentityHint(row: AccountRowView): boolean {
 function inlineAmount(
   row: AccountRowView,
   capabilities: VendorCapabilities,
-  credits: CreditsView | null,
+  accountCredits: Record<string, AccountCreditEntry> | undefined,
 ): string | null {
-  if (credits === null || capabilities.credits.kind !== 'balance') return null
+  if (capabilities.credits.kind !== 'balance') return null
   const headline = capabilities.credits.fields.find((field) => field.role === 'available') ??
     capabilities.credits.fields[0]
   if (headline === undefined) return null
-  const entries = credits.perAccount ?? []
-  const entry = entries.find((candidate) => candidate.accountId === row.id) ??
-    entries.find((candidate) => candidate.accountId === undefined && candidate.route === row.route)
-  if (entry === undefined) return null
+  const entry = accountCredits?.[row.id]
+  // 还没到货：一个点加省略号，明确"在读"，不是"读不到"。
+  if (entry === undefined) return '· …'
   if (entry.error !== undefined) return '· —'
   const amount = formatCredit(entry.fields[headline.key])
   return amount.missing ? null : amount.text

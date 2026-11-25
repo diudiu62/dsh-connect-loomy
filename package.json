@@ -2,7 +2,7 @@
   "name": "dsh-connect-desktop",
   "displayName": "DSH Connect Desktop · Loomy / 小浣熊",
   "description": "把本机已登录的桌面客户端（Loomy 讯飞办公助手、商汤小浣熊等）模型接入 DeepSeek Harness，提供共享的设置卡片、账号抽屉与只读积分概览。新增供应商只需实现协议。",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "diudiu62",
     "url": "https://github.com/diudiu62"
@@ -64,7 +64,8 @@
     "@deepseek-ai/dsh-llm-pi-ai": ">=0.2.2-rc.1 <0.3.0-0",
     "@deepseek-ai/dsh-settings": ">=0.2.2-rc.1 <0.3.0-0",
     "@earendil-works/pi-ai": "^1.3.0",
-    "react": "^18.2.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {

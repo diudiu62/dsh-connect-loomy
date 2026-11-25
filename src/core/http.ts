@@ -147,7 +147,13 @@ function guarded(spec: RouteSpec, csrfToken: string, logger?: Logger) {
         return
       }
       if (!csrfMatches(csrfToken, req.headers[CSRF_HEADER] as string | undefined)) {
-        failure(res, 403, 'csrf_invalid', `缺少或无效的 ${CSRF_HEADER} 令牌；请先 GET /status 获取 csrfToken`)
+        failure(
+          res,
+          403,
+          'csrf_invalid',
+          `缺少或无效的 ${CSRF_HEADER} 令牌：DSH 重启后令牌会轮换，客户端会自动重取一次；` +
+            '仍失败请刷新页面。若刷新后持续出现，说明本插件在同一进程里被挂载了两次（日志里有「已被另一个插件实例注册」）。',
+        )
         return
       }
     }

@@ -433,7 +433,12 @@ test('the drawer opens a full panel sheet on the account tab', async () => {
       await click(container.querySelector('[data-dcss-cap="drawer-open-config"]'))
       await flush()
 
-      const sheet = container.querySelector('[data-dcss-cap="panel-sheet"]')
+      /*
+       * 浮层是 portal：DOM 在 document.body 上，不在徽标的子树里。这条断言正是
+       * 修复的机制——浮层挂在输入框周围会继承宿主的 containing block，溢出视口。
+       */
+      const sheet = globalThis.document.querySelector('[data-dcss-cap="panel-sheet"]')
+      assert.equal(container.querySelector('[data-dcss-cap="panel-sheet"]'), null, '浮层不再住在输入框子树里')
       assert.ok(sheet !== null, '面板浮层开了')
       assert.equal(container.querySelector('.dcss-drawer'), null, '抽屉让位给浮层')
       assert.equal(sheet.getAttribute('aria-modal'), 'true', '面板是模态的：有草稿，不该被误点弄丢')
@@ -461,7 +466,580 @@ test('the drawer opens a full panel sheet on the account tab', async () => {
         new globalThis.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
       )
       await flush()
-      assert.equal(container.querySelector('[data-dcss-cap="panel-sheet"]'), null)
+      assert.equal(globalThis.document.querySelector('[data-dcss-cap="panel-sheet"]'), null)
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 抽屉的每一行数字只来自响应里的 `perAccount`，而 host 只在请求带 `accounts=1`
+ * 时才装配它（`surface.credits()` 为额度面板省掉 N 次上游请求的那条分支）。
+ *
+ * 漏掉这个参数的症状极其误导：输入框胶囊用的是顶层 `fields`，照旧显示数字；
+ * 抽屉每一行却是 `—`。看起来像"接口没有逐账号余额"，实际是自己没要。
+ */
+test('the drawer lazily fills each row instead of waiting for the whole batch', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'multi',
+      pool: false,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  const calls = installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/accounts': {
+        body: {
+          ok: true,
+          rotating: false,
+          accounts: [
+            { id: 'a1', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000001', unavailable: false },
+            { id: 'a2', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000002', unavailable: false },
+          ],
+        },
+      },
+      // 总额只读一次；每行余额走 `credits/account`，一条一条回来。
+      '/plugins/dsh-connect-desktop/loomy/credits': {
+        body: { ok: true, fields: { available: 700 }, fetchedAt: 1 },
+      },
+      '/plugins/dsh-connect-desktop/loomy/credits/account': (init, calls) => {
+        const url = calls[calls.length - 1].url
+        const id = new URL(url, 'http://x').searchParams.get('id')
+        const amount = id === 'a1' ? 300 : id === 'a2' ? 400 : 0
+        return new Response(JSON.stringify({ ok: true, fields: { available: amount }, fetchedAt: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await click(container.querySelector('.dcss-pill'))
+      await flush()
+      const rows = [...container.querySelectorAll('.dcss-drawer-credits')]
+      assert.equal(rows.length, 2, '两个账号两行')
+      assert.deepEqual(rows.map((row) => row.textContent), ['300', '400'], '每行是自己的数字，不是 —')
+
+      /*
+       * 关键行为：逐账号是**单条**请求，不再有 `accounts=1` 的批量往返。
+       * 那条批量请求会让 90 个账号的抽屉等 5 秒以上——这正是用户报的问题。
+       */
+      const creditsCalls = calls.filter((call) => call.url.includes('/loomy/credits'))
+      /*
+       * 徽标读**合计**时仍然带 `accounts=1`（那是唯一做加法的路径），抽屉则只读
+       * 总额。所以断言是"存在一条不带 accounts=1 的 `/credits`"，而不是"全都不带"。
+       */
+      assert.ok(
+        creditsCalls.some((call) => !call.url.includes('accounts=1')),
+        `抽屉只该读总额，实际：${creditsCalls.map((call) => call.url).join(' , ')}`,
+      )
+      const perAccountCalls = calls.filter((call) => call.url.includes('/loomy/credits/account'))
+      assert.equal(perAccountCalls.length, 2, '每行一条 lazily-fetched 请求')
+      assert.ok(perAccountCalls.some((call) => call.url.includes('id=a1')))
+      assert.ok(perAccountCalls.some((call) => call.url.includes('id=a2')))
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 额度读失败时，徽标不能只剩供应商名——那是"积分没显示"这句话的字面来源。
+ *
+ * 三件事一起钉住：数字位是 `—`、虚线态可被选择器命中、失败原因（上游原话）
+ * 出现在 `title` 里（旧代码连 `{available}` 占位符都没替换，title 是字面模板）。
+ */
+test('a failed credits read shows a dash plus the upstream reason', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'none',
+      pool: false,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/credits': {
+        body: { ok: false, error: { code: 'UPSTREAM_403', message: '403 Forbidden' } },
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      const pill = container.querySelector('.dcss-pill')
+      assert.ok(pill !== null)
+      const amount = container.querySelector('.dcss-pill-amount')
+      assert.equal(amount.textContent, '—', '缺失不是 0，也不该重复供应商名')
+      assert.ok(pill.className.includes('dcss-pill-missing'), '失败态可被样式与测试命中')
+      assert.ok(pill.getAttribute('title').includes('403 Forbidden'), 'title 里是上游原话')
+      assert.equal(amount.getAttribute('data-dcss-cap'), 'pill-amount-missing')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 徽标显示的是**所有账号的合计**，不是"这次轮到谁付费"那一个账号的余额。
+ *
+ * host 只有在请求带 `accounts=1` 时才会用 `mergeCredits()` 把逐账号数字相加
+ * （那是唯一做加法的地方）；不带参数读到的只是 `pickCredential()` 挑中的那个
+ * 账号。少了这个参数，徽标数字会随池轮换跳、而且明显偏小。
+ */
+test('the badge shows the sum across accounts, not the paying account', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'none',
+      pool: true,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  const calls = installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/credits': (_init, seen) => {
+        // 复刻 host 的两个分支：只有带 accounts=1 时顶层才是合计 + perAccount。
+        const merged = seen[seen.length - 1].url.includes('accounts=1')
+        return new Response(
+          JSON.stringify(
+            merged
+              ? {
+                  ok: true,
+                  fields: { available: 700 },
+                  fetchedAt: 1,
+                  perAccount: [
+                    { accountId: 'a1', route: 'loomy', fields: { available: 300 } },
+                    { accountId: 'a2', route: 'loomy', fields: { available: 400 } },
+                  ],
+                }
+              : { ok: true, fields: { available: 300 }, fetchedAt: 1 },
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      const amount = container.querySelector('.dcss-pill-amount')
+      assert.equal(amount.textContent, '700', '合计，不是本次付费账号的 300')
+
+      const creditsCalls = calls.filter((call) => call.url.includes('/loomy/credits'))
+      assert.ok(
+        creditsCalls.every((call) => call.url.includes('accounts=1')),
+        `徽标必须请求逐账号合计，实际：${creditsCalls.map((call) => call.url).join(' , ')}`,
+      )
+      const title = container.querySelector('.dcss-pill')?.getAttribute('title') ?? ''
+      assert.ok(title.includes('700'), 'title 里也是合计')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 合计里漏掉账号时必须说出来。
+ *
+ * `mergeCredits` 只累加读得到的账号：一个 401 的账号会让合计悄悄变小，而"合计
+ * 变小"与"额度被用掉"在界面上没有区别。徽标自己不会逐行解释，所以把"几个账号
+ * 读不到"写进 title——具体是哪几个在抽屉里。
+ */
+test('the badge says when the total left accounts out', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'none',
+      pool: true,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/credits': {
+        body: {
+          ok: true,
+          fields: { available: 300 },
+          fetchedAt: 1,
+          perAccount: [
+            { accountId: 'a1', route: 'loomy', fields: { available: 300 } },
+            { accountId: 'a2', route: 'loomy', fields: {}, error: 'HTTP 401：authorization_verify_error' },
+          ],
+        },
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      const pill = container.querySelector('.dcss-pill')
+      assert.equal(container.querySelector('.dcss-pill-amount').textContent, '300')
+      const title = pill.getAttribute('title') ?? ''
+      assert.ok(title.includes('1 个账号读不到'), `title 必须点明漏算，实际：${title}`)
+      assert.ok(title.includes('300'), '合计数字仍在 title 里')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * "轮换已跳过"必须按原因分家。
+ *
+ * 401/密钥无效和限流在旧 UI 上是同一句话，于是唯一能做的动作（去重新登录）被
+ * 藏起来了；用户只能理解为"插件跳过了一个其实还能用的账号"。
+ */
+test('the drawer names why an account is benched', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'multi',
+      pool: false,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/accounts': {
+        body: {
+          ok: true,
+          rotating: false,
+          accounts: [
+            {
+              id: 'a1',
+              route: 'loomy',
+              displayName: 'Loomy',
+              origin: 'plugin',
+              phone: '13800000001',
+              unavailable: true,
+              unavailableKind: 'auth',
+              unavailableCode: '401',
+              unavailableMessage: 'authorization_verify_error',
+            },
+            {
+              id: 'a2',
+              route: 'loomy',
+              displayName: 'Loomy',
+              origin: 'plugin',
+              phone: '13800000002',
+              unavailable: true,
+              unavailableKind: 'temporary',
+              unavailableCode: 'RATE_LIMIT',
+              unavailableMessage: 'rate limit exceeded',
+            },
+            { id: 'a3', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000003', unavailable: false },
+          ],
+        },
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await click(container.querySelector('.dcss-pill'))
+      await flush()
+      const badges = [...container.querySelectorAll('.dcss-drawer-badge')]
+      assert.deepEqual(badges.map((badge) => badge.textContent), ['登录已失效', '轮换已跳过'])
+      assert.equal(badges[0].getAttribute('title'), 'authorization_verify_error')
+      assert.ok(badges[0].className.includes('dcss-drawer-badge-bad'), '失效账号用更重的视觉')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 浮层必须**不属于**输入框子树。
+ *
+ * 这是"点设置按钮后浮层下半截出视口、要滚页面"的根因：浮层当年渲染在徽标里，
+ * 而 composer 那一行带着 transform / 过滤效果（宿主自己的布局与动画）。CSS 里
+ * `position: fixed` 的包含块会被祖先的 transform 换成**那个祖先**，于是"视口居中"
+ * 变成"以 60px 高的一行居中"，下半截必然落到视口外。
+ *
+ * 静态 HTML 量不出 DOM 归属，这条只能在 jsdom 里钉：浮层是 body 的直接子节点。
+ */
+test('the panel sheet is portalled to body, outside the composer subtree', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'multi',
+      pool: false,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/accounts': {
+        body: {
+          ok: true,
+          rotating: false,
+          accounts: [
+            { id: 'a1', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000001', unavailable: false },
+          ],
+        },
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await click(container.querySelector('.dcss-pill'))
+      await flush()
+      // 抽屉里的 ⚙：用户报的那个按钮。
+      await click(container.querySelector('[data-dcss-cap="drawer-open-config"]'))
+      await flush()
+
+      const layer = globalThis.document.querySelector('.dcss-sheet-layer')
+      assert.ok(layer !== null, '浮层渲染出来了')
+      assert.equal(globalThis.document.querySelector('.dcss-sheet'), layer.querySelector('.dcss-sheet'))
+      assert.equal(layer.parentElement, globalThis.document.body, '浮层挂在 body 上，不继承 composer 的 containing block')
+      assert.equal(container.contains(layer), false, '浮层不是输入框子树的一部分')
+      // 祖先链上不能有 transform/filter：fixed 的包含块必须还是视口。
+      for (let node = layer.parentElement; node !== null; node = node.parentElement) {
+        const style = node.style
+        assert.equal(style?.transform ?? '', '', `祖先 ${node.tagName} 带 transform，fixed 会退化为它的包含块`)
+        assert.equal(style?.filter ?? '', '', `祖先 ${node.tagName} 带 filter，同上`)
+      }
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 余额接口被上游限流（明细还能读）时，界面必须说明"限流"，不能说"仍在读取"。
+ *
+ * 真实事故：`points/v1/balance` 返回 403 空 body，bills 仍 200——host 于是交回
+ * 一份 `partial: 'balance_unavailable'` 的视图。旧徽标把它当成"还没读到"，
+ * 抽屉则是一列 `—` 且没有任何解释，用户只能理解为"积分又丢了"。
+ */
+test('a rate-limited balance endpoint says so instead of spinning forever', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'multi',
+      pool: false,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  const partial = {
+    ok: true,
+    fields: {},
+    fetchedAt: 1,
+    records: [{ description: '对话消耗', direction: 'debit', pointsActual: 3, createdAt: 1 }],
+    partial: 'balance_unavailable',
+    partialReason: '小浣熊积分接口返回 HTTP 403：',
+  }
+
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/accounts': {
+        body: {
+          ok: true,
+          rotating: false,
+          accounts: [
+            { id: 'a1', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000001', unavailable: false },
+          ],
+        },
+      },
+      '/plugins/dsh-connect-desktop/loomy/credits': { body: partial },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      const pill = container.querySelector('.dcss-pill')
+      assert.equal(container.querySelector('.dcss-pill-amount').textContent, '—')
+      const title = pill.getAttribute('title') ?? ''
+      assert.ok(title.includes('限流'), `title 必须说明是限流，实际：${title}`)
+      assert.ok(!title.includes('仍在读取'), '不是"还在加载"')
+
+      await click(pill)
+      await flush()
+      const note = globalThis.document.querySelector('[data-dcss-cap="drawer-credits-partial"]')
+      assert.ok(note !== null, '抽屉里有一句解释，而不是一列沉默的 —')
+      assert.ok(note.textContent.includes('403'), '解释里带上上游原话')
+    },
+    { useProjection: () => ({ next: { provider: 'loomy' } }) },
+  )
+})
+
+/**
+ * 合计必须**随着每一行到货**增长，而不是等全部读完再蹦出来。
+ *
+ * 这是"读到一个更新一个"的可见部分：90 个账号逐条读的时候，用户要能看见进度
+ * （已读 N/M）与一个一直在涨的合计，否则打开抽屉就是几秒钟的空白。
+ */
+test('the drawer total grows as each account lands', async () => {
+  await resetDom()
+  const { composerEntry, t } = mountPlugin('zh')
+
+  const status = buildStatus({
+    capabilities: {
+      accounts: 'multi',
+      pool: false,
+      login: ['none'],
+      credits: {
+        kind: 'balance',
+        fields: [{ key: 'available', labelKey: 'credits.field.available', role: 'available' }],
+      },
+      catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+      transfer: false,
+      adopt: false,
+      diagnostics: false,
+    },
+  })
+
+  installFetch(
+    defaultRoutes({
+      '/plugins/dsh-connect-desktop/status': { body: status },
+      '/plugins/dsh-connect-desktop/loomy/accounts': {
+        body: {
+          ok: true,
+          rotating: false,
+          accounts: [
+            { id: 'a1', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000001', unavailable: false },
+            { id: 'a2', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000002', unavailable: false },
+            { id: 'a3', route: 'loomy', displayName: 'Loomy', origin: 'plugin', phone: '13800000003', unavailable: false },
+          ],
+        },
+      },
+      '/plugins/dsh-connect-desktop/loomy/credits': { body: { ok: true, fields: {}, fetchedAt: 1 } },
+      '/plugins/dsh-connect-desktop/loomy/credits/account': (_init, calls) => {
+        const id = new URL(calls[calls.length - 1].url, 'http://x').searchParams.get('id')
+        if (id === 'a3') {
+          // 一个账号失败：它不该被算进合计，但也不该卡住其它两行。
+          return new Response(JSON.stringify({ ok: false, error: { code: 'X', message: '401' } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        const amount = id === 'a1' ? 100 : 250
+        return new Response(JSON.stringify({ ok: true, fields: { available: amount }, fetchedAt: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    }),
+  )
+
+  await renderCard(
+    composerEntry,
+    t,
+    async ({ container }) => {
+      await click(container.querySelector('.dcss-pill'))
+      await flush()
+      // 等到三行都落地（并发 3，各自一个往返）。
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const progress = globalThis.document.querySelector('[data-dcss-cap="drawer-progress"]')
+        if (progress === null) break
+        await flush()
+      }
+
+      const total = globalThis.document.querySelector('[data-dcss-cap="drawer-total"]')
+      assert.ok(total !== null, '抽屉顶部有合计行')
+      // 100 + 250；失败的那个账号不计入，也不把合计打成 0。
+      assert.equal(total.textContent.includes('350'), true, `合计应为 350，实际：${total.textContent}`)
+      const rows = [...container.querySelectorAll('.dcss-drawer-credits')]
+      assert.deepEqual(rows.map((row) => row.textContent), ['100', '250', '—'])
     },
     { useProjection: () => ({ next: { provider: 'loomy' } }) },
   )

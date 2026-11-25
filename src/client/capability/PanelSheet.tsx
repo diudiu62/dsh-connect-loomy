@@ -12,10 +12,16 @@
  * 面板与设置卡片里的**是同一批组件**：同一份字段、同一套校验、同一份乐观锁。
  * 两条入口不存在行为偏差。
  *
+ * **渲染到 `document.body`**：抽屉住在输入框右侧的徽标里，而徽标周围是宿主自己的
+ * 布局（composer 行、弹出动画）。只要祖先带 `transform`/`filter`/`contain`，`position:
+ * fixed` 的包含块就会从视口退化成那个祖先——浮层以 60px 高的一行输入框为中心居中，
+ * 下半截直接落到视口外，用户得往下滚才能看到。portal 是唯一与祖先样式无关的解法。
+ *
  * @module dsh-connect-desktop/client/capability/PanelSheet
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { IconButton } from '../components/common.js'
 import type { CardT } from '../components/types.js'
@@ -66,9 +72,15 @@ export function PanelSheet({ t, vendor, csrf, onClose, initialTab, onChanged }: 
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
-  return (
+  return createPortal(
     <>
       <div className="dcss-sheet-backdrop" onMouseDown={onClose} aria-hidden="true" />
+      {/*
+        定位层：铺满视口、flex 居中、留 16px 边距。比 `top:50%` + `translate` 稳——
+        浮层的高度由内容决定，一旦超过可用高度，flex + `max-height:100%` 会把它压回
+        视口内，而不是从中心向上下两头溢出。
+      */}
+      <div className="dcss-sheet-layer">
       <div
         className="dcss-sheet"
         role="dialog"
@@ -132,6 +144,8 @@ export function PanelSheet({ t, vendor, csrf, onClose, initialTab, onChanged }: 
           ) : null}
         </div>
       </div>
+      </div>
     </>
-  )
+    /* 挂到 body：与输入框周围的宿主布局彻底解耦。 */
+    , document.body)
 }

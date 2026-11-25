@@ -18,12 +18,18 @@
  * @module dsh-connect-desktop/core/accounts
  */
 
-import { createHash } from 'node:crypto'
-import type { AccountDriver, AccountInput, DocumentStore, StoredAccount } from '../vendor-sdk/contracts.js'
+import { createHash, randomUUID } from 'node:crypto'
+import type { AccountBenchVerdict, AccountDriver, AccountInput, DocumentStore, StoredAccount } from '../vendor-sdk/contracts.js'
 import { isRecord } from '../shared/text.js'
+import { DEFAULT_POOL_COOLDOWN_MS, RATE_LIMIT_CODE, classifyUnavailable, pointsCooldownMs, rateLimitCooldownMs } from './pool.js'
 
 /** The synthetic id of the desktop client's own sign-in. */
 export const DESKTOP_ACCOUNT_ID = 'desktop'
+
+/** One new per-account device identity, shaped like the official client's uuid. */
+function newDeviceId(): string {
+  return randomUUID()
+}
 
 /** One persisted account. Contains the session; the file is `0600`. */
 export interface AccountRecord {
@@ -36,7 +42,13 @@ export interface AccountRecord {
   userId?: string
   origin: 'plugin' | 'desktop'
   addedAt?: number
+  /** Per-account device identity (uuid); see `StoredAccount.deviceId`. */
+  deviceId?: string
   unavailableAt?: number
+  /** 这次禁用的解禁时刻（失败时定死，随记录持久化）。 */
+  unavailableUntil?: number
+  /** 连续限流命中次数（限流阶梯的档位）；成功一次就清空。 */
+  unavailableStreak?: number
   unavailableCode?: string
   unavailableMessage?: string
 }
@@ -79,9 +91,12 @@ export function serializeAccountsDocument(document: AccountsDocument): string {
     ...(account.label === undefined ? {} : { label: account.label }),
     ...(account.phone === undefined ? {} : { phone: account.phone }),
     ...(account.userId === undefined ? {} : { userId: account.userId }),
+    ...(account.deviceId === undefined ? {} : { deviceId: account.deviceId }),
     origin: account.origin,
     ...(account.addedAt === undefined ? {} : { addedAt: account.addedAt }),
     ...(account.unavailableAt === undefined ? {} : { unavailableAt: account.unavailableAt }),
+    ...(account.unavailableUntil === undefined ? {} : { unavailableUntil: account.unavailableUntil }),
+    ...(account.unavailableStreak === undefined ? {} : { unavailableStreak: account.unavailableStreak }),
     ...(account.unavailableCode === undefined ? {} : { unavailableCode: account.unavailableCode }),
     ...(account.unavailableMessage === undefined ? {} : { unavailableMessage: account.unavailableMessage }),
   }))
@@ -125,6 +140,8 @@ export interface AccountsStoreOptions {
    * 这比序号有用得多，而且不需要重写用户数据。
    */
   describeMaterial?: (material: string) => { userId?: string; phone?: string } | undefined
+  /** 池的基础冷却窗口（限流阶梯从它起步）；缺省用 `DEFAULT_POOL_COOLDOWN_MS`。 */
+  cooldownMs?: () => number
   now?: () => number
 }
 
@@ -137,6 +154,14 @@ export interface AccountsStore extends AccountDriver {
   /** One account by id (stored or desktop). */
   find(id: string): Promise<StoredAccount | undefined>
   /**
+   * 给还没有设备标识的账号补一个（一次性迁移，幂等）。
+   *
+   * 官方客户端一次安装生成一个 `clientDeviceId`；插件接管的账号各自要有一个，
+   * 否则 N 个账号共用同一个设备指纹，正是上游风控眼里的"异常调用"画像。
+   * `list()` 会自动调它，所以旧的账号文件在第一次读取后就被补齐。
+   */
+  ensureDeviceIds(): Promise<number>
+  /**
    * 写回从上游查到的身份（只补缺失字段）。
    *
    * 与 `describeMaterial` 的分工：那个是每次 `list()` 现算的只读补全；这个是真的
@@ -148,6 +173,11 @@ export interface AccountsStore extends AccountDriver {
 
 export function createAccountsStore(options: AccountsStoreOptions): AccountsStore {
   const now = options.now ?? (() => Date.now())
+  /** The vendor's base cooldown window, read live so a config change applies at once. */
+  const baseCooldownMs = (): number => {
+    const value = options.cooldownMs?.()
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : rateLimitCooldownMs(1)
+  }
   let cache: AccountsDocument | undefined
   let cacheAt = 0
   /** Serialise read-modify-write so two writes cannot drop an account. */
@@ -195,8 +225,11 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
     ...(account.label === undefined ? {} : { label: account.label }),
     ...(account.phone === undefined ? {} : { phone: account.phone }),
     ...(account.userId === undefined ? {} : { userId: account.userId }),
+    ...(account.deviceId === undefined ? {} : { deviceId: account.deviceId }),
     ...(account.addedAt === undefined ? {} : { addedAt: account.addedAt }),
     ...(account.unavailableAt === undefined ? {} : { unavailableAt: account.unavailableAt }),
+    ...(account.unavailableUntil === undefined ? {} : { unavailableUntil: account.unavailableUntil }),
+    ...(account.unavailableStreak === undefined ? {} : { unavailableStreak: account.unavailableStreak }),
     ...(account.unavailableCode === undefined ? {} : { unavailableCode: account.unavailableCode }),
     ...(account.unavailableMessage === undefined ? {} : { unavailableMessage: account.unavailableMessage }),
   })
@@ -243,11 +276,30 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
     return slot
   }
 
+  /**
+   * 补齐缺失的设备标识；返回补了几条。
+   *
+   * 幂等：已经有的账号一律不动（重装/重登不该换设备标识，官方客户端也是这样——
+   * 文件在安装期生成一次）。
+   */
+  const seedDeviceIds = async (): Promise<AccountsDocument> => {
+    return mutate((current) => {
+      for (const account of current.accounts) {
+        if (account.deviceId === undefined || account.deviceId.length === 0) account.deviceId = newDeviceId()
+      }
+      return current
+    })
+  }
+
   return {
     path: options.document.path,
 
     async list(listOptions = {}) {
-      const document = await load(listOptions.force === true)
+      let document = await load(listOptions.force === true)
+      // 旧账号文件没有 deviceId：第一次读取就补齐（幂等，写一次磁盘）。
+      if (document.accounts.some((account) => account.deviceId === undefined)) {
+        document = await seedDeviceIds()
+      }
       return [...document.accounts]
         .map((account) => (options.describeMaterial === undefined ? account : withDerivedIdentity(account, options.describeMaterial)))
         .sort((left, right) => (left.slot ?? 0) - (right.slot ?? 0) || (left.addedAt ?? 0) - (right.addedAt ?? 0))
@@ -288,6 +340,7 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
             if (input.phone !== undefined) existing.phone = input.phone
             if (input.userId !== undefined) existing.userId = input.userId
           }
+          if (existing.deviceId === undefined) existing.deviceId = newDeviceId()
           return current
         }
         const account: AccountRecord = {
@@ -295,6 +348,7 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
           material,
           origin: input.kind === 'desktop' ? 'desktop' : 'plugin',
           addedAt: now(),
+          deviceId: newDeviceId(),
           ...(input.kind === 'credentials' && input.label !== undefined ? { label: input.label } : {}),
           ...(input.kind === 'credentials' && input.phone !== undefined ? { phone: input.phone } : {}),
           ...(input.kind === 'credentials' && input.userId !== undefined ? { userId: input.userId } : {}),
@@ -365,16 +419,61 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
       })
     },
 
-    async markUnavailable(id, code, message) {
-      if (id === DESKTOP_ACCOUNT_ID) return
+    /**
+     * 记一次失败，并返回这次实际生效的冷却窗口。
+     *
+     * 普通失败（401、额度）用基础窗口；**限流（`RATE_LIMIT`）走指数阶梯**：
+     * 上一次失败还没出冷却就再次命中 → 窗口翻倍，封顶六小时。连续命中说明
+     * 上游风控（如小浣熊 `200108`「异常调用」）没有解除，反复去试只会把限制
+     * 一次次加深。窗口从"这次失败的落点在上次窗口的第几级"推导（见
+     * `core/pool.ts`），不用给账号表加迁移列。
+     */
+    async markUnavailable(id, code, message): Promise<AccountBenchVerdict | undefined> {
+      if (id === DESKTOP_ACCOUNT_ID) return undefined
+      const at = now()
+      let windowMs = baseCooldownMs()
+      let recoverAt = at + windowMs
       await mutate((current) => {
         const match = current.accounts.find((account) => account.id === id)
         if (match === undefined) return current
-        match.unavailableAt = now()
+        const previousUntil = match.unavailableUntil
+        match.unavailableAt = at
         match.unavailableCode = code
         match.unavailableMessage = message
+        if (code === RATE_LIMIT_CODE) {
+          /*
+           * 窗口在失败那一刻定死，并把连续命中次数一起落盘：
+           *
+           * - 上次的禁用还没到期就再次命中 → 档位 +1（风控没解除，别指望立刻好）；
+           * - 上次已到期/没有记录 → 重新从第一级开始（这次是新的一次限流）。
+           *
+           * 重启不会把一个还被限制的账号放回池里——档位和解禁时刻都在文件里。
+           */
+          const stillBenched = previousUntil !== undefined && at < previousUntil
+          const streak = (stillBenched ? (match.unavailableStreak ?? 1) : 0) + 1
+          match.unavailableStreak = streak
+          windowMs = rateLimitCooldownMs(streak, baseCooldownMs())
+          match.unavailableUntil = at + windowMs
+          recoverAt = at + windowMs
+        } else if (classifyUnavailable(code, message) === 'points') {
+          /*
+           * 额度用光：窗口比普通失败长，但照样"在失败那一刻定死并落盘"。
+           *
+           * 两个都要：不落盘的话，重启就把一个零余额账号放回池里；写基础窗口的话，
+           * 它会每十分钟被挑一次、烧一次必然失败的调用。解禁主路径是"读到余额
+           * 又大于 0 时 markHealthy"（见 `core/credits.ts#applyZeroPoints`）。
+           */
+          delete match.unavailableStreak
+          windowMs = pointsCooldownMs()
+          match.unavailableUntil = at + windowMs
+          recoverAt = at + windowMs
+        } else {
+          delete match.unavailableUntil
+          delete match.unavailableStreak
+        }
         return current
       })
+      return { cooldownMs: windowMs, recoverAt }
     },
 
     async markHealthy(id) {
@@ -383,6 +482,8 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
         const match = current.accounts.find((account) => account.id === id)
         if (match === undefined) return current
         delete match.unavailableAt
+        delete match.unavailableUntil
+        delete match.unavailableStreak
         delete match.unavailableCode
         delete match.unavailableMessage
         return current
@@ -445,6 +546,7 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
             material: entry.material,
             origin: 'plugin',
             addedAt: now(),
+            deviceId: newDeviceId(),
             ...(entry.label === undefined ? {} : { label: entry.label }),
             ...(entry.phone === undefined ? {} : { phone: entry.phone }),
             ...(entry.userId === undefined ? {} : { userId: entry.userId }),
@@ -500,6 +602,14 @@ export function createAccountsStore(options: AccountsStoreOptions): AccountsStor
       const desktop = await desktopAccount()
       return desktop === undefined ? stored : [...stored, desktop]
     },
+
+    async ensureDeviceIds() {
+      const before = await load(true)
+      const missing = before.accounts.filter((account) => account.deviceId === undefined || account.deviceId.length === 0)
+      if (missing.length === 0) return 0
+      await seedDeviceIds()
+      return missing.length
+    },
   }
 }
 
@@ -511,13 +621,32 @@ interface BundleEntry {
   userId?: string
 }
 
+/**
+ * 认得出"登录态"的字段名。
+ *
+ * 为什么包含 snake_case：用户最自然的导入动作是**直接把客户端自己的
+ * `auth.json` 粘进来**，那份文件里是 `access_token`（小浣熊 `boxAgentAuthFile.js`
+ * 的写入契约）。只认 camelCase 的 `accessToken` 时，粘贴会"成功返回 0 条"——
+ * 没有错误、也没有账号，最难排查的一类静默失败。
+ */
+const MATERIAL_FIELDS = ['material', 'session', 'token', 'accessToken', 'access_token', 'auth_token'] as const
+
+/** 从一份文档里取出登录态；`Bearer ` 前缀会被剥掉（有些人连请求头一起粘）。 */
+function pickMaterial(value: Record<string, unknown>): string | undefined {
+  for (const field of MATERIAL_FIELDS) {
+    const candidate = value[field]
+    if (typeof candidate !== 'string') continue
+    const material = candidate.trim().replace(/^Bearer\s+/iu, '').trim()
+    if (material.length > 0) return material
+  }
+  return undefined
+}
+
 /** Accept our own bundle, a bare array, or one desktop `auth-session.json`. */
 function entriesOf(document: unknown): BundleEntry[] {
   const entries: BundleEntry[] = []
   const push = (value: Record<string, unknown>): void => {
-    const material = [value['material'], value['session'], value['token'], value['accessToken']].find(
-      (candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0,
-    )
+    const material = pickMaterial(value)
     if (material === undefined) return
     entries.push({
       material,

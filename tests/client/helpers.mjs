@@ -25,7 +25,7 @@ let ReactDOMClient
 let clientExports
 
 /** Create the DOM exactly once per test process. */
-export async function setupDom() {
+export function setupDom() {
   if (dom !== undefined) return
   dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
     url: 'http://127.0.0.1:3080/',
@@ -51,14 +51,18 @@ export async function setupDom() {
  * 不是产品的问题。每个用例从一套新 DOM 开始就没有这个耦合。
  */
 export async function resetDom() {
-  if (dom !== undefined) {
-    dom.window.close()
-    dom = undefined
-  }
-  for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'Event', 'MouseEvent', 'KeyboardEvent', 'getComputedStyle']) {
-    Reflect.deleteProperty(globalThis, key)
-  }
-  await setupDom()
+  /*
+   * **复用同一个 window**，只清空文档内容。
+   *
+   * 早先每次用例都 close 掉旧 jsdom 再建新的——对纯 React 组件没问题，但
+   * `react-dom` 在**初始化时**就记住了 document（bundle 顶层 require('react-dom')，
+   * 与真实浏览器一致）。换掉 window 之后，事件系统还挂在那个已经被 close 的
+   * document 上：点击不再触发、受控输入不再更新，症状是"点了没反应"，而不是报错。
+   * 真实浏览器里 document 不会中途换人，这里也不该换。
+   */
+  setupDom()
+  globalThis.document.head.innerHTML = ''
+  globalThis.document.body.innerHTML = ''
 }
 
 /** The DOM window (after {@link setupDom}). */
@@ -74,6 +78,12 @@ export function window() {
  */
 export function loadClient() {
   if (clientExports !== undefined) return clientExports
+  /*
+   * bundle 顶层会 `require('react-dom')`（浮层要 portal），而 react-dom 在初始化
+   * 时就需要一个 document：先建好 jsdom，否则它会按"无 DOM 环境"初始化，之后再
+   * 渲染出来的组件事件与状态更新全部失效。
+   */
+  setupDom()
   const source = readFileSync(new URL('../../lib/client.js', import.meta.url), 'utf8')
   const loaded = []
   const loaderWindow = {
@@ -113,6 +123,7 @@ export function loadClient() {
   if (bundle.id !== 'dsh-connect-desktop') throw new Error(`unexpected bundle id ${bundle.id}`)
   clientExports = bundle.factory((id) => {
     if (id === 'react') return nodeRequire('react')
+    if (id === 'react-dom') return nodeRequire('react-dom')
     if (id === 'react/jsx-runtime') return nodeRequire('react/jsx-runtime')
     if (id === 'react/jsx-dev-runtime') return nodeRequire('react/jsx-dev-runtime')
     throw new Error(`unexpected runtime require(${id}) — the bundle must only use platform seeds`)

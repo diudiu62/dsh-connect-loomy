@@ -33,14 +33,31 @@ import {
 import { createProvider, type Provider } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import type { CatalogModel } from '../shared/views.js'
-import type { ChatDriver, Logger, ResolvedCredential, RouteEntry } from '../vendor-sdk/contracts.js'
-import { disqualifiesAccount } from './pool.js'
+import type {
+  AccountBenchVerdict,
+  ChatDriver,
+  Logger,
+  ResolvedCredential,
+  RouteEntry,
+  VendorHeaderContext,
+} from '../vendor-sdk/contracts.js'
+import { createConcurrencyGate, type ConcurrencyGate } from './gate.js'
+import { disqualifiesAccount, disqualifiesFailureCode } from './pool.js'
 
 /** No per-token pricing is knowable for a points-billed subscription. */
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const
 
 /** Idle timeout for one stream read (upstream can be slow, never silent). */
 const STREAM_IDLE_TIMEOUT_MS = 300_000
+
+/**
+ * 供应商没声明并发上限时的默认值：**不设闸**。
+ *
+ * 上游容忍几路并发是协议事实，只有供应商知道（小浣熊声明 2，见
+ * `vendors/raccoon` 的 `maxConcurrentPerAccount`）。core 不替任何一家猜，
+ * 否则一次"以为安全的默认"会让别家的并行对话莫名其妙排队。
+ */
+export const DEFAULT_ACCOUNT_CONCURRENCY = 0
 
 /**
  * Request image bounds. The gateways' real limits are unmeasured, so these are
@@ -126,9 +143,18 @@ export interface ChatRuntimeOptions {
   onModelsRead?: () => void
   /** One call may try this many accounts while nothing was streamed (default 2). */
   retryLimit?: number
+  /**
+   * 每账号并发上限（同时在飞的请求数）；≤0 表示不设闸，缺省 {@link DEFAULT_ACCOUNT_CONCURRENCY}。
+   *
+   * 为什么存在：官方桌面客户端对自己的上游调用是串行/低并发的（小浣熊本地中继
+   * 自限 2 路），而 harness 会并发开多路。2026-11-23 九个小浣熊账号在 90 秒内被
+   * 上游风控 `200108`「异常调用」整体限制，诱因之一就是这个形态差。闸门让调用
+   * 排队而不是发出去——见 `core/gate.ts`。
+   */
+  concurrency?: () => number
   pool?: {
     markHealthy(id: string): Promise<void>
-    markUnavailable(id: string, code: string, message: string): Promise<void>
+    markUnavailable(id: string, code: string, message: string): Promise<AccountBenchVerdict | undefined>
   }
   /** Vendor-specific disqualifying patterns, appended to the shared list. */
   extraPatterns?: RegExp
@@ -159,8 +185,15 @@ export interface ChatRuntime {
  * look healthy again just by being picked.
  */
 class PoolAdapter extends PiAiAdapter {
-  /** Per-call selection, so two concurrent calls cannot spend the same account. */
-  readonly callContext = new AsyncLocalStorage<{ accountId?: string }>()
+  /**
+   * Per-call bookkeeping shared between the retry loop and `guard`.
+   *
+   * `accountId`/`deviceId` are parked here by `resolveApiKey` (the only async
+   * scope that knows which account the call authenticates as); the concurrency
+   * slot acquired for that account is released in `guard`'s finally block, on
+   * success, failure and abort alike.
+   */
+  readonly callContext = new AsyncLocalStorage<{ accountId?: string; deviceId?: string; signal?: AbortSignal; release?: () => void }>()
 
   constructor(
     config: PiAiAdapterOptions,
@@ -168,6 +201,8 @@ class PoolAdapter extends PiAiAdapter {
       isOwnRoute: (provider: string) => boolean
       pool?: ChatRuntimeOptions['pool']
       retryLimit: number
+      /** Per-account concurrency gate; `undefined` means unlimited. */
+      gate?: ConcurrencyGate
       extraPatterns?: RegExp
       explainAmbiguousFailure?: ChatDriver['explainAmbiguousFailure']
       resolveAttachments?: () => AttachmentStore | undefined
@@ -203,6 +238,14 @@ class PoolAdapter extends PiAiAdapter {
    * synchronously, and an async generator's body runs on the first `next()` —
    * long after `run` returned. Each `next()` is therefore executed *inside* the
    * store, which is what makes the account attribution correct under concurrency.
+   *
+   * **Consumer contract**: drive this iterable to `done`, or close it
+   * (`iterator.return()` / `break` out of `for await`). The concurrency slot is
+   * released in the `finally` below either way — including the case where the
+   * inner `guard` generator was abandoned mid-flight — so an early `break`
+   * never leaks a slot. What does leak is an iterable that is created and then
+   * neither iterated nor closed (nothing can run then); callers must always
+   * close one they start.
    */
   private wrap(options: GenerateOptions, invoke: () => AsyncIterable<StreamChunk>): AsyncIterable<StreamChunk> {
     if (!this.options.isOwnRoute(options.provider)) return this.guard(invoke(), undefined)
@@ -210,10 +253,12 @@ class PoolAdapter extends PiAiAdapter {
     const limit = Math.max(1, this.options.retryLimit)
     return (async function* accounted(): AsyncGenerator<StreamChunk, void, undefined> {
       for (let attempt = 1; ; attempt += 1) {
-        const context: { accountId?: string } = {}
+        const context: { accountId?: string; deviceId?: string; signal?: AbortSignal; release?: () => void } = {
+          signal: options.signal,
+        }
+        const iterator = self.guard(invoke(), context)[Symbol.asyncIterator]()
         let yielded = false
         try {
-          const iterator = self.guard(invoke(), context)[Symbol.asyncIterator]()
           for (;;) {
             const step = await self.callContext.run(context, () => iterator.next())
             if (step.done === true) return
@@ -226,6 +271,19 @@ class PoolAdapter extends PiAiAdapter {
           // would duplicate the answer mid-sentence. The failed account is
           // already benched by `guard`, so the next pick differs.
           if (yielded || attempt >= limit) throw error
+        } finally {
+          /*
+           * 提前放弃（`break`/`return()`）时，`guard` 的 `finally` 可能还没执行：
+           * 显式关闭内层迭代器，再兜底释放一次槽位（release 是幂等的）。不关闭
+           * 的话 generator 悬在 `yield` 上，槽位要等 GC，等于永久泄漏。
+           */
+          try {
+            await iterator.return?.(undefined)
+          } catch {
+            // 关闭失败不该盖掉真正的错误：槽位照样在下面兜底释放。
+          }
+          context.release?.()
+          context.release = undefined
         }
       }
     })()
@@ -233,7 +291,7 @@ class PoolAdapter extends PiAiAdapter {
 
   private async *guard(
     upstream: AsyncIterable<StreamChunk>,
-    context: { accountId?: string } | undefined,
+    context: { accountId?: string; deviceId?: string; signal?: AbortSignal; release?: () => void } | undefined,
   ): AsyncGenerator<StreamChunk, void, undefined> {
     let outputTokens = 0
     let contentSeen = false
@@ -262,7 +320,11 @@ class PoolAdapter extends PiAiAdapter {
       const id = context?.accountId
       if (id !== undefined) {
         if (finishFailure !== undefined) {
-          if (finishFailure.code === 'MISSING_CREDENTIAL' || disqualifiesAccount(finishFailure.message, this.options.extraPatterns)) {
+          if (
+            finishFailure.code === 'MISSING_CREDENTIAL' ||
+            disqualifiesFailureCode(finishFailure.code) ||
+            disqualifiesAccount(finishFailure.message, this.options.extraPatterns)
+          ) {
             await this.options.pool?.markUnavailable(id, finishFailure.code, finishFailure.message).catch(() => undefined)
           }
         } else if (contentSeen) {
@@ -282,11 +344,19 @@ class PoolAdapter extends PiAiAdapter {
               : 'CALL_FAILED'
         // The code is authoritative: MISSING_CREDENTIAL means "this account
         // cannot work", whatever wording the message happens to carry.
-        if (code === 'MISSING_CREDENTIAL' || disqualifiesAccount(message, this.options.extraPatterns)) {
+        if (
+          code === 'MISSING_CREDENTIAL' ||
+          disqualifiesFailureCode(code) ||
+          disqualifiesAccount(message, this.options.extraPatterns)
+        ) {
           await this.options.pool?.markUnavailable(id, code, message).catch(() => undefined)
         }
       }
       throw this.explainAttachmentFailure(error)
+    } finally {
+      // 无论成功、失败还是中止，都把并发闸门的槽位还回去；没有槽位（未取号、
+      // 未设闸）就是空操作。
+      context?.release?.()
     }
   }
 
@@ -380,6 +450,17 @@ export function createChatRuntime(options: ChatRuntimeOptions): ChatRuntime {
   let profiles = buildProfiles(routes)
   let adapterRef: PoolAdapter | undefined
 
+  /**
+   * Per-account concurrency gate.
+   *
+   * The limit is re-read on every acquire, so a settings/vendor change applies
+   * to the next call without a restart. Every account gets its own key; calls
+   * without an account (none today) share the vendor key.
+   */
+  const gate = createConcurrencyGate({
+    limit: () => options.concurrency?.() ?? DEFAULT_ACCOUNT_CONCURRENCY,
+  })
+
   const adapter = new PoolAdapter(
     {
       // A new Map instance is what tells PiAiAdapter its snapshot is stale; an
@@ -387,16 +468,44 @@ export function createChatRuntime(options: ChatRuntimeOptions): ChatRuntime {
       profiles: () => profiles,
       resolveApiKey: async (route) => {
         const credential = await options.resolveCredential(route)
-        // Attribute this call to its account so a failure can bench it.
-        const context = adapterRef?.callContext.getStore()
-        if (context !== undefined && credential.accountId !== undefined) context.accountId = credential.accountId
         if (credential.material.length === 0) {
           throw new LlmError(credential.problem ?? '没有可用的登录态。', 'MISSING_CREDENTIAL')
+        }
+        // Attribute this call to its account so a failure can bench it — and
+        // hold a concurrency slot for it. The slot is taken **here**, inside the
+        // call's async scope, and released when the stream ends (`guard`'s
+        // finally). A retry picks another account, so each attempt takes its own
+        // slot; extra callers queue FIFO instead of hammering the upstream.
+        const context = adapterRef?.callContext.getStore()
+        if (context !== undefined) {
+          if (credential.accountId !== undefined) context.accountId = credential.accountId
+          if (credential.deviceId !== undefined) context.deviceId = credential.deviceId
+          if (context.release === undefined) {
+            try {
+              context.release = await gate.acquire(
+                credential.accountId ?? `${options.vendorId}:shared`,
+                context.signal,
+              )
+            } catch (error) {
+              // Aborted while queued: surface the abort, never a fake credential.
+              if ((error as Error | undefined)?.name === 'AbortError') {
+                throw new LlmError('调用在并发排队中被中止。', 'ABORTED', { cause: error })
+              }
+              throw error
+            }
+          }
         }
         return credential.material
       },
       auth: inertAuth(options.vendorId),
-      prepareHeaders: (request, headers) => options.chat.prepareHeaders(request, headers),
+      prepareHeaders: (request, headers) => {
+        const store = adapterRef?.callContext.getStore()
+        const context: VendorHeaderContext = {
+          ...(store?.accountId === undefined ? {} : { accountId: store.accountId }),
+          ...(store?.deviceId === undefined ? {} : { deviceId: store.deviceId }),
+        }
+        return options.chat.prepareHeaders(request, headers, Object.keys(context).length === 0 ? undefined : context)
+      },
       ...(options.attachments === undefined ? {} : { resolveAttachments: options.attachments }),
       ...(options.imageAccess === undefined
         ? {}
@@ -409,6 +518,7 @@ export function createChatRuntime(options: ChatRuntimeOptions): ChatRuntime {
       isOwnRoute: (provider) => routeSet().has(provider),
       ...(options.pool === undefined ? {} : { pool: options.pool }),
       retryLimit: options.retryLimit ?? 2,
+      gate,
       ...(options.extraPatterns === undefined ? {} : { extraPatterns: options.extraPatterns }),
       ...(options.chat.explainAmbiguousFailure === undefined
         ? {}

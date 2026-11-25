@@ -64,6 +64,11 @@ export function CreditsBody({ t, capability, state, onRetry }: CreditsBodyProps)
         用户至少能看到"最近花了多少"，这在余额接口被限流时是最有用的信息。
       */}
       {balanceMissing ? <Notice tone="info">{t('credits.balanceUnavailable')}</Notice> : null}
+      {/*
+        兜底来源必须说出来：`setting_info` 只有一个「可用积分」，
+        用户看到单个数字时不该以为分桶接口好了。
+      */}
+      {view.degraded === 'setting_info' ? <Notice tone="info">{t('credits.degraded')}</Notice> : null}
       {capability.kind === 'balance' && !balanceMissing ? (
         <BalanceGrid t={t} capacity={capability} view={view} />
       ) : null}

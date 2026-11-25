@@ -95,16 +95,33 @@ if (rotated) credentials.write(next, 'refresh')
 
 ## 2. 请求头
 
-| 头 | 实测值 | 必要性 |
-|---|---|---|
-| `Authorization` | `Bearer <access_token>` | 必需 |
-| `Content-Type` | `application/json` | POST 必需 |
-| `X-Client-Platform` | `desktop` | 未验证是否校验，照发 |
-| `X-Client-Version` | `2.0.0` | 未验证是否校验 |
-| `X-Client-Device-ID` | `clientDeviceId` | 未验证 |
-| `X-Org-Code` | 个人账号为空串 | 企业账号才需要 |
+**2026-11-23 复核**：把本机安装的 `1.2.0` 客户端的 `app.asar` 拆开后，2.0.0 时代
+的那张表已经过时——真实的字段集比当年多两个，`platform` 的取值也变了。
 
-除 `Authorization` 外的四个头在本次取证中**缺省也返回 200**，按客户端行为照发（零成本保险）。
+| 头 | 实测值（asar 证据） | 来源 |
+|---|---|---|
+| `Authorization` | `Bearer <access_token>` | 唯一凭据 |
+| `Content-Type` | `application/json` | — |
+| `X-Client-Platform` | `desktop-macos` / `desktop-windows` / `desktop-linux` | 主进程按 `process.platform` 映射（`desktopDeviceIdentity.js`） |
+| `X-Client-Version` | `app.getVersion()`（本机 `1.2.0`） | asar `package.json` 的 `version`，与 `Info.plist` 一致 |
+| `X-Client-Device-ID` | `clientDeviceId` | `desktop-device-identity.json` |
+| `X-Client-Name` | `raccoon-work` | asar `package.json` 的 `clientName` |
+| `X-Client-Page` | 页面路由名 / `background` | `requestHeaders.js`：无页面上下文的调用发 `background` |
+| `X-Org-Code` | 企业号才发 | 渲染层 `createHeaders()` |
+
+另有两点改变了认知：
+
+1. **这些头不是鉴权必需**：客户端自己的本地模型中继（`dist/electron/main.cjs`
+   的 `hostedModelRelay`）转发 chat 请求时只发 `content-type` + `authorization`
+   两个头，一个 `X-Client-*` 都没有。它们的角色是**风控画像**——网关拿它们给
+   流量归档，所以插件按客户端行为照发（"照发"从保险变成了必需）。
+2. **官方客户端的调用形态是低并发的**：本地中继自限 2 路在飞请求
+   （`upstreams.size >= 2 → 本地 429`），`maxConnections = 4`。插件多路并发 +
+   多账号共用一个 device id，就是 2026-11-23 `200108` 连环限流的画像
+   （见 §10）。
+
+除 `Authorization` 外的头在 2026-11-17 的取证里缺省也返回 200（协议不校验），
+但**协议不校验 ≠ 风控不看**。
 
 ## 3. 模型目录
 
@@ -313,23 +330,119 @@ node:crypto 抛 `Invalid key length`。现在第二参数改为忽略的 `nation
   （20 条），因为多翻页会把一次只读查询变成 N 次上游请求。
 - 不知道 `limit` 参数是否被接受：**未验证**，不要依赖它。
 
-### 7.1 一个已知的上游差异：`balance` 会比 `bills` 更早 403
+### 7.1 `balance` 的**裸域**被路由级封锁，`www.` 子域可用
+
+2026-11-25 订正。早前这一节把 403 记成"频率/风控、隔一会儿恢复"，**那个结论是错的**。
 
 实测同一 token、同一时刻：
 
 | 端点 | 结果 |
 | --- | --- |
-| `GET /api/web/points/v2/bills` | `200` |
-| `GET /api/web/points/v1/balance` | `403`（空 body） |
+| `GET https://xiaohuanxiong.com/api/web/points/v1/balance` | `403` + 空 body + `X-TT-System-Error: 3` |
+| `GET https://www.xiaohuanxiong.com/api/web/points/v1/balance` | `200`，六个桶齐全 |
+| 裸域 `points/v2/bills` / `v1/tasks` / `office/v3/setting_info` | `200` |
+| 裸域 `llm/v2/model_catalog` | `200` |
 
-403 带空 body 是网关/WAF 的特征（业务错误会返回 `{code: 20xxxx, message}`）。
-短时间内对 `balance` 连打十几次会稳定复现；隔一段时间恢复。**`bills` 不受影响**。
+判据：
 
-客户端缓存（`user-data/Cache/Cache_Data`）里能看到同一个 `balance` 请求返回过
-`{"code":0,…,"available_points":8974,…}`，所以接口本身是好的——是**频率/风控**，
-不是协议问题。插件的对策：
+- **不带 token 也是 403**（不是 401）——拦在鉴权之前，属于**路由级封锁**，不是凭据问题；
+- GET/POST/OPTIONS/HEAD、换 UA、换 `X-Client-*`、加 `Origin`/`Referer`、静默 90 秒后
+  单发，全部 403——与请求形态和频率都无关；
+- 同一时刻换 `www.` 子域，同一路径、同一 token → 200。
 
-- 逐账号余额只在**账号页**读（`?accounts=1`），额度面板只读总额；
-- 逐账号读取**限并发 3**；
+旁证：客户端 Chromium 缓存里那条 200 的 `balance` 响应来自 `www.` 域；另一个项目
+（robotaxi 的小浣熊巡检）也独立得出了同样的结论，并保留了"先 www、再回落裸域"的
+候选链。插件的对策：
+
+- **余额按 `[www 子域, 裸域]` 顺序尝试**（`balanceUrls()`）：默认配置下 www 优先、
+  裸域兜底；用户自己改过 `pointsURL` 时，尊重配置优先；
+- 两条都不通时，退到 `office/v3/setting_info` 的 `available_points`（官方客户端首页
+  那个数，只有一个桶），并用 `degraded: 'setting_info'` 让界面说明来源；
+- 诊断页的 `balance` 探针走**同一条**候选链，否则余额能读也会报 403；
+- 逐账号余额**一条一条懒加载**（`GET <vendor>/credits/account?id=…`）：账号行先画
+  出来、数字随到随填。批量 `?accounts=1` 仍保留给 CLI 与一次性读取，但界面不再用它
+  ——90 个账号的批量要 5 秒以上，抽屉在那段时间里是一列空的 `—`；
+- 逐账号读取**限并发 2 + 每账号间隔 120ms**（对齐官方客户端的 2 路本地中继；
+  3 路并发仍会把网关的突发限流打出来）；
 - 逐账号**不取账单**（那是 N 倍的请求，且明细只需在总额层面展示一次）；
-- 余额失败**不伪造 0**，如实报错；账单失败**不影响余额**。
+- 余额失败**不伪造 0**，如实报错；账单失败**不影响余额**；
+- **失败负缓存 60 秒**（`CREDITS_FAILURE_TTL_MS`）：一个 key 失败之后窗口内不再
+  打上游，直接把同一个失败重放给界面；窗口内用户点 ↻（`force=1`）仍然真的再试。
+  这是最关键的一条——没有它，"被限流"会被自己的重试续命；
+- **总额被限流即整轮短路**：`surface.credits()` 拿到 403/429 类失败后不再逐账号
+  fan-out（旧行为是照样打 N 次，用户点一次刷新就往风控里再推 N 个请求）；
+- 胶囊的静默重试只对抖动类失败；限流/额度类不重试。
+
+---
+
+## 10. 429 与账号级风控（2026-11-23 实测）
+
+### 10.1 错误形态
+
+`POST /chat/completions` 被限流时返回 **HTTP 429**，body 是一个业务信封而不是
+OpenAI 标准错误：
+
+```json
+{"code":200108,
+ "message":"系统检测到当前账号存在异常调用，模型调用功能已暂时受限。请稍后重试；如仍未恢复，或你认为是误判，请点击左下角头像，选择「问题反馈」提交说明。",
+ "type":"rate_limit_error"}
+```
+
+要点：
+
+- `code: 200108` 是**账号级**风控（"异常调用"画像命中），不是普通的 QPS 限流；
+- 文案里已经写明"模型调用功能已暂时受限"——继续打只会把限制确认一遍；
+- 同一批账号会在**同一分钟内**被整体打上：2026-11-23 09:30:52–09:32:19，
+  9 个插件账号里 8 个在 90 秒内全部 429（另一个 09:08 是 401 `200003`）。
+
+### 10.2 为什么插件比官方客户端容易中
+
+| 维度 | 官方客户端 | 修复前的插件 |
+|---|---|---|
+| 并发 | 本地中继自限 **2** 路在飞 | harness 无上限（agent loop / 子代理 / 后台摘要） |
+| 设备标识 | 一次安装一个 `clientDeviceId` | 9 个账号共用桌面端那一个 |
+| UA / SDK 指纹 | Electron Chromium | `deepseek-harness/<ver>` + `x-stainless-*` 全套 |
+| 平台/版本头 | `desktop-macos` / `1.2.0` / `raccoon-work` | `desktop` / `2.0.0` / 缺 `X-Client-Name`、`X-Client-Page` |
+| 全池冷却时 | 不适用（单会话串行） | 挑"最久没失败"的账号**继续打** |
+| 限流冷却 | 不适用 | 固定 10 分钟，到点即回池 |
+
+### 10.3 现在的防御（代码位置）
+
+1. **每账号并发闸门**：`core/gate.ts` + `core/provider.ts`，供应商用
+   `concurrency()` 声明上限；小浣熊默认 2（配置项 `concurrency`，0 = 不限）。
+   超出的调用排队，不发给上游。
+2. **全池冷却即停手**：`vendors/raccoon/index.ts` 的 `pickCredential` 在
+   `none-healthy` 且还有可恢复账号时直接返回"最早 HH:MM 自动恢复"的错误
+   （code `POOL_COOLING`，与 `MISSING_CREDENTIAL` 区分开：冷却时用户是已登录的，
+   选择器分组保持可见），不再把被限制的账号送上去。
+3. **指数冷却 + 持久化**：限流命中第 N 次就乘 `RATE_LIMIT_COOLDOWN_STEPS`
+   （10→20→40→80→160 分钟，封顶六小时），解禁时刻 `unavailableUntil` 与
+   连续次数 `unavailableStreak` 都写进账号文件，重启不忘。成功一次才清零。
+   桌面令牌的 bench 走 `core/pool.ts` 的共享 `createDesktopBench`（内存态，
+   重启清零），Loomy 与小浣熊同一份实现。
+4. **积分读取自己节流**：失败负缓存 + 总额限流短路 + 逐账号 2 路/120ms 间隔，
+   见 §7.1；`balance` 的 403 是**裸域路由级封锁**（`www.` 正常），不是协议问题。
+5. **额度用光单独一档**：`积分不足` / `余额不足` / `QUOTA_*` 归到 `points`
+   （`classifyUnavailable`），窗口固定 30 分钟（`DEFAULT_POINTS_COOLDOWN_MS`），
+   **不打指数阶梯**——等待不会给账号充值，升档只会把"我刚充完钱"的人挡在门外。
+   读到余额为 0 时立刻按这一档暂停（`core/credits.ts#applyZeroPoints`，两家共用），
+   不必等上游回一句失败；余额读回正数就 `markHealthy` 立刻解除。余额桶自己被
+   限流（`partial: 'balance_unavailable'`，`fields` 为空）时**不动池**：读不到数字
+   不是"没钱"。
+6. **逐账号设备标识**：`core/accounts.ts` 给每个插件账号生成一个 uuid
+   （与官方 `clientDeviceId` 同形），聊天/目录/余额请求按账号发送；桌面端身份
+   仍用客户端自己的那份。
+7. **请求头对齐**：平台值按 `process.platform` 映射、版本号运行时读 aapp.asar
+   （读不到才用常量 `1.2.0`），补 `X-Client-Name: raccoon-work` 与
+   `X-Client-Page: background`。
+
+仍**不可**消除的差异：`User-Agent` 由 DSH 的 pi-ai 适配器在 `prepareHeaders`
+之后强制覆盖为 `deepseek-harness/<ver>`（`dsh-llm-pi-ai` 的
+`requestHeaders()`），插件层覆盖不了；`x-stainless-*` 由 OpenAI SDK 自动附加。
+所以并发与节奏控制才是主要防线，头对齐只是减少额外的画像信号。
+
+### 10.4 未验证项
+
+- `200108` 的解除时长（观察到 10 分钟内未恢复；阶梯按六小时封顶设计）；
+- 是否按 IP 聚类（9 个账号同机、同出口 IP，无法在本机区分账号级与 IP 级）；
+- 官方客户端是否也会触发（单会话串行、无并发，未做对照实验）。

@@ -147,6 +147,14 @@ export interface CredentialDriver {
 
 // ── Accounts ───────────────────────────────────────────────────────────────
 
+/** One persisted bench verdict: how long an account is out and when it returns. */
+export interface AccountBenchVerdict {
+  /** Cooldown window applied to this failure, in milliseconds. */
+  cooldownMs: number
+  /** Epoch ms when the account may be picked again. */
+  recoverAt: number
+}
+
 /** What an account looks like to the generic surface. */
 export interface StoredAccount {
   id: string
@@ -158,8 +166,19 @@ export interface StoredAccount {
   origin: 'plugin' | 'desktop'
   addedAt?: number
   unavailableAt?: number
+  /** Epoch ms when the bench ends; the window is pinned at failure time and persists. */
+  unavailableUntil?: number
   unavailableCode?: string
   unavailableMessage?: string
+  /**
+   * 这台"客户端"为该账号生成的设备标识（uuid，与官方客户端
+   * `desktop-device-identity.json` 的 `clientDeviceId` 同形）。
+   *
+   * 官方客户端一次安装生成一个；插件接管多个账号时，如果九个账号共用桌面端
+   * 的那一个，风控看到的画像就是"同一台设备九个号并发调用"——2026-11-23 的
+   * `200108` 连环限流正是这个形态。逐账号各给一个 uuid，把并发画像拆开。
+   */
+  deviceId?: string
 }
 
 export type AccountInput =
@@ -173,8 +192,16 @@ export interface AccountDriver {
   setActive?(id: string | undefined): Promise<void>
   add(input: AccountInput): Promise<{ id: string; replaced: boolean }>
   remove(id: string): Promise<void>
-  /** Pool health writes; `core/pool.ts` calls these and nothing else does. */
-  markUnavailable(id: string, code: string, message: string): Promise<void>
+  /**
+   * Pool health writes; `core/pool.ts` calls these and nothing else does.
+   *
+   * May return the bench verdict the account actually received — the cooldown
+   * window and when it ends — so callers can quote a recovery time. Rate-limit
+   * benches grow the window exponentially and persist across restarts; vendors
+   * that cannot persist return `undefined` and the pool falls back to its own
+   * base window.
+   */
+  markUnavailable(id: string, code: string, message: string): Promise<AccountBenchVerdict | undefined>
   markHealthy(id: string): Promise<void>
   /** Provider route id for one account (`loomy-2`, `raccoon`, …). */
   routeOf(account: StoredAccount): string
@@ -270,6 +297,19 @@ export type LoginMethodKind = 'sms-code' | 'password'
 // ── Chat ───────────────────────────────────────────────────────────────────
 
 /** Everything the generic pi-ai adapter needs from a vendor. */
+/**
+ * Add the vendor's identifying headers to one request.
+ *
+ * The third argument is the per-call account context the provider runtime
+ * resolves just before headers are built (credential → headers in the same
+ * async scope, so it is always populated for a call with an account). Vendors
+ * use it to send a per-account device identity instead of one shared value.
+ */
+export interface VendorHeaderContext {
+  accountId?: string
+  deviceId?: string
+}
+
 export interface ChatDriver {
   /** Chat api id; must equal the value inside every model descriptor. */
   readonly api: 'openai-completions'
@@ -277,7 +317,7 @@ export interface ChatDriver {
   /** Convert one catalog entry into a pi-ai model for `route`. */
   toModel(model: CatalogModel, context: { baseUrl: string; route: string }): Model<'openai-completions'>
   /** Add the vendor's identifying headers to one request. */
-  prepareHeaders(request: PiAiRequestHeaderContext, headers: Headers): Headers
+  prepareHeaders(request: PiAiRequestHeaderContext, headers: Headers, context?: VendorHeaderContext): Headers
   /** Credential display name, for the picker's "not configured" copy. */
   readonly credentialName?: string
   /**
@@ -303,6 +343,15 @@ export interface ResolvedCredential {
   accountId?: string
   /** Executable message when signed out. */
   problem?: string
+  /**
+   * The device identity to send with this account (`X-Client-Device-ID`).
+   *
+   * Derived by the credential picker: stored accounts use their own uuid, the
+   * desktop identity uses the client's `desktop-device-identity.json`. Absent
+   * means "omit the header" — same as the official client when the file is
+   * missing.
+   */
+  deviceId?: string
 }
 
 
@@ -395,6 +444,15 @@ export interface VendorRuntime {
    */
   lastPick?(): { accountId?: string; at: number } | undefined
   /**
+   * 每账号并发上限（同时打上游的请求数）。
+   *
+   * 为什么供应商声明它：上游风控对"一个账号同时几路调用"的容忍度是**协议事实**
+   * ——官方小浣熊桌面端的本地中继自限 2 路并发（`dist/electron/main.cjs`
+   * `upstreams.size >= 2 → 429`）。闸门本体在 `core/gate.ts`，所有供应商共用；
+   * 这里只声明数值，缺省 2。返回 ≤0 表示不设闸。
+   */
+  concurrency?(): number
+  /**
    * 可选：对上游做一次**活体探针**（会真的发请求，`/models`、余额、身份）。
    *
    * 与 `credentials.read()` 的结构化报告互补：结构化报告回答"本地哪里有问题"，
@@ -425,6 +483,15 @@ export interface ProviderState {
    */
   models?: number
   error?: string
+  /**
+   * 「重新注册」按钮能不能帮上忙。
+   *
+   * 注册**被拒**（名字被占、瞬间失活、句柄失效）时为 true：再走一遍注册是有意义的。
+   * 而"被配置禁用""没有登录态""没有路由""双挂载让位"是重试也改变不了的状态——
+   * 修复动作在别处（启用配置、客户端登录、重新检测），按钮就是死控件。缺省按
+   * "可重试"处理：只有 registry 明确说 false 才隐藏按钮。
+   */
+  retryable?: boolean
 }
 
 export interface VendorSurface {
@@ -436,6 +503,13 @@ export interface VendorSurface {
     probes: DiagnosticsProbe[]
   }>
   credits(options?: { force?: boolean; withAccounts?: boolean }): Promise<CreditsReadout>
+  /**
+   * 一个账号的额度读readout——懒加载用的单条入口。
+   *
+   * 批量读取要等所有账号读完（90 个账号约 5 秒），界面就只能空着；有了这条，
+   * 前端先把账号行画出来，数字随到随填。缓存仍在 per-account memo 上。
+   */
+  accountCredits(accountId: string): Promise<CreditsReadout>
   catalogView(options?: { force?: boolean }): Promise<{ models: AccountlessCatalogRow[]; refreshedAt: number | null; selection: string[] | null }>
   saveSelection(ids: readonly string[]): Promise<string[]>
   accounts(): Promise<AccountsView>

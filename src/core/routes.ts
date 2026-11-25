@@ -13,13 +13,21 @@
 
 import type { RouteSpec } from './http.js'
 import type { VendorDescriptor, VendorSurface } from '../vendor-sdk/contracts.js'
-import type { ConfigFieldView } from '../shared/views.js'
+import type { ConfigFieldView, ProviderRegisterView } from '../shared/views.js'
 import { isRecord, safeErrorMessage } from '../shared/text.js'
 
 export interface PlanOptions {
   surface: VendorSurface
   /** Called after any mutation, so provider routes and caches are reconciled. */
   onChanged: () => Promise<unknown> | unknown
+  /**
+   * 「重新注册」：把 provider 注册流程**强制**再走一遍。
+   *
+   * 缺省回落到 `onChanged`（普通 reconcile）；registry 传入的是 manual 触发，
+   * 能解开"注册被拒后签名没变、自动路径永远早退"的死锁。CLI/测试不传时路由
+   * 照样存在——它只是退化为一次普通 reconcile。
+   */
+  onRegisterProvider?: () => Promise<unknown> | unknown
   /** Drop the memoised credential after a login/logout. */
   invalidate: () => void
   /** 读一家的配置片；缺省表示"没有 settings 服务"（CLI），于是不注册配置路由。 */
@@ -145,6 +153,30 @@ export function planVendorRoutes(options: PlanOptions): RouteSpec[] {
   }
 
   if (capabilities.credits.kind !== 'none') {
+    /*
+     * 单账号额度：给**懒加载**用。
+     *
+     * `credits?accounts=1` 会为每个账号打一次上游（2 并发 + 120ms 间隔），
+     * 90 个账号要 5 秒以上，抽屉就一直空着。这条让界面先画行、数字随到随填。
+     * 与批量那条共用 `surface` 的实现，所以"失效账号不再问上游"这类规则只有一处。
+     */
+    specs.push({
+      suffix: 'credits/account',
+      methods: ['GET'],
+      mutating: false,
+      run: async ({ query }) => {
+        const id = query.get('id')
+        if (id === null || id.length === 0) {
+          return { ok: false, error: { code: 'bad_request', message: '缺少账号 id。' } } as const
+        }
+        const readout = await surface.accountCredits(id)
+        if (readout.kind === 'failure') {
+          // HTTP 200 + ok:false：这一行要能显示上游原话，而不是"路由不存在"。
+          return { ok: false, error: { code: readout.failure.code, message: readout.failure.message } } as const
+        }
+        return { ok: true, ...readout.credits } as const
+      },
+    })
     specs.push({
       suffix: 'credits',
       methods: ['GET'],
@@ -366,7 +398,25 @@ export function planVendorRoutes(options: PlanOptions): RouteSpec[] {
             const result = await runtime.accounts?.importBundle?.(document)
             options.invalidate()
             await options.onChanged()
-            return { ok: true, added: result?.added ?? 0, refreshed: result?.refreshed ?? 0, skipped: result?.skipped ?? 0 }
+            const added = result?.added ?? 0
+            const refreshed = result?.refreshed ?? 0
+            /*
+             * "成功返回 0 条"是最难排查的一类静默失败：用户粘的是客户端自己的
+             * `auth.json`，字段名没认出来，界面却一声不吭。没有认出**任何**登录态
+             * 时如实报错，把认得出的形状列出来——用户自己就能看出差在哪。
+             */
+            if (added === 0 && refreshed === 0) {
+              return {
+                ok: false,
+                error: {
+                  code: 'import_unrecognized',
+                  message:
+                    '没有从这份内容里认出登录态，因此没有添加任何账号。支持：小浣熊客户端的 auth.json（含 access_token）、' +
+                    'Loomy 导出的账号包（含 session）、或本插件「导出」生成的账号包。',
+                },
+              }
+            }
+            return { ok: true, added, refreshed, skipped: result?.skipped ?? 0 }
           } catch (error) {
             return { ok: false, error: { code: 'import_failed', message: safeErrorMessage(error) } }
           }
@@ -409,6 +459,36 @@ export function planVendorRoutes(options: PlanOptions): RouteSpec[] {
       options.invalidate()
       const credential = await surface.credentialView()
       return { ok: true, credential, available: credential.found && credential.expired !== true }
+    },
+  })
+
+  // 重新注册：把 provider 注册流程强制再走一遍。
+  //
+  // 面向"已登录但模型选择器里没有这一组"的残局：注册被拒（名字被别的插件占用、
+  // INACTIVE_EFFECT、句柄失效）之后，自动 reconcile 被"签名没变"的幂等阀挡住，
+  // 错误说明会永远停在 /status 里。这条路由是卡片上「重新注册」按钮的后端。
+  //
+  // 门槛：`providerState` 存在（即 registry 在追踪注册）。CLI 没有它，注册这个
+  // 概念在那里根本不成立——又一个"能力为假就不注册"的例子。POST + CSRF：它会
+  // 改变宿主的路由表，不能让同机页面用 `<img>` 触发。
+  if (surface.providerState !== undefined) specs.push({
+    suffix: 'register',
+    methods: ['POST'],
+    mutating: true,
+    run: async () => {
+      try {
+        await (options.onRegisterProvider ?? options.onChanged)()
+      } catch (error) {
+        return { ok: false, error: { code: 'register_failed', message: safeErrorMessage(error) } }
+      }
+      const before = surface.providerState?.()
+      if (before === undefined) return { ok: true, registered: null, routes: [] } satisfies ProviderRegisterView
+      return {
+        ok: true,
+        registered: before.registered,
+        routes: [...before.routes],
+        ...(before.error === undefined ? {} : { error: before.error }),
+      } satisfies ProviderRegisterView
     },
   })
 

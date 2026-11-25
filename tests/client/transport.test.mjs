@@ -10,7 +10,7 @@ import { afterEach, test } from 'node:test'
 import { installFetch, mountPlugin } from './helpers.mjs'
 
 const { exports } = mountPlugin()
-const { requestVendor, fetchStatus, CSRF_HEADER } = exports
+const { requestVendor, fetchStatus, normalizeImportDocument, CSRF_HEADER } = exports
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -130,4 +130,89 @@ test('fetchStatus reads the plugin-level route and hands back the CSRF token', a
   assert.equal(result.kind, 'ok')
   assert.equal(result.value.csrfToken, 'tok')
   assert.equal(result.value.vendors.length, 0)
+})
+
+/**
+ * CSRF 自愈：DSH 重启后令牌轮换，而页面可能还是重启前打开的。宿主用 403
+ * `csrf_invalid` 回答；传输层自动取一次 /status 里的新令牌重发一次，用户不必
+ * 为此刷新页面。只重试一次，且只在 POST 上。
+ */
+/** A JSON Response the way `installFetch` function-routes must return it. */
+const json = (body, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+test('a stale csrf token is refreshed once and the request retried', async () => {
+  const postCalls = []
+  installFetch({
+    '/plugins/dsh-connect-desktop/loomy/accounts/import': (init) => {
+      postCalls.push(init)
+      const sent = new Headers(init.headers).get(CSRF_HEADER)
+      if (sent === 'fresh') return json({ ok: true, added: 1 })
+      return json({ ok: false, error: { code: 'csrf_invalid', message: 'stale' } }, 403)
+    },
+    '/plugins/dsh-connect-desktop/status': { body: { ok: true, csrfToken: 'fresh', vendors: [] } },
+  })
+
+  const result = await requestVendor({
+    vendorId: 'loomy',
+    suffix: 'accounts/import',
+    method: 'POST',
+    body: { document: {} },
+    csrf: 'stale',
+  })
+  assert.equal(result.kind, 'ok', '用新令牌重发后应成功')
+  assert.equal(postCalls.length, 2, '恰好重发一次')
+  assert.equal(new Headers(postCalls[1].headers).get(CSRF_HEADER), 'fresh')
+})
+
+test('the refresh does not loop when /status returns the same token', async () => {
+  let posts = 0
+  installFetch({
+    '/plugins/dsh-connect-desktop/loomy/accounts/import': () => {
+      posts += 1
+      return json({ ok: false, error: { code: 'csrf_invalid', message: 'stale' } }, 403)
+    },
+    '/plugins/dsh-connect-desktop/status': { body: { ok: true, csrfToken: 'stale', vendors: [] } },
+  })
+
+  const result = await requestVendor({
+    vendorId: 'loomy',
+    suffix: 'accounts/import',
+    method: 'POST',
+    csrf: 'stale',
+  })
+  assert.equal(result.kind, 'failed')
+  assert.equal(result.code, 'csrf_invalid')
+  assert.equal(posts, 1, '令牌没变：只发一次，不循环重试')
+})
+
+test('a GET never triggers the csrf refresh', async () => {
+  let statusCalls = 0
+  installFetch({
+    '/plugins/dsh-connect-desktop/loomy/accounts': () =>
+      json({ ok: false, error: { code: 'csrf_invalid', message: 'x' } }, 403),
+    '/plugins/dsh-connect-desktop/status': () => {
+      statusCalls += 1
+      return json({ ok: true, csrfToken: 'x', vendors: [] })
+    },
+  })
+  const result = await call()
+  assert.equal(result.kind, 'failed')
+  assert.equal(result.code, 'csrf_invalid')
+  assert.equal(statusCalls, 0, 'GET 不带令牌，也就没有刷新一说')
+})
+
+/**
+ * 小浣熊的客户端 `auth.json` 是 `access_token`（snake_case）。归一层必须认得它，
+ * 否则粘贴会一路原样发给宿主——旧版就是这样"成功返回 0 条"的。
+ */
+test('normalizeImportDocument maps a raccoon auth.json into the bundle shape', () => {
+  const normalized = normalizeImportDocument({
+    access_token: 'eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJzZXMtMDEifQ.sig',
+    office_identity: 'personal',
+  })
+  assert.equal(normalized.kind, 'dsh-connect-desktop/accounts')
+  const first = normalized.accounts[0]
+  assert.equal(first.session, 'eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJzZXMtMDEifQ.sig')
+  assert.equal(first.phone, undefined, 'auth.json 里没有手机号，不能编造')
 })

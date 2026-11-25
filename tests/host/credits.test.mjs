@@ -16,11 +16,18 @@ import {
   pointsBody,
 } from './helpers.mjs'
 import {
+  CREDITS_FAILURE_TTL_MS,
   clampPageSize,
+  createCreditsStore,
   fetchCredits,
+  isThrottleFailure,
   fetchIdentity,
+  fetchSettingPoints,
   normalizeLedgerRow,
   parseCreditsPayload,
+  parseSettingPoints,
+  settingInfoUrl,
+  wwwPointsUrl,
 } from '../../lib/index.js'
 
 const BASE = 'https://gateway.test/api/v1'
@@ -286,4 +293,152 @@ test('fetchBills sends the bearer token and the cursor, and never pads the query
 
   await fetchBills({ token: 'tok', cursor: 'abc', fetchImpl })
   assert.match(seen[1].url, /\?cursor=abc$/u)
+})
+
+// ── 小浣熊：余额端点的兜底来源 ────────────────────────────────────────────
+//
+// 2026-11-23 实测：`points/v1/balance` 对被插件用过的账号返回 403 空 body，
+// 而**同一个 token** 打 `office/v3/setting_info` 是 200 且带 `available_points`。
+// 兜底读的是这个数字——只有一个桶，但比整块 `—` 有用。
+
+test('the raccoon settings summary is used when the balance endpoint is refused', async () => {
+  // 地址从 baseURL 的 origin 推出来：配置换了 host，兜底也跟着换。
+  assert.equal(
+    settingInfoUrl('https://xiaohuanxiong.com/api/web/llm/v2'),
+    'https://xiaohuanxiong.com/api/web/office/v3/setting_info',
+  )
+  // 解析失败不抛：兜底接口的失败不该比余额的失败更响。
+  assert.equal(parseSettingPoints({ code: 0, data: { available_points: 9295 } }, NOW)?.available, 9295)
+  assert.equal(parseSettingPoints({ code: 0, data: {} }, NOW), undefined)
+  assert.equal(parseSettingPoints({ code: 1, data: { available_points: 1 } }, NOW), undefined)
+  assert.equal(parseSettingPoints(null, NOW), undefined)
+
+  // 403 必须抛（调用方据此继续降级到"仅明细"）。
+  await assert.rejects(() =>
+    fetchSettingPoints({
+      token: 't',
+      fetchImpl: async () => new Response('', { status: 403 }),
+    }),
+  )
+
+  const read = await fetchSettingPoints({
+    token: 't',
+    fetchImpl: async () =>
+      jsonResponse({ code: 0, message: 'success', data: { available_points: 6769 } }) ?? new Response(''),
+    now: () => NOW,
+  })
+  assert.equal(read.available, 6769)
+  assert.equal(read.at, NOW)
+})
+
+/**
+ * 读不到的余额不要连着问上游。
+ *
+ * 实测（`docs/raccoon-upstream.md` §7.1）：`points/v1/balance` 连打十几次就稳定
+ * 403 空 body。旧实现每次 UI 交互都重打一遍，被限流之后又把限流确认了一遍——
+ * 负缓存把"别马上再来"这个信号变成真的不再来；用户点刷新（`force`）仍然会试。
+ */
+test('a failed read is not re-asked inside the failure window', async () => {
+  let loads = 0
+  let perAccount = 0
+  let clock = 1_000
+  const store = createCreditsStore({
+    ttlMs: () => 60_000,
+    now: () => clock,
+    load: async () => {
+      loads += 1
+      throw Object.assign(new Error('403 status code (no body)'), { code: 'GATEWAY' })
+    },
+    loadForAccount: async () => {
+      perAccount += 1
+      throw new Error('403 status code (no body)')
+    },
+  })
+  const account = { id: 'a', material: 'x', origin: 'plugin' }
+
+  const first = await store.read()
+  assert.equal(first.kind, 'failure')
+  const replayed = await store.read()
+  assert.equal(replayed.kind, 'failure')
+  assert.equal(loads, 1, '窗口内不再打上游，但仍然诚实报失败')
+
+  const row = await store.readForAccount(account)
+  assert.equal(row.kind, 'failure')
+  await store.readForAccount(account)
+  assert.equal(perAccount, 1, '逐账号同样有负缓存')
+
+  // 用户明确刷新 → 真的再试一次。
+  await store.read({ force: true })
+  assert.equal(loads, 2)
+
+  // 窗口过去 → 允许再试。
+  clock += CREDITS_FAILURE_TTL_MS + 1
+  await store.read()
+  assert.equal(loads, 3)
+})
+
+test('throttle wording is recognised across both vendors', () => {
+  assert.equal(isThrottleFailure('403 status code (no body)'), true)
+  assert.equal(isThrottleFailure('429: {"code":200108,"message":"异常调用"}'), true)
+  assert.equal(isThrottleFailure('积分不足，请充值'), true)
+  assert.equal(isThrottleFailure('ECONNRESET socket hang up'), false)
+  assert.equal(isThrottleFailure('401: authorization_verify_error'), false)
+})
+
+test('a throttled total read stops the per-account fan-out', async () => {
+  const { createVendorSurface } = await import('../../lib/index.js')
+  let perAccount = 0
+  const runtime = {
+    credits: {
+      read: async () => ({
+        kind: 'failure',
+        failure: { at: 0, path: 'credits', code: 'GATEWAY', message: '403 status code (no body)' },
+      }),
+      readForAccount: async () => {
+        perAccount += 1
+        return { kind: 'ok', credits: { fields: { available: 1 }, fetchedAt: 0 } }
+      },
+    },
+    accounts: {
+      list: async () => [
+        { id: 'a', material: 'x', origin: 'plugin' },
+        { id: 'b', material: 'y', origin: 'plugin' },
+      ],
+      routeOf: () => 'demo',
+      displayNameOf: () => 'Demo',
+      markUnavailable: async () => undefined,
+      markHealthy: async () => undefined,
+    },
+    credentials: { read: async () => ({ found: false, candidates: [] }) },
+  }
+  const surface = createVendorSurface({
+    descriptor: { id: 'demo', displayName: 'Demo', accent: '#000', capabilities: {} },
+    runtime,
+  })
+  const readout = await surface.credits({ withAccounts: true })
+  assert.equal(readout.kind, 'failure')
+  assert.equal(perAccount, 0, '限流窗口里一个账号都不要打')
+})
+
+/**
+ * 裸域的余额路由被网关整条拦死（2026-11-25 实测）：
+ * `https://xiaohuanxiong.com/api/web/points/v1/balance` → 403 + 空 body +
+ * `X-TT-System-Error: 3`（拦在鉴权之前），而**同一路径换 `www.` 子域** → 200，
+ * 六个桶齐全。所以余额要先打 www 再回落裸域。
+ */
+test('the balance read moves to the www origin, keeping the bare domain as fallback', () => {
+  // 裸域 → www，路径与查询串原样保留。
+  assert.equal(
+    wwwPointsUrl('https://xiaohuanxiong.com/api/web/points/v1/balance'),
+    'https://www.xiaohuanxiong.com/api/web/points/v1/balance',
+  )
+  // 已经是 www 就不再叠加前缀。
+  assert.equal(
+    wwwPointsUrl('https://www.xiaohuanxiong.com/api/web/points/v1/balance'),
+    'https://www.xiaohuanxiong.com/api/web/points/v1/balance',
+  )
+  // 非 URL 输入原样返回：配置写错时不该把错误变成另一种错误。
+  assert.equal(wwwPointsUrl('not a url'), 'not a url')
+  // 自定义端口/子域也照常处理。
+  assert.equal(wwwPointsUrl('http://example.test:8080/p'), 'http://www.example.test:8080/p')
 })

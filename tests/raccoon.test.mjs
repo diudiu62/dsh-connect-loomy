@@ -24,6 +24,10 @@ import {
   parseCatalog,
   parseModel,
   raccoonHeaders,
+  createRaccoonChatDriver,
+  raccoonClientPlatform,
+  readRaccoonAppVersion,
+  DEFAULT_RACCOON_CLIENT_VERSION,
 } from '../lib/index.js'
 
 const CATALOG = {
@@ -137,10 +141,23 @@ test('catalog: empty or malformed bodies yield an empty list, never a throw', ()
 test('headers: bearer + client identity, org code only when set', () => {
   const base = raccoonHeaders('tok')
   assert.equal(base['Authorization'], 'Bearer tok')
-  assert.equal(base['X-Client-Platform'], 'desktop')
+  // 平台值对齐桌面端主进程的映射（asar desktopDeviceIdentity.js），不再发兜底 `desktop`。
+  assert.equal(base['X-Client-Platform'], raccoonClientPlatform('darwin'))
+  assert.equal(base['X-Client-Name'], 'raccoon-work')
+  assert.equal(base['X-Client-Page'], 'background')
   assert.equal(base['X-Org-Code'], undefined)
   assert.equal(raccoonHeaders('tok', { orgCode: 'org1' })['X-Org-Code'], 'org1')
   assert.equal(raccoonHeaders('tok', { deviceId: 'dev' })['X-Client-Device-ID'], 'dev')
+})
+
+test('client platform mirrors the desktop mapping; version detection degrades to the constant', () => {
+  assert.equal(raccoonClientPlatform('darwin'), 'desktop-macos')
+  assert.equal(raccoonClientPlatform('win32'), 'desktop-windows')
+  assert.equal(raccoonClientPlatform('linux'), 'desktop-linux')
+  assert.equal(raccoonClientPlatform('sunos'), 'desktop')
+  // 本机装了客户端时能读到真实版本；读不到就落回兜底（两者都必须是数字开头）。
+  const version = readRaccoonAppVersion() ?? DEFAULT_RACCOON_CLIENT_VERSION
+  assert.match(version, /^\d+\.\d+/u)
 })
 
 test('auth: JWT exp is decoded, token aliases are accepted', () => {
@@ -289,3 +306,26 @@ test('password login encrypts the password, not just the phone', async () => {
 
 // ── Raccoon account pool ───────────────────────────────────────────────────
 
+
+test('chat driver sends the desktop identity set, per-account device id included', () => {
+  const driver = createRaccoonChatDriver({
+    clientVersion: () => '1.2.0',
+    clientName: () => 'raccoon-work',
+    deviceId: (context) => context?.deviceId ?? 'desktop-fallback',
+  })
+  const request = { provider: 'raccoon', model: 'sn-glm-5-3-flash', baseURL: 'https://raccoon.test/api/web/llm/v2' }
+  const headers = driver.prepareHeaders(request, new Headers(), { accountId: 'acc-1', deviceId: 'acc-1-device' })
+  assert.equal(headers.get('x-client-platform'), raccoonClientPlatform())
+  assert.equal(headers.get('x-client-name'), 'raccoon-work')
+  assert.equal(headers.get('x-client-page'), 'background')
+  assert.equal(headers.get('x-client-version'), '1.2.0')
+  assert.equal(headers.get('x-client-device-id'), 'acc-1-device')
+
+  // 没有账号上下文（聚合读取）才退回桌面端那份。
+  const aggregate = driver.prepareHeaders(request, new Headers())
+  assert.equal(aggregate.get('x-client-device-id'), 'desktop-fallback')
+
+  // 别的路由一概不碰。
+  const foreign = driver.prepareHeaders({ provider: 'loomy', model: 'x', baseURL: 'https://other.test' }, new Headers())
+  assert.equal(foreign.get('x-client-name'), null)
+})

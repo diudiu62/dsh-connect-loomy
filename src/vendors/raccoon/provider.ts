@@ -10,23 +10,38 @@
  * 全部在 `src/core/provider.ts` 里，对所有供应商只有一份。本文件只提供
  * {@link ChatDriver}：`toModel` + `prepareHeaders`。
  *
+ * 请求头对齐安装的桌面端（asar 反编译，2026-11-23）：
+ *
+ * | 头 | 官方值 | 说明 |
+ * |---|---|---|
+ * | `X-Client-Platform` | `desktop-macos` / `-windows` / `-linux` | 主进程按 `process.platform` 映射 |
+ * | `X-Client-Version` | `app.getVersion()`（本机 `1.2.0`） | 运行时从 app.asar 读 |
+ * | `X-Client-Device-ID` | `clientDeviceId` | 逐账号，不再全池共用 |
+ * | `X-Client-Name` | `raccoon-work` | `package.json` 的 `clientName` |
+ * | `X-Client-Page` | `background` | 无页面上下文时的兜底值 |
+ *
+ * 这些头**不是**鉴权（官方本地中继转发时只发 `authorization` + `content-type`），
+ * 但它们正是上游风控给流量归档的字段：缺一个，插件就是在自报"我不是官方客户端"。
+ *
  * @module dsh-connect-desktop/vendors/raccoon/provider
  */
 
 import type { PiAiRequestHeaderContext } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Model, ModelInputModality } from '@earendil-works/pi-ai'
 import type { CatalogModel } from '../../shared/views.js'
-import type { ChatDriver } from '../../vendor-sdk/contracts.js'
+import type { ChatDriver, VendorHeaderContext } from '../../vendor-sdk/contracts.js'
 import {
   RACCOON_API,
-  RACCOON_CLIENT_PLATFORM,
+  RACCOON_CLIENT_NAME,
+  RACCOON_CLIENT_PAGE,
   RACCOON_COMPAT,
   RACCOON_CREDENTIAL_NAME,
   RACCOON_PROVIDER_ID,
+  raccoonClientPlatform,
 } from './constants.js'
 
 /** 按点数计费的订阅制，没有任何可知道的每 token 价格。 */
-const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const
+const NO_COST = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } as const
 
 /**
  * 显示名：带上倍率，因为这个供应商的每个模型都是点数计费的。
@@ -66,12 +81,18 @@ export function toPiModel(model: CatalogModel, baseURL: string): Model<'openai-c
 export function prepareRaccoonHeaders(
   request: PiAiRequestHeaderContext,
   headers: Headers,
-  options: { clientVersion?: string; deviceId?: string } = {},
+  options: { clientVersion?: string; deviceId?: string; clientName?: string; clientPage?: string } = {},
 ): Headers {
   if (request.provider !== RACCOON_PROVIDER_ID) return headers
-  headers.set('X-Client-Platform', RACCOON_CLIENT_PLATFORM)
-  if (options.clientVersion !== undefined) headers.set('X-Client-Version', options.clientVersion)
-  if (options.deviceId !== undefined) headers.set('X-Client-Device-ID', options.deviceId)
+  headers.set('X-Client-Platform', raccoonClientPlatform())
+  headers.set('X-Client-Name', options.clientName ?? RACCOON_CLIENT_NAME)
+  headers.set('X-Client-Page', options.clientPage ?? RACCOON_CLIENT_PAGE)
+  if (options.clientVersion !== undefined && options.clientVersion.length > 0) {
+    headers.set('X-Client-Version', options.clientVersion)
+  }
+  if (options.deviceId !== undefined && options.deviceId.length > 0) {
+    headers.set('X-Client-Device-ID', options.deviceId)
+  }
   return headers
 }
 
@@ -79,8 +100,16 @@ export function prepareRaccoonHeaders(
 export interface RaccoonChatDriverOptions {
   /** `X-Client-Version` 的来源。 */
   clientVersion: () => string
-  /** `X-Client-Device-ID` 的来源；`undefined` 时省略该头。 */
-  deviceId: () => string | undefined
+  /** `X-Client-Name` 的来源（`package.json` 的 `clientName`）。 */
+  clientName?: () => string
+  /**
+   * `X-Client-Device-ID` 的来源。
+   *
+   * 收到 `context.deviceId`（本次调用所选账号自己的 uuid）时用它；没有账号上下文
+   * （目录/余额这种聚合读取）才退回桌面端那一份。**不要**退回"一个全局值"——
+   * 九个账号共用一个设备指纹正是 2026-11-23 `200108` 连环限流的画像。
+   */
+  deviceId: (context?: VendorHeaderContext) => string | undefined
 }
 
 /** 小浣熊的 {@link ChatDriver}：模型转换 + 请求头，仅此而已。 */
@@ -90,10 +119,11 @@ export function createRaccoonChatDriver(options: RaccoonChatDriverOptions): Chat
     compat: RACCOON_COMPAT,
     credentialName: RACCOON_CREDENTIAL_NAME,
     toModel: (model, context) => toPiModel(model, context.baseUrl),
-    prepareHeaders: (request, headers) => {
-      const deviceId = options.deviceId()
+    prepareHeaders: (request, headers, context) => {
+      const deviceId = options.deviceId(context)
       return prepareRaccoonHeaders(request, headers, {
         clientVersion: options.clientVersion(),
+        clientName: options.clientName?.() ?? RACCOON_CLIENT_NAME,
         ...(deviceId === undefined ? {} : { deviceId }),
       })
     },

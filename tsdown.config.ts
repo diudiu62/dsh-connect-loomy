@@ -97,7 +97,7 @@ export default defineConfig([
     // `require('@deepseek-ai/dsh-client-ui-slots')` and friends must resolve
     // through the loader's module table, not be inlined.
     deps: {
-      neverBundle: [/^@deepseek-ai\//, /^react($|\/)/],
+      neverBundle: [/^@deepseek-ai\//, /^react($|\/)/, /^react-dom($|\/)/],
     },
     // CJS normally implies a Node target; this chunk is nonetheless browser
     // CJS (it runs inside the web client's loader), so ask for the browser

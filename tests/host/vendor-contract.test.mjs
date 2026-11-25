@@ -61,6 +61,10 @@ function surfaceOf(id, capabilities, runtimeOverrides = {}) {
     status: async () => ({}),
     diagnostics: async () => ({ view: {}, probes: [] }),
     credits: async () => ({ kind: 'failure', failure: { at: 0, path: 'credits', code: 'x', message: 'x' } }),
+    accountCredits: async () => ({
+      kind: 'failure',
+      failure: { at: 0, path: 'credits', code: 'x', message: 'x' },
+    }),
     catalogView: async () => ({ models: [], refreshedAt: null, selection: null }),
     saveSelection: async (ids) => ids,
     accounts: async () => ({ ok: true, accounts: [], rotating: false }),
@@ -90,6 +94,7 @@ test('a new vendor gets a complete surface from its declaration alone', () => {
     'accounts/remove',
     'catalog',
     'credits',
+    'credits/account',
     'diagnostics',
     'recheck',
     'refresh',
@@ -320,9 +325,13 @@ test('a third vendor mounts through the real registry with zero core changes', a
     '/plugins/dsh-connect-desktop/acme/accounts/remove',
     '/plugins/dsh-connect-desktop/acme/catalog',
     '/plugins/dsh-connect-desktop/acme/credits',
+    // 逐账号额度的懒加载入口：与 `credits` 同源，只多一条路径。
+    '/plugins/dsh-connect-desktop/acme/credits/account',
     '/plugins/dsh-connect-desktop/acme/diagnostics',
     '/plugins/dsh-connect-desktop/acme/recheck',
     '/plugins/dsh-connect-desktop/acme/refresh',
+    // registry 在追踪 provider 注册状态（providerState 存在）→ 「重新注册」路由随挂载出现。
+    '/plugins/dsh-connect-desktop/acme/register',
     '/plugins/dsh-connect-desktop/acme/save',
   ])
   // 也没有一段手写的 provider 注册代码。
@@ -464,6 +473,28 @@ test('the probe route exists only for vendors that can probe', () => {
   assert.ok(
     suffixesOf('acme', withProbe, { probeEndpoints: async () => [] }).includes('diagnostics/probe'),
   )
+})
+
+/**
+ * 「重新注册」只在 registry 追踪注册状态时存在。
+ *
+ * `providerState` 缺省（CLI、独立 surface）意味着"注册"这个概念在那里根本不成立，
+ * 一条只能 404 的按钮后端就是死控件。它还必须 POST + CSRF：会改变宿主路由表。
+ */
+test('the register route exists only when the surface tracks provider state', () => {
+  assert.ok(!suffixesOf('acme', ACME_CAPABILITIES).includes('register'), 'CLI-style surface plans no register route')
+
+  const tracked = surfaceOf('acme', ACME_CAPABILITIES)
+  tracked.providerState = () => ({ registered: false, routes: [] })
+  const specs = planVendorRoutes({
+    surface: tracked,
+    onChanged: () => undefined,
+    invalidate: () => undefined,
+  })
+  const spec = specs.find((entry) => entry.suffix === 'register')
+  assert.ok(spec !== undefined, 'provider-tracking surface plans the register route')
+  assert.deepEqual([...spec.methods], ['POST'])
+  assert.equal(spec.mutating, true)
 })
 
 /**

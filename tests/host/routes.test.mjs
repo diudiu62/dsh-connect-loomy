@@ -295,3 +295,169 @@ test('the enrich route exists only for a vendor that implements it', async () =>
     '没实现就不注册',
   )
 })
+
+/**
+ * 「重新注册」：卡片上那个按钮的后端。
+ *
+ * 门槛与能力位一样严格：surface 不追踪 provider 状态（CLI、独立 surface）就根本
+ * 不注册。行为面三条：成功回填注册结果、注册器抛错回 ok:false、缺省回落到普通
+ * reconcile（测试/CLI 不传 onRegisterProvider 时路由依然可用）。
+ */
+test('the register route reports the provider state after a forced re-registration', async () => {
+  let forced = 0
+  const surface = surfaceWith({}, {})
+  surface.providerState = () => ({ registered: forced > 0, routes: forced > 0 ? ['acme'] : [], ...(forced === 0 ? { error: '占位原因' } : {}) })
+  const spec = planVendorRoutes({
+    surface,
+    onChanged: () => undefined,
+    onRegisterProvider: async () => {
+      forced += 1
+    },
+    invalidate: () => undefined,
+  }).find((entry) => entry.suffix === 'register')
+  assert.ok(spec !== undefined, 'providerState 存在 ⇒ register 路由被规划')
+
+  const result = await spec.run({ req: { method: 'POST' }, query: new URLSearchParams(), body: async () => ({}) })
+  assert.deepEqual(result, { ok: true, registered: true, routes: ['acme'] })
+  assert.equal(forced, 1, '必须走 onRegisterProvider（manual 触发），而不是普通 reconcile')
+})
+
+test('a failing re-registration answers the unified failure envelope', async () => {
+  const surface = surfaceWith({}, {})
+  surface.providerState = () => ({ registered: false, routes: [], error: '还没走到' })
+  const spec = planVendorRoutes({
+    surface,
+    onChanged: () => undefined,
+    onRegisterProvider: async () => {
+      throw new Error('宿主已经卸载了这一份')
+    },
+    invalidate: () => undefined,
+  }).find((entry) => entry.suffix === 'register')
+
+  const result = await spec.run({ req: { method: 'POST' }, query: new URLSearchParams(), body: async () => ({}) })
+  assert.deepEqual(result, { ok: false, error: { code: 'register_failed', message: '宿主已经卸载了这一份' } })
+})
+
+test('without onRegisterProvider the register route degrades to a plain reconcile', async () => {
+  let reconciled = 0
+  const surface = surfaceWith({}, {})
+  surface.providerState = () => ({ registered: false, routes: [] })
+  const spec = planVendorRoutes({
+    surface,
+    onChanged: () => {
+      reconciled += 1
+    },
+    invalidate: () => undefined,
+  }).find((entry) => entry.suffix === 'register')
+  assert.ok(spec !== undefined, 'providerState 存在 ⇒ 路由仍被规划（缺省退化为 reconcile）')
+
+  const result = await spec.run({ req: { method: 'POST' }, query: new URLSearchParams(), body: async () => ({}) })
+  assert.equal(result.ok, true)
+  assert.equal(reconciled, 1)
+})
+
+test('the import route refuses an unrecognized document instead of a silent zero', async () => {
+  const { createVendorSurface } = await import('../../lib/index.js')
+  const capabilities = {
+    accounts: 'single',
+    pool: false,
+    login: ['none'],
+    credits: { kind: 'none' },
+    catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+    transfer: true,
+    adopt: false,
+    diagnostics: false,
+  }
+  const descriptor = { id: 'acme', displayName: 'Acme', accent: '#000', capabilities }
+  const surface = createVendorSurface({
+    descriptor,
+    runtime: {
+      descriptor,
+      credentials: { read: async () => ({ found: false, problem: 'x', candidates: [] }), invalidate() {}, probePaths: () => [] },
+      chat: { api: 'openai-completions', compat: {}, toModel: () => ({}), prepareHeaders: (_r, h) => h },
+      routes: async () => [],
+      resolveCredential: async () => ({ material: 'x' }),
+      accounts: {
+        exportBundle: async () => ({ bundle: { accounts: [] } }),
+        importBundle: async () => ({ added: 0, refreshed: 0, skipped: 0 }),
+      },
+    },
+  })
+  const spec = planVendorRoutes({ surface, onChanged: async () => undefined, invalidate: () => undefined }).find(
+    (entry) => entry.suffix === 'accounts/import',
+  )
+  assert.ok(spec !== undefined)
+  const payload = await spec.run({ body: async () => ({ bundle: { note: 'nothing recognizable' } }) })
+  assert.equal(payload.ok, false, JSON.stringify(payload))
+  assert.equal(payload.error.code, 'import_unrecognized')
+  assert.match(payload.error.message, /access_token|session/u)
+})
+
+/**
+ * 单账号额度路由：懒加载的入口。
+ *
+ * 批量读取要等所有账号（90 个约 5 秒），界面只能空着；这条让前端一行一条地拿。
+ * 两个约束必须钉住：缺 id 要明确报错（不是 404），失败要 HTTP 200 + `ok:false`
+ * （那一行要显示上游原话，而不是"路由不存在"）。
+ */
+test('the per-account credits route answers lazily and refuses without an id', async () => {
+  const surface = {
+    descriptor: {
+      id: 'acme',
+      displayName: 'Acme',
+      accent: '#000',
+      capabilities: {
+        accounts: 'multi',
+        pool: false,
+        login: ['none'],
+        credits: { kind: 'balance', fields: [] },
+        catalog: { selection: false, visionOverride: false, reasoningEffort: false },
+        transfer: false,
+        adopt: false,
+        diagnostics: false,
+      },
+    },
+    runtime: {},
+    status: async () => ({}),
+    diagnostics: async () => ({ view: {}, probes: [] }),
+    credits: async () => ({ kind: 'ok', credits: { fields: {}, fetchedAt: 1 } }),
+    accountCredits: async (id) =>
+      id === 'known'
+        ? { kind: 'ok', credits: { fields: { available: 12 }, fetchedAt: 1 } }
+        : {
+            kind: 'failure',
+            failure: { at: 1, path: 'credits', code: 'account_not_found', message: `没有这个账号：${id}` },
+          },
+    catalogView: async () => ({ models: [], refreshedAt: null, selection: null }),
+    saveSelection: async () => [],
+    accounts: async () => ({ ok: true, accounts: [], rotating: false }),
+    pool: async () => ({ ok: true, enabled: false, active: false, total: 0, healthy: 0 }),
+    accountView: () => ({}),
+    credentialView: async () => ({ found: false, sourcePath: '', sourceOrigin: 'none', candidates: [] }),
+    accountSummary: async () => null,
+  }
+  const specs = planVendorRoutes({
+    surface,
+    onChanged: async () => undefined,
+    invalidate: () => undefined,
+  })
+  const route = specs.find((spec) => spec.suffix === 'credits/account')
+  assert.ok(route !== undefined, '路由存在')
+  assert.deepEqual(route.methods, ['GET'])
+  assert.equal(route.mutating, false)
+
+  /*
+   * 用**真的** URLSearchParams：路由读的是 `query.get('id')`，缺值时它返回 `null`
+   * （Map 返回 `undefined`）——用 Map 模拟会让"缺 id"那条分支永远走不到。
+   */
+  const query = (value) => ({ query: new URLSearchParams(value === undefined ? {} : { id: value }) })
+  assert.deepEqual(await route.run(query(undefined)), {
+    ok: false,
+    error: { code: 'bad_request', message: '缺少账号 id。' },
+  })
+  assert.deepEqual(await route.run(query('known')), { ok: true, fields: { available: 12 }, fetchedAt: 1 })
+  assert.deepEqual(await route.run(query('ghost')), {
+    ok: false,
+    error: { code: 'account_not_found', message: '没有这个账号：ghost' },
+  })
+})

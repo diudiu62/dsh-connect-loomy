@@ -83,7 +83,7 @@ export { clampShift } from './capability/clamp.js'
  * 当前进程加载的是不是本仓库的构建产物。
  */
 export const CLIENT_BUILD_MARKER =
-  'dsh-connect-desktop+multi-vendor-v1+capability-tabs+shared-panels+composer-drawer+recheck+live-probe'
+  'dsh-connect-desktop+multi-vendor-v1+capability-tabs+shared-panels+composer-drawer+recheck+live-probe+provider-reregister'
 
 /** Slot-entry identity of the composer credit readout. */
 export const COMPOSER_PILL_ID = 'dsh-connect-desktop-composer-pill'

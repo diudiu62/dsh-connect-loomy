@@ -134,6 +134,16 @@ The drawer also has a switch: **pick a healthy account at random for each call**
   automatically
 - Off: always the account you selected
 
+Two **rate-limit protections** ship on by default (no configuration needed):
+
+- **Per-account concurrency cap**: at most 2 requests hit the upstream per account at the same time
+  (the shape the official client itself uses); extra calls queue instead of firing. Settings →
+  Raccoon → "Rate limits" → `concurrency` to change it (0 = unlimited).
+- **Exponential rate-limit cooldown**: an account the upstream throttles (Raccoon's `200108`
+  "abnormal calls") is benched for 10 minutes; each further hit while benched doubles the window
+  (20 → 40 → 80 → 160 minutes, capped at six hours). When every account is cooling down, the plugin
+  tells you when the first one recovers instead of burning a restricted account.
+
 A desktop-owned sign-in shows **Desktop** and cannot be renamed or removed here — it belongs to the
 client. Use **Adopt** if you want it to become a stored account the pool can spend from (Loomy only).
 
@@ -165,11 +175,34 @@ on its own.
 **The badge is missing?**
 It only appears while the current conversation is on a model from one of these clients.
 
+**What is the number on the badge?**
+The **total across every account** (open the drawer for the per-account figures). Rotation — who
+pays for this particular call — does not change it.
+
+**The badge shows `—`?**
+That reading failed (upstream rate limit, expired sign-in and a gateway 403 all look the same),
+and the outline turns dashed: hover for the upstream's own words, open the drawer and press ↻ to
+retry. The plugin retries twice on its own only for transient blips; a throttle or an out-of-points
+answer is never retried silently (that just confirms the limit), so the hover keeps the upstream
+wording and the ↻ is yours to press. Only readable accounts are counted: the hover
+text says how many were left out, and the drawer shows which ones.
+
+**One drawer row shows `—`?**
+That row's account cannot be read (expired sign-in, rate limited) while the others still work.
+Hover for the reason and sign that account in again.
+
 **Switched account but the number did not change?**
 Press **Refresh** in the drawer; otherwise the host answers from a 60-second cache.
 
 **Points show as unavailable?**
 That account's sign-in expired. Sign in again — the other accounts are unaffected.
+
+**What happens to an account that runs out of points?**
+The moment a read reports `available` at 0, that account leaves the rotation (the drawer marks it
+"out of points") so it is never picked for a call that is guaranteed to fail. Once you top up or the
+daily allowance resets, the next balance read puts it back — no need to wait out a cooldown. Only a
+number that was actually **read** counts: when the balance endpoint itself is rate limited there is no
+number, and the account is left alone rather than benched for "maybe empty".
 
 **The whole diagnostics tab says "unavailable"?**
 That client declares no diagnostics, or the running host predates this client build. Restart DSH.

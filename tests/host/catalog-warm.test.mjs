@@ -1141,3 +1141,182 @@ test('a rate-limited balance still shows the ledger', async (t) => {
     assert.ok((withAccounts.credits.records?.length ?? 0) >= 2, '逐账号全失败不该吞掉明细')
   }
 })
+
+/**
+ * 「重新注册」：注册被拒后手工再走一遍，而不是让用户重启 DSH。
+ *
+ * 现场证据（用户上报的卡片原文）：`这家客户端还没有注册进模型选择器——原因见下。
+ * cannot create effect on inactive context`。根因是注册那一刻所在的 cordis
+ * 上下文已经失效（热重载/重复挂载的竞态），而自动 reconcile 之后被"签名没变"
+ * 的幂等阀挡住——错误说明会永远停在 /status 里，没有任何东西会再来一次。
+ *
+ * 这条用例钉住四件事：状态里有 `retryable: true`（卡片据此才显示按钮）、
+ * 自动路径确实停手（没有后台重试把它治好）、`POST /register` 走完整守卫管线
+ * （CSRF 令牌来自真实的 `GET /status`）后真的注册上、`/status` 随之翻绿。
+ */
+test('a refused registration stays retryable, and a manual re-register heals it', async (t) => {
+  const dir = tempDir(t)
+  const authPath = join(dir, 'auth.json')
+  writeFileSync(authPath, raccoonAuthDocument())
+  isolate(t, dir, authPath)
+  stubFetch(t)
+
+  let refusalsLeft = 1
+  /** 挂载进假宿主的路由处理器，拿来做带守卫的真实调用。 */
+  const handlers = new Map()
+  const seenPaths = new Set()
+  const ctx = {
+    fiber: { entry: { options: { id: 'dsh-connect-desktop' } } },
+    logger: { info() {}, warn() {}, error() {} },
+    get() {
+      return undefined
+    },
+    effect(fn) {
+      const dispose = fn()
+      return typeof dispose === 'function' ? dispose : () => {}
+    },
+    inject(services, callback) {
+      if (services.includes('settings')) {
+        callback({ settings: { configure() {} } })
+        return
+      }
+      if (services.includes('webServer')) {
+        callback({
+          effect(fn) {
+            fn()
+            return () => {}
+          },
+          webServer: {
+            register(route) {
+              if (seenPaths.has(route.path)) throw new Error(`duplicate exact route "${route.path}"`)
+              seenPaths.add(route.path)
+              handlers.set(route.path, route.handler)
+              return () => {}
+            },
+          },
+        })
+      }
+    },
+    on() {
+      return () => {}
+    },
+    emit() {},
+    llm: {
+      registerAdapter(routes) {
+        // 只拒绝 raccoon：loomy 是 providerVisibility 'always'，会先挂载并把拒绝吃掉。
+        if (refusalsLeft > 0 && routes.includes('raccoon')) {
+          refusalsLeft -= 1
+          // cordis 的 INACTIVE_EFFECT：message 与 code 都是这句话。
+          const error = new Error('cannot create effect on inactive context')
+          error.code = 'INACTIVE_EFFECT'
+          throw error
+        }
+        void routes
+        const dispose = () => {}
+        dispose.replace = () => {}
+        return dispose
+      },
+    },
+  }
+
+  resetProviderOwnershipForTests()
+  apply(ctx, { enabled: true, vendors: {} })
+  const registry = registryOf(ctx)
+  await waitFor(() => registry.mounted().length === 2)
+  await delay(200)
+
+  const statusHandler = handlers.get('/plugins/dsh-connect-desktop/status')
+  assert.ok(statusHandler !== undefined, '/status 必须已挂载')
+  const registerHandler = handlers.get('/plugins/dsh-connect-desktop/raccoon/register')
+  assert.ok(registerHandler !== undefined, '「重新注册」路由必须随挂载出现')
+
+  /** 走真实守卫管线调一次处理器。 */
+  const call = async (handler, { method, url, headers = {}, body }) => {
+    const listeners = new Map()
+    const req = {
+      method,
+      url,
+      headers: { host: '127.0.0.1:3080', ...headers },
+      socket: { localAddress: '127.0.0.1' },
+      on(event, listener) {
+        listeners.set(event, listener)
+        return req
+      },
+      destroy() {},
+    }
+    queueMicrotask(() => {
+      if (body !== undefined) listeners.get('data')?.(Buffer.from(body))
+      listeners.get('end')?.()
+    })
+    const captured = { status: 0, payload: undefined, headersSent: false }
+    const res = {
+      headersSent: false,
+      writeHead(status) {
+        captured.status = status
+        res.headersSent = true
+      },
+      end(payload) {
+        captured.payload = payload === undefined ? undefined : JSON.parse(payload)
+        res.headersSent = true
+      },
+    }
+    await handler(req, res)
+    return captured
+  }
+
+  const first = await call(statusHandler, { method: 'GET', url: '/plugins/dsh-connect-desktop/status' })
+  assert.equal(first.status, 200)
+  const before = first.payload.vendors.find((vendor) => vendor.id === 'raccoon')
+  assert.ok(before !== undefined)
+  assert.equal(before.provider?.registered, false, '第一次注册被拒')
+  assert.match(before.provider?.error ?? '', /重新注册/u, '英文原文必须翻成一句可执行的话')
+  assert.equal(before.provider?.retryable, true, '卡片据此显示「重新注册」按钮')
+
+  // 自动路径停在这里：没有后台重试会把这次失败治好（这正是用户看到的现象）。
+  await delay(300)
+  const stuck = await call(statusHandler, { method: 'GET', url: '/plugins/dsh-connect-desktop/status' })
+  assert.equal(stuck.payload.vendors.find((vendor) => vendor.id === 'raccoon')?.provider?.registered, false, '自动路径不会自愈')
+
+  // 用户点「重新注册」：POST 带上 /status 给的 CSRF 令牌。
+  const attempt = await call(registerHandler, {
+    method: 'POST',
+    url: '/plugins/dsh-connect-desktop/raccoon/register',
+    headers: { 'content-type': 'application/json', 'x-dsh-connect-csrf': first.payload.csrfToken },
+    body: '{}',
+  })
+  assert.equal(attempt.status, 200)
+  assert.deepEqual(attempt.payload, { ok: true, registered: true, routes: ['raccoon'] })
+
+  const after = await call(statusHandler, { method: 'GET', url: '/plugins/dsh-connect-desktop/status' })
+  const healed = after.payload.vendors.find((vendor) => vendor.id === 'raccoon')
+  assert.equal(healed?.provider?.registered, true, `重新注册必须成功；error=${healed?.provider?.error ?? ''}`)
+  assert.deepEqual([...(healed?.provider?.routes ?? [])], ['raccoon'])
+  assert.equal(healed?.provider?.error, undefined, '成功后不再保留失败原因')
+  assert.equal(refusalsLeft, 0, '这次尝试真的调用了 registerAdapter')
+})
+
+/**
+ * 「重试也没用」的原因不带按钮位：被禁用、没有登录态、双挂载让位。
+ *
+ * 卡片只对 `retryable === true` 渲染按钮——一个必然失败的死控件正是本项目要
+ * 消灭的东西；这些状态的修复动作都在别处（配置、客户端登录、卸载重复实例）。
+ */
+test('states that a retry cannot fix are reported as non-retryable', async (t) => {
+  const dir = tempDir(t)
+  const authPath = join(dir, 'auth.json')
+  const past = Math.floor(Date.now() / 1000) - 60
+  writeFileSync(authPath, JSON.stringify({ access_token: `h.${Buffer.from(JSON.stringify({ exp: past })).toString('base64url')}.s` }))
+  isolate(t, dir, authPath)
+  stubFetch(t)
+
+  const { context } = fakeContext()
+  resetProviderOwnershipForTests()
+  apply(context, { enabled: true, vendors: {} })
+  const registry = registryOf(context)
+  await waitFor(() => registry.mounted().length === 2)
+  await delay(120)
+
+  const raccoon = (await registry.status()).find((vendor) => vendor.id === 'raccoon')
+  assert.equal(raccoon?.provider?.registered, false)
+  assert.equal(raccoon?.provider?.retryable, false, '签出状态：先去客户端登录/重新检测，不是点「重新注册」')
+})

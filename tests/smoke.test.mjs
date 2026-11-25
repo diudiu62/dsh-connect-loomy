@@ -33,6 +33,7 @@ const nodeRequire = createRequire(import.meta.url)
  */
 const PLATFORM_SEEDS = {
   react: nodeRequire('react'),
+  'react-dom': nodeRequire('react-dom'),
   'react/jsx-runtime': nodeRequire('react/jsx-runtime'),
 }
 

@@ -128,6 +128,27 @@ export function registryOf(ctx: Context): VendorRegistry | undefined {
   return registries.get(ctx)
 }
 
+/** 进程级 CSRF 令牌的存放键（`globalThis` 上一个 symbol，避免跨实例各算一份）。 */
+const PROCESS_CSRF = Symbol.for('dsh-connect-desktop.csrf-token')
+
+/**
+ * 本进程的 CSRF 令牌；第一次调用时生成，之后所有实例共用。
+ *
+ * 为什么按进程而不是按 `apply()`：`apply` 可能在同一进程里跑两遍（bundle +
+ * patch 各挂一次、HMR 重载、两个 profile 共用宿主）。两份实例各持一枚令牌时，
+ * `/status` 由其中一份回答、而某个 vendor 路由被另一份先注册——用 /status 的
+ * 令牌去调那条路由必然 403 `csrf_invalid`，且刷新页面也好不了。令牌挂在进程上，
+ * 双挂载就只剩"多一份无害的重复注册"（`mountRoutes` 本来就让位）。
+ */
+function processCsrfToken(): string {
+  const holder = globalThis as unknown as Record<symbol, string | undefined>
+  const existing = holder[PROCESS_CSRF]
+  if (typeof existing === 'string' && existing.length > 0) return existing
+  const token = randomBytes(24).toString('base64url')
+  holder[PROCESS_CSRF] = token
+  return token
+}
+
 /**
  * Mount the plugin.
  *
@@ -152,7 +173,16 @@ export function apply(ctx: Context, config: PluginConfig): void {
     ctx.effect(() => child.settings.configure({ auto: false }, ctx.fiber), 'dsh-connect-desktop: settings section')
   })
 
-  const csrfToken = randomBytes(24).toString('base64url')
+  /**
+   * CSRF 令牌**按进程**生成，不在每次 `apply()` 时新造。
+   *
+   * 为什么：`apply` 可能在同一进程里跑两遍（bundle + patch 各挂一次、HMR 重载、
+   * 两个 profile 共用宿主）。两份实例各持一枚令牌时，`/status` 由其中一份回答、
+   * 而某个 vendor 路由被另一份先注册——用 /status 的令牌去调那条路由必然 403
+   * `csrf_invalid`，且**刷新页面也好不了**。令牌挂在进程上，双挂载就只是多一份
+   * 无害的重复注册（`mountRoutes` 本来就让位）。
+   */
+  const csrfToken = processCsrfToken()
   const logger = {
     info: (message: string): void => ctx.logger.info(message),
     warn: (message: string, error?: unknown): void => ctx.logger.warn(message, error),
@@ -349,8 +379,34 @@ export { createVendorDeps } from './core/deps.js'
 export { describeVendorConfig } from './core/config-fields.js'
 export { createAccountsStore, DESKTOP_ACCOUNT_ID } from './core/accounts.js'
 export { createCatalogStore, applyVisionOverrides } from './core/catalog.js'
-export { createCreditsStore, mergeCredits } from './core/credits.js'
-export { createAccountPool, disqualifiesAccount, DEFAULT_POOL_COOLDOWN_MS, NO_POINTS_CODE } from './core/pool.js'
+export {
+  applyZeroPoints,
+  createCreditsStore,
+  isThrottleFailure,
+  mergeCredits,
+  CREDITS_FAILURE_TTL_MS,
+  ZERO_POINTS_MESSAGE,
+} from './core/credits.js'
+export {
+  createAccountPool,
+  classifyUnavailable,
+  isPermanentFailure,
+  disqualifiesAccount,
+  isRiskControlLimit,
+  disqualifiesFailureCode,
+  isRateLimitFailure,
+  createDesktopBench,
+  rateLimitCooldownMs,
+  pointsCooldownMs,
+  DEFAULT_POOL_COOLDOWN_MS,
+  DEFAULT_POINTS_COOLDOWN_MS,
+  RATE_LIMIT_COOLDOWN_MAX_MS,
+  RATE_LIMIT_COOLDOWN_STEPS,
+  RATE_LIMIT_CODE,
+  POOL_COOLING_CODE,
+  NO_POINTS_CODE,
+} from './core/pool.js'
+export { createConcurrencyGate, type ConcurrencyGate } from './core/gate.js'
 export { createVendorPreferences } from './core/preferences.js'
 export { createVendorSurface } from './core/surface.js'
 export { planVendorRoutes } from './core/routes.js'
@@ -358,7 +414,12 @@ export { CSRF_HEADER, MAX_BODY_BYTES, csrfMatches, failure, json, mountAt, mount
 export { createDocument, storageRoot, vendorStorageDir, STORAGE_ROOT } from './core/store.js'
 export { emptyVendorState, parseVendorState, serializeVendorState, STATE_VERSION } from './core/state.js'
 export { createMemo } from './core/ttl.js'
-export { chunkHasContent, createChatRuntime, MISSING_ATTACHMENT_SERVICE_MESSAGE } from './core/provider.js'
+export {
+  chunkHasContent,
+  createChatRuntime,
+  MISSING_ATTACHMENT_SERVICE_MESSAGE,
+  DEFAULT_ACCOUNT_CONCURRENCY,
+} from './core/provider.js'
 
 // Loomy (vendor #1)
 export {
@@ -424,9 +485,18 @@ export {
   RACCOON_PROVIDER_ID,
   raccoonDisplayName,
   prepareRaccoonHeaders,
+  createRaccoonChatDriver,
   createRaccoonModule,
 } from './vendors/raccoon/index.js'
 export { fetchCatalog, parseCatalog, parseModel, raccoonHeaders, RaccoonError } from './vendors/raccoon/catalog.js'
+export {
+  fetchSettingPoints,
+  parseSettingPoints,
+  settingInfoUrl,
+  wwwPointsUrl,
+} from './vendors/raccoon/credits.js'
+export { raccoonClientPlatform, RACCOON_CLIENT_NAME, RACCOON_CLIENT_PAGE } from './vendors/raccoon/constants.js'
+export { readRaccoonAppVersion, resetAppVersionCache } from './vendors/raccoon/app-version.js'
 export { authCandidates, decodeJwtPayload, parseAuthDocument, readAuth, redactAuth } from './vendors/raccoon/auth.js'
 export { RACCOON_BILLS_URL, fetchBalance, fetchBills, parseBalance, parseBills } from './vendors/raccoon/credits.js'
 export { decryptRaccoonPhone, encryptRaccoonPhone, fetchUserInfo, loginWithPassword, loginWithSms, logout as raccoonLogout, refreshToken as raccoonRefreshToken, sendSmsCode as raccoonSendSmsCode } from './vendors/raccoon/auth-flow.js'

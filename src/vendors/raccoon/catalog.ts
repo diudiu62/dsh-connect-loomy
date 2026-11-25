@@ -34,11 +34,13 @@
 import type { CatalogModel } from '../../shared/views.js'
 import {
   DEFAULT_RACCOON_BASE_URL,
-  RACCOON_CLIENT_PLATFORM,
+  RACCOON_CLIENT_NAME,
+  RACCOON_CLIENT_PAGE,
   RACCOON_FALLBACK_CONTEXT,
   RACCOON_FALLBACK_MAX_OUTPUT,
   RACCOON_OK_CODE,
   RACCOON_TIMEOUT_MS,
+  raccoonClientPlatform,
 } from './constants.js'
 
 /** 无论 tags 如何都不能提供出去的模型前缀（桌面端内部 agent 路由）。 */
@@ -109,19 +111,28 @@ export function parseCatalog(body: unknown): CatalogModel[] {
   return models
 }
 
-/** 桌面端每次 API 调用都会带的请求头。 */
+/** 桌面端每次 API 调用都会带的请求头（对齐 asar `requestHeaders.js` 的字段集）。 */
 export function raccoonHeaders(
   token: string,
-  options: { orgCode?: string; clientVersion?: string; deviceId?: string; requestId?: string } = {},
+  options: {
+    orgCode?: string
+    clientVersion?: string
+    deviceId?: string
+    requestId?: string
+    clientName?: string
+    clientPage?: string
+  } = {},
 ): Record<string, string> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
-    'X-Client-Platform': RACCOON_CLIENT_PLATFORM,
+    'X-Client-Platform': raccoonClientPlatform(),
+    'X-Client-Name': options.clientName ?? RACCOON_CLIENT_NAME,
+    'X-Client-Page': options.clientPage ?? RACCOON_CLIENT_PAGE,
   }
   if (options.orgCode !== undefined && options.orgCode.length > 0) headers['X-Org-Code'] = options.orgCode
-  if (options.clientVersion !== undefined) headers['X-Client-Version'] = options.clientVersion
-  if (options.deviceId !== undefined) headers['X-Client-Device-ID'] = options.deviceId
+  if (options.clientVersion !== undefined && options.clientVersion.length > 0) headers['X-Client-Version'] = options.clientVersion
+  if (options.deviceId !== undefined && options.deviceId.length > 0) headers['X-Client-Device-ID'] = options.deviceId
   if (options.requestId !== undefined) headers['X-Request-Id'] = options.requestId
   return headers
 }

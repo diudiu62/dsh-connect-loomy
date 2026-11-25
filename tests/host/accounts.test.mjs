@@ -186,3 +186,52 @@ test('legacy accounts derive a stable identity from their material, without rewr
     '展示层补全不写回用户数据',
   )
 })
+
+/**
+ * 用户最自然的导入动作是把客户端自己的 `auth.json` 直接粘进来（小浣熊是
+ * `access_token`）。字段名没认出来时旧实现会"成功返回 0 条"——没有错误、
+ * 也没有账号，静默失败。现在 snake_case 也在认得出的字段表里。
+ */
+test('importing a raw client auth.json adds the account', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  const result = await store.importBundle({
+    access_token: 'eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJzZXMtMDEifQ.sig',
+    office_identity: 'personal',
+  })
+  assert.equal(result.added, 1)
+  const rows = await store.list({ force: true })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].material, 'eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJzZXMtMDEifQ.sig')
+
+  // 再粘一次 → 刷新同一行，不重复。
+  const again = await store.importBundle({
+    access_token: 'eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJzZXMtMDEifQ.sig',
+    office_identity: 'personal',
+  })
+  assert.equal(again.added, 0)
+  assert.equal(again.refreshed, 1)
+  assert.equal((await store.list({ force: true })).length, 1)
+})
+
+test('a Bearer-prefixed header pasted as the credential still imports', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  const result = await store.importBundle({ access_token: 'Bearer abcdef1234567890' })
+  assert.equal(result.added, 1)
+  const rows = await store.list({ force: true })
+  assert.equal(rows[0].material, 'abcdef1234567890', '前缀被剥掉，存的才是能用的令牌')
+})
+
+/**
+ * 路由层的诚实报错：宿主认不出任何登录态时，必须 `import_unrecognized` 而不是
+ * `ok:true, added:0`——那是没有错误、也没有账号的静默失败。
+ */
+test('importing an unrecognized document is an error, never a silent zero', async (t) => {
+  const dir = tempDir(t)
+  const store = storeIn(dir)
+  const result = await store.importBundle({ office_identity: 'personal', note: 'no token here' })
+  assert.deepEqual(result, { added: 0, refreshed: 0, skipped: 0 })
+  // store 层只回 0；诚实报错由路由层负责（routes.test 钉），这里钉的是
+  // "store 不抛错、也不吞掉文档"这一半契约。
+})

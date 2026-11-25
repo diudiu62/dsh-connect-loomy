@@ -48,8 +48,13 @@ import {
   type AccountsStore,
 } from '../../core/accounts.js'
 import { createCatalogStore } from '../../core/catalog.js'
-import { createCreditsStore } from '../../core/credits.js'
-import { createAccountPool, NO_POINTS_CODE, type AccountPool } from '../../core/pool.js'
+import { applyZeroPoints, createCreditsStore } from '../../core/credits.js'
+import {
+  POOL_COOLING_CODE,
+  createAccountPool,
+  createDesktopBench,
+  type AccountPool,
+} from '../../core/pool.js'
 import { createVendorPreferences } from '../../core/preferences.js'
 import { vendorStateStore } from '../../core/state.js'
 import { slotForRoute } from './accounts.js'
@@ -65,7 +70,7 @@ import {
   LOOMY_CONFIG_SCHEMA,
   PROVIDER_ID,
 } from './constants.js'
-import { displayPhone, safeErrorMessage } from '../../shared/text.js'
+import { displayPhone, formatDateTime, safeErrorMessage } from '../../shared/text.js'
 import { fetchCredits, fetchIdentity } from './credits.js'
 import { createLoginService } from './login.js'
 import { authSessionCandidatesWithPlugin } from './plugin-auth.js'
@@ -209,6 +214,16 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
         ...(options.random === undefined ? {} : { random: options.random }),
       })
 
+      /**
+       * 桌面端登录态的内存 bench（core 共享实现）。
+       *
+       * 桌面令牌是 `poolCandidates()` 的第 0 个候选、池轮换的成员之一，但 core
+       * 的 store 不持久化它（插件永不写客户端文件）。没有这块账，一个被限流/
+       * 失效的桌面令牌会被每次调用反复重试——用户看到的是"轮换又选到桌面端"。
+       * 与小浣熊同一份实现，同一套阶梯。
+       */
+      const desktopBench = createDesktopBench()
+
       const accounts: AccountDriver = {
         list: (listOptions = {}) => store.list(listOptions),
         active: () => preferences.activeAccountId(),
@@ -224,11 +239,15 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
         rename: async (id, label) => {
           await store.rename?.(id, label)
         },
-        markUnavailable: (id, code, message) => store.markUnavailable(id, code, message),
+        markUnavailable: (id, code, message) =>
+          id === DESKTOP_ACCOUNT_ID
+            ? Promise.resolve(desktopBench.markUnavailable(id, code, message))
+            : store.markUnavailable(id, code, message),
         // "最近调用"只在**成功**时更新：core 的 `markHealthy` 是"这次真的收到内容"
         // 的唯一信号。用"被选中"来标记会让失败的账号也顶着一个标签。
         markHealthy: async (id) => {
-          await store.markHealthy(id)
+          if (id === DESKTOP_ACCOUNT_ID) desktopBench.markHealthy(id)
+          else await store.markHealthy(id)
           lastPick = { accountId: id, at: Date.now() }
         },
         routeOf: (account) => routeOfAccount(account),
@@ -302,17 +321,11 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
           return readCredits({ session: snapshot.session, sourcePath: snapshot.sourcePath })
         },
         loadForAccount: async (account) => readCredits({ session: account.material, sourcePath: `accounts.json#${account.id}` }),
-        // 可用余额为 0 的账号已经不可用了：读余额是唯一能知道这件事的时刻，
-        // 就在这里 bench 它（零余额不是错误，是关于账号的事实）。
-        onRead: (view, account) => {
-          if (account === undefined) return
-          const available = view.fields['available'] ?? 0
-          if (available <= 0) {
-            void store
-              .markUnavailable(account.id, NO_POINTS_CODE, '积分不足（可用余额为 0），暂不参与轮换')
-              .catch(() => undefined)
-          }
-        },
+        /*
+         * 读余额是唯一能知道"这个账号已经没钱了"的时刻（零余额不是错误，是关于
+         * 账号的事实）。规则与另一家共用：见 `core/credits.ts#applyZeroPoints`。
+         */
+        onRead: (view, account) => applyZeroPoints(view, account, store),
       })
 
       // ── 登录（插件自带短信登录） ────────────────────────────────────────
@@ -495,6 +508,42 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
       /** 最近一次推理调用实际使用的账号（轮换时用来回答"刚花了谁的钱"）。 */
       let lastPick: { accountId?: string; at: number } | undefined
 
+      /**
+       * 桌面端登录态：唯一"客户端所有"的身份。
+       *
+       * 它不在 core 的池里（store 不持久化它），所以健康状态由 `desktopBench`
+       * 记着。冷却/失效时**停止调用**并说清原因，不再拿它反复撞上游。
+       */
+      const pickDesktop = async (): Promise<{ material: string; accountId: string }> => {
+        const snapshot = await auth.read()
+        if (!snapshot.found || snapshot.session === undefined) {
+          throw new LlmError(snapshot.problem ?? '没有可用的 Loomy 登录态。', 'MISSING_CREDENTIAL')
+        }
+        const bench = desktopBench.status(DESKTOP_ACCOUNT_ID)
+        if (bench.benched) {
+          throw new LlmError(
+            bench.permanent
+              ? 'Loomy 桌面端登录态已失效（上游 401/会话过期），请打开 Loomy 客户端重新登录后点「重新检测」。'
+              : `Loomy 桌面端登录态在冷却中${bench.until === undefined ? '' : `（最早 ${formatDateTime(bench.until)} 自动恢复）`}，` +
+                '已停止调用以免加深上游限流。',
+            bench.permanent ? 'MISSING_CREDENTIAL' : POOL_COOLING_CODE,
+          )
+        }
+        return { material: snapshot.session, accountId: DESKTOP_ACCOUNT_ID }
+      }
+
+      /**
+       * 全池冷却时的第二条出路：让桌面端登录态也参与轮换（「加入账号表」）。
+       *
+       * 只在桌面端**有登录态**时提示——没有的话这句话是噪音。错误信息里写出
+       * 可执行的选项，比改池结构（静默替用户换身份付费）便宜且诚实。
+       */
+      const desktopAdoptHint = async (): Promise<string> => {
+        const snapshot = await auth.read()
+        if (!snapshot.found || snapshot.session === undefined) return ''
+        return '若想改用桌面端登录态继续，可在账号抽屉里点桌面端那一行的「加入账号表」，让它也参与轮换。'
+      }
+
       // ── 路由与付费身份 ─────────────────────────────────────────────────
       return {
         descriptor: LOOMY_DESCRIPTOR,
@@ -528,11 +577,7 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
         async resolveCredential(_route: string) {
           const candidatesForPool = await store.poolCandidates()
           if (candidatesForPool.length === 0) {
-            const snapshot = await auth.read()
-            if (!snapshot.found || snapshot.session === undefined) {
-              throw new LlmError(snapshot.problem ?? '没有可用的 Loomy 登录态。', 'MISSING_CREDENTIAL')
-            }
-            return { material: snapshot.session }
+            return pickDesktop()
           }
 
           const usable = await pool.usable()
@@ -550,9 +595,19 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
           if (rotate && candidatesForPool.length > 1) {
             const pick = await pool.pick()
             if (pick.kind === 'none-healthy') {
+              /*
+               * 与小浣熊同一契约：冷却 ≠ 凭据缺失。message 区分两种情形
+               * （可恢复 → 给出最早恢复时间；永久失效 → 指去重新登录），
+               * code 用 POOL_COOLING，可见性（选择器分组）与 code 不再互相矛盾。
+               */
+              const cooling = pick.recoverable.length > 0
+              const adoptHint = cooling ? await desktopAdoptHint() : ''
               throw new LlmError(
-                `所有账号当前都不可用，已停止调用，避免用坏账号继续失败。原因——${benchedSummary()}。可在输入框旁的账号抽屉里点「刷新」重试，或重新登录相应账号。`,
-                'MISSING_CREDENTIAL',
+                cooling
+                  ? `所有账号都在限流/额度冷却中，已停止调用，避免加深上游限制。` +
+                    `最早 ${formatDateTime(pick.recoverAt ?? 0)} 自动恢复。原因——${benchedSummary()}。${adoptHint}`
+                  : `所有账号当前都不可用，已停止调用，避免用坏账号继续失败。原因——${benchedSummary()}。可在输入框旁的账号抽屉里点「刷新」重试，或重新登录相应账号。`,
+                cooling ? POOL_COOLING_CODE : 'MISSING_CREDENTIAL',
               )
             }
             chosen = pick.kind === 'ok' ? pick.account : undefined
@@ -566,16 +621,33 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
           }
 
           if (chosen === undefined) {
-            const snapshot = await auth.read()
-            if (!snapshot.found || snapshot.session === undefined) {
-              throw new LlmError(snapshot.problem ?? '没有可用的 Loomy 登录态。', 'MISSING_CREDENTIAL')
+            /*
+             * 有账号行、但一个都不健康：说清"冷却"和"最早几点回来"。
+             *
+             * 旧实现直接掉到桌面端 `auth.json`，于是"单账号被限流"的机器收到的
+             * 是"没有可用的 Loomy 登录态"——用户会去重新登录一个根本没坏的账号。
+             * 桌面端登录态仍然是 `candidatesForPool` 里的第 0 个候选，但它**不在**
+             * 池里（core 的 store 不持久化它），所以这里只按真实账号行判断。
+             */
+            const stored = candidatesForPool.filter((account) => account.origin !== 'desktop')
+            if (stored.length > 0) {
+              const pick = await pool.pick()
+              const cooling = pick.kind === 'none-healthy' && pick.recoverable.length > 0
+              const adoptHint = cooling ? await desktopAdoptHint() : ''
+              throw new LlmError(
+                cooling
+                  ? `Loomy 的 ${stored.length} 个账号都在限流/额度冷却中，已停止调用，避免加深上游限制。` +
+                    `最早 ${formatDateTime(pick.kind === 'none-healthy' ? (pick.recoverAt ?? 0) : 0)} 自动恢复。原因——${benchedSummary()}。${adoptHint}`
+                  : `Loomy 的 ${stored.length} 个账号当前都不可用，已停止调用，避免用坏账号继续失败。原因——${benchedSummary()}。请重新登录相应账号，或在账号抽屉里点「刷新」重试。`,
+                cooling ? POOL_COOLING_CODE : 'MISSING_CREDENTIAL',
+              )
             }
-            return { material: snapshot.session }
+            return pickDesktop()
           }
 
           const verdict = await precheck(chosen.material)
           if (!verdict.ok && verdict.definite) {
-            await store.markUnavailable(chosen.id === DESKTOP_ACCOUNT_ID ? chosen.id : chosen.id, 'MISSING_CREDENTIAL', verdict.message ?? '登录态已失效').catch(() => undefined)
+            await store.markUnavailable(chosen.id, 'MISSING_CREDENTIAL', verdict.message ?? '登录态已失效').catch(() => undefined)
             throw new LlmError(
               verdict.message ?? `Loomy 登录态已失效（${chosen.id}），请重新登录后重试。`,
               'MISSING_CREDENTIAL',
@@ -583,7 +655,8 @@ export function createLoomyModule(options: LoomyModuleOptions = {}): VendorModul
           }
           return {
             material: chosen.material,
-            ...(chosen.origin === 'desktop' ? {} : { accountId: chosen.id }),
+            // 桌面身份也要归因：否则它被限流/失效时，core 无法把它记进 bench。
+            accountId: chosen.origin === 'desktop' ? DESKTOP_ACCOUNT_ID : chosen.id,
           }
         },
       }

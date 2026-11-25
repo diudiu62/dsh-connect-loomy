@@ -75,6 +75,13 @@ export interface MountedVendor {
   readonly chat: ChatRuntime
   /** Re-read the account list and reconcile the provider routes. */
   reconcile(): Promise<void>
+  /**
+   * 强制再走一遍 provider 注册（卡片上的「重新注册」）。
+   *
+   * 与 `reconcile()` 的差别：跳过"签名没变"的幂等阀、清零回收退避、失效句柄
+   * 降级为全新注册。注册被拒之后，普通 reconcile 会停在错误状态里不再尝试。
+   */
+  reRegister(): Promise<void>
   dispose(): void
 }
 
@@ -193,7 +200,13 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
     const pool = runtime.accounts === undefined ? undefined : createAccountPool({ accounts: runtime.accounts })
 
     /** provider 注册状态：/status 要能回答"为什么选择器里没有这一组"。 */
-    let providerState: { registered: boolean; routes: readonly string[]; models?: number; error?: string } = {
+    let providerState: {
+      registered: boolean
+      routes: readonly string[]
+      models?: number
+      error?: string
+      retryable?: boolean
+    } = {
       registered: false,
       routes: [],
     }
@@ -219,6 +232,7 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
       models: () => runtime.catalog?.enabledModels() ?? [],
       ...(runtime.catalog === undefined ? {} : { onModelsRead: () => runtime.catalog?.kickRefresh() }),
       resolveCredential: (route) => runtime.resolveCredential(route),
+      ...(runtime.concurrency === undefined ? {} : { concurrency: runtime.concurrency }),
       ...(pool === undefined ? {} : { pool: { markHealthy: (id) => pool.markHealthy(id), markUnavailable: (id, code, message) => pool.markUnavailable(id, code, message) } }),
       ...(runtime.catalog === undefined ? {} : {}),
       attachments: options.attachments,
@@ -337,6 +351,22 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
     let reconcileQueue: Promise<void> = Promise.resolve()
 
     /**
+     * 用户显式要求"重新注册"的那一次 reconcile。
+     *
+     * 与自动路径的区别有二，都指向同一个死锁：注册被拒后 `signature` 仍是旧值、
+     * 句柄可能仍指向已失效的注册，而自动 reconcile 看到"签名没变"就早退——
+     * **没有任何东西会再来一次**，卡片上的错误说明会永远停在那里。
+     * 手动路径跳过该早退（签名比较只在自动路径里当幂等阀），并把回收退避清零，
+     * 让这次尝试不被上一轮的指数退避延迟吞掉。
+     */
+    const reconcileNow = (): Promise<void> => {
+      clearReclaim()
+      const run = reconcileQueue.then(() => reconcileOnce(true), () => reconcileOnce(true))
+      reconcileQueue = run.catch(() => undefined)
+      return run
+    }
+
+    /**
      * 注册被"别人先占了名字"时的回收定时器。
      *
      * 现场证据：同一进程里出现两份本插件实例，先到的那份拿到 `loomy`/`raccoon`，
@@ -375,19 +405,27 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
     }
 
     const reconcile = (): Promise<void> => {
-      const run = reconcileQueue.then(reconcileOnce, reconcileOnce)
+      const run = reconcileQueue.then(() => reconcileOnce(false), () => reconcileOnce(false))
       // 队列自身不能因为一次失败而断掉。
       reconcileQueue = run.catch(() => undefined)
       return run
     }
 
-    const reconcileOnce = async (): Promise<void> => {
+    /**
+     * 一次注册检查；`manual` 表示它来自用户的「重新注册」按钮。
+     *
+     * 自动路径用"签名没变且句柄还在"当幂等阀——那正是注册被拒后永远出不去的
+     * 死锁入口之一；手动路径必须真的再走一遍。（参数刻意不叫 `options`：
+     * 这个闭包里到处读外层 RegistryOptions 的 `options.*`，同名会静默遮蔽。）
+     */
+    const reconcileOnce = async (manual: boolean): Promise<void> => {
       try {
         if (options.ownsProviders === false) {
           providerState = {
             registered: false,
             routes: [],
             error: '同一进程内有另一份本插件实例持有 provider（双挂载），本实例不参与注册',
+            retryable: false,
           }
           return
         }
@@ -397,10 +435,14 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
         // 已经按**同一套路由**注册过，才是真正的"没事可做"。
         // 只看 `next === signature` 会漏掉"先签出、后登录"：第一次 reconcile 记下了
         // 签名却因为没登录而放弃注册，第二次进来签名没变就直接早退，永远不会注册。
-        if (next === signature && registration !== undefined) return
+        //
+        // 这条幂等阀**只属于自动路径**：注册被拒之后 signature 仍是旧值、句柄可能
+        // 指向已失效的注册，自动 reconcile 会永远在这里早退——这正是卡片上那个
+        // 错误说明永远不变的原因。「重新注册」必须绕开它真的再试一次。
+        if (!manual && next === signature && registration !== undefined) return
         if (!options.enabled(descriptor.id)) {
           signature = next
-          providerState = { registered: false, routes: [], error: 'vendor 已被配置禁用' }
+          providerState = { registered: false, routes: [], error: 'vendor 已被配置禁用', retryable: false }
           return
         }
         // 没有可用登录态就不注册 provider：模型选择器里不该出现一个"选了必失败"
@@ -413,7 +455,7 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
             await disposeRegistration()
             // 清掉签名：登录态出现后必须重新走一遍注册。
             signature = ''
-            providerState = { registered: false, routes: [], error: `没有可用登录态：${reason}` }
+            providerState = { registered: false, routes: [], error: `没有可用登录态：${reason}`, retryable: false }
             options.logger.info(`dsh-connect-desktop: ${descriptor.id} 暂不注册 provider（${reason}）`)
             return
           }
@@ -422,7 +464,7 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
         if (ids.length === 0) {
           await disposeRegistration()
           signature = ''
-          providerState = { registered: false, routes: [], error: '该供应商当前没有路由（账号或配置被清空）' }
+          providerState = { registered: false, routes: [], error: '该供应商当前没有路由（账号或配置被清空）', retryable: false }
           return
         }
         if (registration === undefined) {
@@ -431,7 +473,18 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
           // 一个 provider 都没注册——比失败更难发现）。
           guard.setOwned(chat.adapter)
           await registerWithRetry(ids)
-        } else registration.replace(ids)
+        } else {
+          try {
+            registration.replace(ids)
+          } catch {
+            // `replace` 拒绝了：名字中途被别的注册抢走，或这个句柄早已被外层释放。
+            // 句柄从此换不动路由，继续用它只会每次撞同一个错误——丢弃它，按
+            // 全新注册走。这是「重新注册」要解开的另一个死锁。
+            await disposeRegistration()
+            guard.setOwned(chat.adapter)
+            await registerWithRetry(ids)
+          }
+        }
         // 只有真的注册（或替换）成功后，才认为"这套路由已经落地"。
         signature = next
         providerState = { registered: true, routes: ids }
@@ -448,7 +501,8 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
         // 失败必须同时落在日志和 /status 上：只看日志的话，用户看到的是"选择器里
         // 什么都没有"，而真正的原因藏在启动日志里。
         const raw = error instanceof Error ? error.message : String(error)
-        const duplicate = (error as { code?: unknown } | null)?.code === 'DUPLICATE_ADAPTER'
+        const code = (error as { code?: unknown } | null)?.code
+        const duplicate = code === 'DUPLICATE_ADAPTER'
         // 把宿主的英文原文换成可执行的说明：这个名字很可能被**别的插件**占了
         // （实测：dsh-our-free-model 的 channel-pack 内置了同名的 loomy/raccoon 适配器）。
         const message = duplicate
@@ -456,18 +510,34 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
             '常见原因是同时安装了 dsh-our-free-model（它内置了同名的 loomy/raccoon 频道）。' +
             '在 profile 的 dsh.profile.bundles 里把 dsh-connect-desktop 放到那个插件之前即可；' +
             '它会检测到重名并让位。或者禁用其中之一。'
-          : raw
-        providerState = { registered: false, routes: providerState.routes, error: message }
+          : // cordis 的 INACTIVE_EFFECT：注册那一刻所在的上下文已经失效（热重载/重复
+            // 挂载的竞态）。原文是一句英文，用户看不出该怎么办，所以这里翻成一句
+            // 可执行的话——修复动作就是「重新注册」按钮。
+            code === 'INACTIVE_EFFECT'
+            ? '注册瞬间所在的上下文已经失效（cannot create effect on inactive context，通常是热重载/重复挂载的竞态）。点「重新注册」再走一遍即可。'
+            : raw
+        providerState = { registered: false, routes: providerState.routes, error: message, retryable: true }
         options.logger.error(`dsh-connect-desktop: ${descriptor.id} provider 注册失败：${message}`, error)
         // 名字被别的实例占着：等它释放后接手，而不是永远失败。
         if (duplicate) scheduleReclaim()
       }
     }
 
+    /**
+     * 「重新注册」按钮的后端。
+     *
+     * 直接调用 `reconcileNow()` 而不是普通 `reconcile()`：只有手动触发会跳过
+     * "签名没变就不动"的幂等阀，并把回收退避清零——注册被拒之后，自动路径
+     * 恰恰被这两件事挡住了。
+     */
+    const registerProvider = (): Promise<void> => reconcileNow()
+
     if (options.enabled(descriptor.id)) {
       const specs = planVendorRoutes({
         surface,
         onChanged: reconcile,
+        // 「重新注册」按钮的后端：必须走 manual 触发（见 reconcileNow）。
+        onRegisterProvider: registerProvider,
         invalidate: () => {
           runtime.credentials.invalidate()
           // 登录态变了（重新检测、登录、登出）：允许下一次 reconcile 重新预热目录。
@@ -519,6 +589,7 @@ export function createVendorRegistry(options: RegistryOptions): VendorRegistry {
       ...(pool === undefined ? {} : { pool }),
       chat,
       reconcile,
+      reRegister: registerProvider,
       dispose() {
         registration?.()
         registration = undefined

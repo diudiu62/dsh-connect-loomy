@@ -20,7 +20,12 @@
  */
 
 import type { CreditField, CreditsView } from '../../shared/views.js'
-import { DEFAULT_RACCOON_POINTS_URL, RACCOON_OK_CODE, RACCOON_TIMEOUT_MS } from './constants.js'
+import {
+  DEFAULT_RACCOON_POINTS_URL,
+  DEFAULT_RACCOON_SETTING_INFO_URL,
+  RACCOON_OK_CODE,
+  RACCOON_TIMEOUT_MS,
+} from './constants.js'
 import { raccoonHeaders } from './catalog.js'
 
 /**
@@ -55,6 +60,34 @@ export const RACCOON_CREDIT_FIELDS: readonly CreditField[] = [
   { key: 'reward', labelKey: 'credits.field.reward', role: 'other' },
   { key: 'enterpriseRecharge', labelKey: 'credits.field.enterpriseRecharge', role: 'other' },
 ]
+
+/**
+ * 把余额地址换成 `www.` 子域上的同一路径。
+ *
+ * ## 为什么需要它（2026-11-25 实测的线上事故）
+ *
+ * 裸域 `https://xiaohuanxiong.com/api/web/points/v1/balance` 已被网关**整条拦死**：
+ * 带不带 token、GET/POST/OPTIONS/HEAD 一律 `403` + 空 body +
+ * `X-TT-System-Error: 3`（不是 401 —— 拦在鉴权之前，属**路由级封锁**）。
+ * 同一路径换 `www.` 子域 → `200`，六个桶齐全。
+ *
+ * 同一时刻的对照（同一 token）：
+ * - 裸域 `points/v1/balance` → 403
+ * - `www` `points/v1/balance` → 200
+ * - 裸域 `points/v2/bills` / `v1/tasks` / `office/v3/setting_info` → 200
+ *
+ * 所以这不是登录态问题，也不是请求头问题：只有裸域那一个路由被关掉。
+ */
+export function wwwPointsUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (parsed.hostname.startsWith('www.')) return url
+    parsed.hostname = `www.${parsed.hostname}`
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
 
 /** 一次余额读数。上游没给的桶就是 `undefined`（与"给 0"不同）。 */
 export interface RaccoonBalance {
@@ -263,6 +296,92 @@ export async function fetchBills(options: {
     }
     const parsed = parseBills(body)
     if (parsed === undefined) throw new Error('小浣熊账单接口返回结构不符合预期')
+    return parsed
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ── 余额的备用来源：设置摘要 ──────────────────────────────────────────────
+//
+// 实测（2026-11-23）：`points/v1/balance` 对被插件用过的账号返回 403 空 body
+// （nginx `X-TT-System-Error: 3`），而**同一个 token** 打
+// `office/v3/setting_info` 是 200，响应里就有 `available_points`。
+// 明细（`points/v2/bills`）与任务（`points/v1/tasks`）也照常 200——只有余额桶
+// 这一个端点被单独拒绝，所以这不是登录态问题。
+//
+// 只在这条路走通时降级：拿到的是**一个**数字（可用积分），没有 daily/reward/
+// topup 的拆分。UI 必须说明这一点，否则用户会以为分桶接口恢复了。
+
+/** 一次设置摘要读数。 */
+export interface RaccoonSettingPoints {
+  /** `data.available_points`：官方客户端首页显示的那个数。 */
+  available: number
+  at: number
+}
+
+/** 从 `baseURL`（`…/api/web/llm/v2`）推出设置摘要地址；解析失败用默认值。 */
+export function settingInfoUrl(baseURL?: string): string {
+  if (baseURL === undefined || baseURL.length === 0) return DEFAULT_RACCOON_SETTING_INFO_URL
+  try {
+    return `${new URL(baseURL).origin}/api/web/office/v3/setting_info`
+  } catch {
+    return DEFAULT_RACCOON_SETTING_INFO_URL
+  }
+}
+
+/**
+ * 解析设置摘要里的可用积分。
+ *
+ * 任何意外都返回 `undefined`（调用方据此继续走"仅明细"那条路）：
+ * 这个接口是**兜底**，它的失败不该比余额的失败更响。
+ */
+export function parseSettingPoints(body: unknown, now: number = Date.now()): RaccoonSettingPoints | undefined {
+  if (body === null || typeof body !== 'object') return undefined
+  const record = body as Record<string, unknown>
+  if (record['code'] !== RACCOON_OK_CODE) return undefined
+  const data = record['data']
+  if (data === null || typeof data !== 'object') return undefined
+  const available = (data as Record<string, unknown>)['available_points']
+  if (typeof available !== 'number' || !Number.isFinite(available)) return undefined
+  return { available, at: now }
+}
+
+/** 抓一次设置摘要里的可用积分。传输/结构失败必抛（调用方自己决定要不要吞）。 */
+export async function fetchSettingPoints(options: {
+  token: string
+  url?: string
+  orgCode?: string
+  clientVersion?: string
+  deviceId?: string
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+  now?: () => number
+}): Promise<RaccoonSettingPoints> {
+  const url = options.url ?? DEFAULT_RACCOON_SETTING_INFO_URL
+  const fetchImpl = options.fetchImpl ?? fetch
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? RACCOON_TIMEOUT_MS)
+  try {
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: raccoonHeaders(options.token, {
+        ...(options.orgCode === undefined ? {} : { orgCode: options.orgCode }),
+        ...(options.clientVersion === undefined ? {} : { clientVersion: options.clientVersion }),
+        ...(options.deviceId === undefined ? {} : { deviceId: options.deviceId }),
+      }),
+      signal: controller.signal,
+    })
+    const text = await response.text()
+    if (!response.ok) throw new Error(`小浣熊设置接口返回 HTTP ${response.status}：${text.slice(0, 200)}`)
+    let body: unknown
+    try {
+      body = JSON.parse(text)
+    } catch {
+      throw new Error('小浣熊设置接口返回的不是 JSON')
+    }
+    const parsed = parseSettingPoints(body, options.now?.() ?? Date.now())
+    if (parsed === undefined) throw new Error('小浣熊设置接口里没有可用积分')
     return parsed
   } finally {
     clearTimeout(timer)

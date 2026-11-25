@@ -89,7 +89,22 @@ function printHelp(): void {
 
 interface StatusEntry {
   status: VendorStatusView
-  credits?: { ok: true; fields: Record<string, number>; fetchedAt: number } | { ok: false; error: { code: string; message: string } }
+  credits?:
+    | {
+        ok: true
+        fields: Record<string, number>
+        fetchedAt: number
+        /**
+         * 余额桶缺失时的原因标签（`balance_unavailable`）。
+         *
+         * 不带它的话，CLI 会输出一个 `fields: {}` 而不说为什么——和界面上
+         * "积分不见了"是同一种误导。`--json` 的消费者（排障时的人、脚本）
+         * 需要与界面同样的那句解释。
+         */
+        partial?: string
+        partialReason?: string
+      }
+    | { ok: false; error: { code: string; message: string } }
 }
 
 interface DoctorEntry {
@@ -122,7 +137,15 @@ async function statusEntries(only: string | undefined): Promise<StatusEntry[]> {
       const readout = await surface.credits({ force: false })
       credits =
         readout.kind === 'ok'
-          ? { ok: true, fields: readout.credits.fields, fetchedAt: readout.credits.fetchedAt }
+          ? {
+              ok: true,
+              fields: readout.credits.fields,
+              fetchedAt: readout.credits.fetchedAt,
+              ...(readout.credits.partial === undefined ? {} : { partial: readout.credits.partial }),
+              ...(readout.credits.partialReason === undefined
+                ? {}
+                : { partialReason: readout.credits.partialReason }),
+            }
           : { ok: false, error: { code: readout.failure.code, message: readout.failure.message } }
     }
     entries.push({ status, ...(credits === undefined ? {} : { credits }) })

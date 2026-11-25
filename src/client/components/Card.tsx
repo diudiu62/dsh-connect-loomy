@@ -14,12 +14,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { StatusView, VendorStatusView } from '../../shared/views.js'
+import type { ProviderRegisterView } from '../../shared/views.js'
 import { COMMUNITY } from '../../shared/community.js'
-import { fetchStatus } from '../transport.js'
+import { fetchStatus, requestVendor } from '../transport.js'
 import { Badge, CardButton, Notice } from './common.js'
 import { ensureStyles } from '../styles.js'
 import type { CardT } from './types.js'
-import { failureMessage } from './types.js'
+import { failureMessage, mapResult } from './types.js'
 import { AccountPanel } from '../capability/AccountPanel.js'
 import { ModelsPanel } from '../capability/ModelsPanel.js'
 import { DiagnosticsPanel } from '../capability/DiagnosticsPanel.js'
@@ -47,7 +48,6 @@ export function DesktopSettingsCard(props: SettingsCardProps) {
   const status = useVendorRoute(load)
   const [wantedTab, setWantedTab] = useState<TabKey | null>(null)
   const [wantedVendor, setWantedVendor] = useState<string | null>(null)
-
   const view: StatusView | null = status.state.kind === 'ready' ? status.state.value : null
   const vendors = useMemo((): readonly VendorStatusView[] => view?.vendors ?? [], [view])
   /**
@@ -97,10 +97,13 @@ export function DesktopSettingsCard(props: SettingsCardProps) {
       {status.state.kind === 'loading' ? <p className="dcss-hint">{t('common.loading')}</p> : null}
 
       {current?.provider !== undefined && current.provider.registered === false ? (
-        <Notice tone="error">
-          <div>{t('card.providerMissing')}</div>
-          <div className="dcss-hint">{current.provider.error ?? '—'}</div>
-        </Notice>
+        <ProviderMissingNotice
+          key={current.id}
+          t={t}
+          vendor={current}
+          csrf={csrf}
+          onDone={() => void status.reload({ silent: true })}
+        />
       ) : null}
 
       {view !== null && ordered.length === 0 ? (
@@ -271,6 +274,69 @@ export function DesktopSettingsCard(props: SettingsCardProps) {
         </span>
       </footer>
     </div>
+  )
+}
+
+/**
+ * 「这家客户端还没有注册进模型选择器」提示 + 「重新注册」按钮。
+ *
+ * 为什么需要这个按钮：注册被拒（provider 名被别的插件占用、注册瞬间所在上下文
+ * 已失效、句柄失效）之后，宿主的自动 reconcile 会被"签名没变就不动"的幂等阀挡
+ * 住——错误说明会永远停在 `/status` 里，用户唯一的出路是重启 DSH。按钮把注册流程
+ * 强制再走一遍，成功与否都如实反映到刷新后的状态里。
+ *
+ * `retryable === false` 的那几种原因（被配置禁用、没有可用登录态、双挂载让位、
+ * 没有路由）不渲染按钮：修复动作在别的地方，一个必然失败的按钮正是本项目要
+ * 消灭的死控件。
+ */
+function ProviderMissingNotice({
+  t,
+  vendor,
+  csrf,
+  onDone,
+}: {
+  t: CardT
+  vendor: VendorStatusView
+  csrf: string | null
+  /** 请求结束后重新读一次 `/status`：要么提示消失，要么换成新的原因。 */
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  /** 请求本身失败（路由缺失/网络/CSRF）时的一句话；注册结果由 `/status` 说话。 */
+  const [note, setNote] = useState<string | null>(null)
+
+  const reRegister = async (): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      const result = await requestVendor<ProviderRegisterView>({
+        vendorId: vendor.id,
+        suffix: 'register',
+        method: 'POST',
+        csrf,
+      })
+      // 业务层面的"仍然没注册上"不额外说话——原因本来就写在上面那一行，刷新后
+      // 会换成新的。只有请求没走通才需要这里的文案，否则界面看起来像"按钮没反应"。
+      if (result.kind !== 'ok') setNote(failureMessage(mapResult(result), t))
+    } finally {
+      setBusy(false)
+      onDone()
+    }
+  }
+
+  return (
+    <Notice tone="error">
+      <div>{t('card.providerMissing')}</div>
+      <div className="dcss-hint">{vendor.provider?.error ?? '—'}</div>
+      {vendor.provider?.retryable === true ? (
+        <div className="dcss-notice-actions">
+          <CardButton variant="primary" onClick={() => void reRegister()} disabled={busy || csrf === null}>
+            {busy ? t('card.registering') : t('card.reregister')}
+          </CardButton>
+        </div>
+      ) : null}
+      {note === null ? null : <div className="dcss-hint">{note}</div>}
+    </Notice>
   )
 }
 

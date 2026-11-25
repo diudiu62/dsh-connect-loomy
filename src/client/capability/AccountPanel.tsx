@@ -23,6 +23,7 @@ import { failureMessage, type CardT } from '../components/types.js'
 import { formatDateTime, originLabel } from '../format.js'
 import { requestVendor } from '../transport.js'
 import { AccountRows } from './AccountRows.js'
+import { useAccountCredits } from './useAccountCredits.js'
 import { CreditsBody } from './CreditsBody.js'
 import { LoginForms } from './LoginForms.js'
 import { PoolToggle } from './PoolToggle.js'
@@ -62,8 +63,11 @@ export function AccountPanel({ t, vendor, csrf, onChanged }: AccountPanelProps) 
   const loadCredits = useCallback(
     (signal: AbortSignal) =>
       hasCredits
-        ? // 账号页要每行余额，所以带上 `accounts=1`（会为每个账号各读一次上游）。
-          requestVendor<CreditsView>({ vendorId, suffix: 'credits', query: 'accounts=1', signal })
+        ? /*
+           * 只读总额：每行余额改由 `useAccountCredits` 一条一条懒加载。
+           * 一次拿全要等所有账号读完（90 个账号 5 秒以上），账号页会先空一片。
+           */
+          requestVendor<CreditsView>({ vendorId, suffix: 'credits', signal })
         : Promise.resolve({ kind: 'ok' as const, value: { fields: {}, fetchedAt: 0 } }),
     [vendorId, hasCredits],
   )
@@ -121,8 +125,16 @@ export function AccountPanel({ t, vendor, csrf, onChanged }: AccountPanelProps) 
 
   const credential = vendor.credential
   const account = vendor.account
-  const creditsValue = credits.state.kind === 'ready' ? credits.state.value : null
   const rows = accounts.state.kind === 'ready' ? accounts.state.value.accounts : []
+  /*
+   * 逐账号额度：账号行先渲染，数字随到随填（`credits/account`，一行一条）。
+   * 宿主侧 per-account memo 60 秒，所以反复切页签不会重复打上游。
+   */
+  const perAccountCredits = useAccountCredits({
+    vendorId,
+    accountIds: rows.map((row) => row.id),
+    enabled: hasCredits,
+  })
   const accountsFailure = failureMessage(accounts.state, t)
 
   /*
@@ -223,7 +235,7 @@ export function AccountPanel({ t, vendor, csrf, onChanged }: AccountPanelProps) 
             csrf={csrf}
             state={accounts.state}
             capabilities={capabilities}
-            credits={creditsValue}
+            accountCredits={perAccountCredits.entries}
             onChanged={() => void reloadAll()}
           />
           {/* 轮换是账号的用法，跟列表放一起。 */}
